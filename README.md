@@ -1,6 +1,8 @@
 # Eko - 飞书AI校园挑战赛作品
 
 > Nexus Pilot: AI Agent 驱动的多端协同办公助手
+>
+> GitHub: [Kristen0104/Feishu_demo_Eko](https://github.com/Kristen0104/Feishu_demo_Eko)
 
 ## 项目简介
 
@@ -10,6 +12,8 @@ Eko 是一款基于 AI Agent 驱动的多端协同办公助手。它作为工作
 
 - [产品需求文档 (PRD.md)](PRD.md)
 - [技术架构文档 (ARCHITECTURE.md)](ARCHITECTURE.md)
+- [接口定义规范 (API.md)](API.md)
+- [团队分工手册 (TEAM.md)](TEAM.md)
 
 ## 技术栈
 
