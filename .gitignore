@@ -1,0 +1,58 @@
+# Environment and secrets
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+eggs/
+.eggs/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+*.log
+logs/
+tmp/
+
+# Node (frontend)
+node_modules/
+.npm
+.yarn
+*.log
+
+# Test
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+
+# Docker
+*.dockerignore
+
+# Misc
+*.bak
+*.tmp
+*.swp
