@@ -1,0 +1,288 @@
+{
+  "version": "0.4",
+  "description": "Eko Agent Function Calling 定义",
+  "functions": [
+    {
+      "name": "classify_intent",
+      "description": "分析用户输入，识别意图类别",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "intent": {
+            "type": "string",
+            "enum": ["CHAT", "DOC", "PPT", "UNCERTAIN"],
+            "description": "意图分类：CHAT-闲聊，DOC-文稿创作，PPT-演示汇报，UNCERTAIN-不确定/需要追问"
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "置信度，0-1 之间"
+          },
+          "reasoning": {
+            "type": "string",
+            "description": "简要说明分类理由"
+          },
+          "suggested_override": {
+            "type": "string",
+            "enum": ["CHAT", "DOC", "PPT", null],
+            "description": "如果置信度低，可建议其他可能的类别"
+          }
+        },
+        "required": ["intent", "confidence", "reasoning"]
+      }
+    },
+    {
+      "name": "search_knowledge_base",
+      "description": "通过飞书 API 从知识库检索相关文档片段（可为空白）",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "检索查询语句"
+          },
+          "k": {
+            "type": "integer",
+            "default": 5,
+            "description": "返回 Top-K 个结果"
+          },
+          "session_id": {
+            "type": "string",
+            "description": "会话 ID，可选，用于限定检索范围"
+          }
+        },
+        "required": ["query"]
+      }
+    },
+    {
+      "name": "fetch_feishu_chat_context",
+      "description": "通过飞书 API 获取群聊上下文（可为空白）",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "chat_id": {
+            "type": "string",
+            "description": "飞书群聊 ID"
+          },
+          "limit": {
+            "type": "integer",
+            "default": 50,
+            "description": "获取最近消息条数"
+          }
+        },
+        "required": ["chat_id"]
+      }
+    },
+    {
+      "name": "fetch_bitable_data",
+      "description": "通过飞书 API 获取多维表格数据（可为空白）",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "app_token": {
+            "type": "string",
+            "description": "飞书应用 Token"
+          },
+          "table_id": {
+            "type": "string",
+            "description": "表格 ID"
+          },
+          "view_id": {
+            "type": "string",
+            "description": "视图 ID，可选"
+          },
+          "query": {
+            "type": "string",
+            "description": "查询关键词，可选"
+          }
+        },
+        "required": ["app_token", "table_id"]
+      }
+    },
+    {
+      "name": "generate_document",
+      "description": "生成 Word 文稿（Markdown 格式）",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "topic": {
+            "type": "string",
+            "description": "文稿主题"
+          },
+          "feishu_chat_context": {
+            "type": "string",
+            "description": "飞书群聊上下文内容（可为空白）"
+          },
+          "bitable_data": {
+            "type": "string",
+            "description": "飞书多维表格数据（可为空白）"
+          },
+          "rag_context": {
+            "type": "string",
+            "description": "RAG 知识库检索内容（可为空白）"
+          },
+          "outline": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "章节大纲，可选，不提供则自动生成"
+          },
+          "style": {
+            "type": "string",
+            "enum": ["formal", "casual", "technical"],
+            "default": "formal",
+            "description": "写作风格：formal-正式，casual-轻松，technical-技术"
+          }
+        },
+        "required": ["topic"]
+      }
+    },
+    {
+      "name": "generate_canvas",
+      "description": "生成 PPT 画布（Tldraw JSON 格式）",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "topic": {
+            "type": "string",
+            "description": "演示主题"
+          },
+          "feishu_chat_context": {
+            "type": "string",
+            "description": "飞书群聊上下文内容（可为空白）"
+          },
+          "bitable_data": {
+            "type": "string",
+            "description": "飞书多维表格数据（可为空白）"
+          },
+          "rag_context": {
+            "type": "string",
+            "description": "RAG 知识库检索内容（可为空白）"
+          },
+          "slides": {
+            "type": "integer",
+            "default": 5,
+            "description": "幻灯片页数"
+          },
+          "content": {
+            "type": "string",
+            "description": "已有内容（Markdown 格式），可选，用于转成 PPT"
+          },
+          "style": {
+            "type": "string",
+            "enum": ["minimal", "colorful", "corporate"],
+            "default": "minimal",
+            "description": "视觉风格：minimal-极简，colorful-多彩，corporate-商务"
+          }
+        },
+        "required": ["topic"]
+      }
+    },
+    {
+      "name": "chat_response",
+      "description": "闲聊模式的直接回复",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "response": {
+            "type": "string",
+            "description": "回复内容"
+          },
+          "need_clarification": {
+            "type": "boolean",
+            "default": false,
+            "description": "是否需要用户澄清"
+          }
+        },
+        "required": ["response"]
+      }
+    },
+    {
+      "name": "send_feishu_card",
+      "description": "发送飞书交互卡片",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "chat_id": {
+            "type": "string",
+            "description": "飞书群聊 ID"
+          },
+          "session_id": {
+            "type": "string",
+            "description": "会话 ID，用于链接到工作台"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["analyzing", "fetching_sources", "generating", "completed", "error"],
+            "description": "当前状态"
+          },
+          "intent": {
+            "type": "string",
+            "enum": ["DOC", "PPT"],
+            "description": "识别的意图"
+          },
+          "workbench_url": {
+            "type": "string",
+            "description": "独立网页工作台链接"
+          }
+        },
+        "required": ["chat_id", "session_id", "status", "workbench_url"]
+      }
+    },
+    {
+      "name": "archive_to_bitable",
+      "description": "归档成果到飞书多维表格",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "description": "会话 ID"
+          },
+          "title": {
+            "type": "string",
+            "description": "成果标题"
+          },
+          "content_url": {
+            "type": "string",
+            "description": "内容链接"
+          },
+          "created_by": {
+            "type": "string",
+            "description": "创建者 ID"
+          }
+        },
+        "required": ["session_id", "title", "content_url", "created_by"]
+      }
+    },
+    {
+      "name": "return_to_knowledge_base",
+      "description": "回流成果到 RAG 知识库",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "description": "会话 ID"
+          },
+          "content": {
+            "type": "string",
+            "description": "文档内容（Markdown/JSON）"
+          },
+          "title": {
+            "type": "string",
+            "description": "文档标题"
+          },
+          "content_type": {
+            "type": "string",
+            "enum": ["DOC", "PPT"],
+            "description": "内容类型"
+          }
+        },
+        "required": ["session_id", "content", "title", "content_type"]
+      }
+    }
+  ]
+}
