@@ -3,8 +3,9 @@
 从环境变量或 .env 文件加载配置
 包含：数据库、Redis、JWT、飞书、LLM 等配置项
 """
-from pydantic_settings import BaseSettings
 from functools import lru_cache
+from pydantic import ConfigDict
+from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
@@ -36,6 +37,8 @@ class Settings(BaseSettings):
 
     @property
     def REDIS_URL(self) -> str:
+        if self.REDIS_PASSWORD:
+            return f"redis://:{self.REDIS_PASSWORD}@{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
         return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
 
     # JWT
@@ -45,6 +48,7 @@ class Settings(BaseSettings):
 
     # CORS
     CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:1420"]
+    FRONTEND_STATIC_DIR: str | None = None
 
     # Feishu
     FEISHU_APP_ID: str = ""
@@ -64,9 +68,7 @@ class Settings(BaseSettings):
 
     AGENT_EMBEDDING_MODEL: str = "text-embedding-3-small"
 
-    class Config:
-        env_file = ".env"
-        extra = "allow"
+    model_config = ConfigDict(env_file=".env", extra="allow")
 
 
 @lru_cache
@@ -74,4 +76,9 @@ def get_settings() -> Settings:
     return Settings()
 
 
-settings = get_settings()
+class _SettingsProxy:
+    def __getattr__(self, name: str):
+        return getattr(get_settings(), name)
+
+
+settings = _SettingsProxy()

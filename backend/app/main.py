@@ -8,109 +8,130 @@ Eko AI Agent 后端服务入口
 - Canvas 白板协作
 - 飞书集成（WebSocket 长连接）
 """
+import logging
+from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
+from typing import Any
+from time import perf_counter
 
-from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
-from app.config import settings
-from app.core.database import init_db, engine
-from app.core.redis_client import init_redis, close_redis
+from app.config import Settings, get_settings
+from app.core.container import register_routers
+from app.core.database import engine, init_db
+from app.core.redis_client import close_redis, init_redis
 
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # Startup
-    await init_db()
-    await init_redis()
-    yield
-    # Shutdown
-    await close_redis()
-    await engine.dispose()
+AsyncCallable = Callable[[], Awaitable[None]]
+RouterRegistrar = Callable[[FastAPI], None]
+logger = logging.getLogger(__name__)
 
 
-app = FastAPI(
-    title=settings.APP_NAME,
-    version=settings.APP_VERSION,
-    lifespan=lifespan,
-)
+def configure_middlewares(app: FastAPI, settings: Settings) -> None:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.CORS_ORIGINS,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
-# Static files for frontend test page
-import os
-frontend_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "frontend")
-if os.path.exists(frontend_path):
-    app.mount("/frontend", StaticFiles(directory=frontend_path, html=True), name="frontend")
 
-# CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+async def log_requests(request: Request, call_next) -> Any:
+    start = perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception:
+        duration = perf_counter() - start
+        logger.exception(
+            "%s %s - failed - %.3fs",
+            request.method,
+            request.url.path,
+            duration,
+        )
+        raise
 
-# Middleware for request logging
-@app.middleware("http")
-async def log_requests(request, call_next):
-    import time
-    start = time.time()
-    response = await call_next(request)
-    duration = time.time() - start
-    print(f"{request.method} {request.url.path} - {response.status_code} - {duration:.3f}s")
+    duration = perf_counter() - start
+    logger.info(
+        "%s %s - %s - %.3fs",
+        request.method,
+        request.url.path,
+        response.status_code,
+        duration,
+    )
     return response
 
 
-# Health check
-@app.get("/system/ping")
-async def ping():
-    from datetime import datetime
-    return {"status": "ok", "timestamp": datetime.utcnow()}
+def maybe_mount_frontend(app: FastAPI, settings: Settings) -> None:
+    if settings.FRONTEND_STATIC_DIR:
+        app.mount(
+            "/frontend",
+            StaticFiles(directory=settings.FRONTEND_STATIC_DIR, html=True),
+            name="frontend",
+        )
 
 
-@app.get("/hello")
-async def hello():
-    return {"message": "Hello World"}
+def build_lifespan(
+    *,
+    database_initializer: AsyncCallable,
+    redis_initializer: AsyncCallable,
+    redis_closer: AsyncCallable,
+    database_engine: Any,
+):
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        db_initialized = False
+        redis_initialized = False
+
+        try:
+            await database_initializer()
+            db_initialized = True
+            await redis_initializer()
+            redis_initialized = True
+            yield
+        finally:
+            if redis_initialized:
+                await redis_closer()
+            if db_initialized:
+                await database_engine.dispose()
+
+    return lifespan
 
 
-from sqlalchemy import text
+def create_app(
+    *,
+    settings: Settings | None = None,
+    router_registrar: RouterRegistrar = register_routers,
+    database_initializer: AsyncCallable = init_db,
+    redis_initializer: AsyncCallable = init_redis,
+    redis_closer: AsyncCallable = close_redis,
+    database_engine: Any = engine,
+) -> FastAPI:
+    app_settings = settings or get_settings()
+    app = FastAPI(
+        title=app_settings.APP_NAME,
+        version=app_settings.APP_VERSION,
+        lifespan=build_lifespan(
+            database_initializer=database_initializer,
+            redis_initializer=redis_initializer,
+            redis_closer=redis_closer,
+            database_engine=database_engine,
+        ),
+    )
+
+    maybe_mount_frontend(app, app_settings)
+    configure_middlewares(app, app_settings)
+    app.middleware("http")(log_requests)
+    router_registrar(app)
+    return app
 
 
-@app.get("/system/check-db")
-async def check_db():
-    from app.core.database import engine
-    try:
-        async with engine.connect() as conn:
-            await conn.execute(text("SELECT 1"))
-        return {"status": "ok", "postgres": "connected"}
-    except Exception as e:
-        return {"status": "error", "postgres": str(e)}
-
-
-@app.get("/system/check-redis")
-async def check_redis():
-    from app.core.redis_client import get_redis
-    try:
-        r = await get_redis()
-        await r.ping()
-        return {"status": "ok", "redis": "connected"}
-    except Exception as e:
-        return {"status": "error", "redis": str(e)}
-
-
-# Import and register routers
-from app.api import auth, sessions, rag, agent, canvas, settings as settings_router, webhook
-
-app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
-app.include_router(sessions.router, prefix="/api/v1/sessions", tags=["sessions"])
-app.include_router(rag.router, prefix="/api/v1/rag", tags=["rag"])
-app.include_router(agent.router, prefix="/api/v1/agent", tags=["agent"])
-app.include_router(canvas.router, prefix="/api/v1/canvas", tags=["canvas"])
-app.include_router(settings_router.router, prefix="/api/v1/settings", tags=["settings"])
-app.include_router(webhook.router, prefix="/api/v1/webhook", tags=["webhook"])
+app = create_app()
 
 
 if __name__ == "__main__":
     import uvicorn
+
+    settings = get_settings()
     uvicorn.run("app.main:app", host=settings.HOST, port=settings.PORT, reload=settings.DEBUG)
