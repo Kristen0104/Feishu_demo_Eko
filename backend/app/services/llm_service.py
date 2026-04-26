@@ -3,6 +3,8 @@ LLM 大模型服务模块
 统一封装 DeepSeek 和 火山引擎(Volcengine) API 调用
 支持流式和非流式响应
 """
+# TODO(PRD-4.2): route prompt construction through intent/workspace/RAG modules so generation can consume chat context, Bitable data, and knowledge hits.
+import asyncio
 import json
 from typing import AsyncGenerator, Optional
 import httpx
@@ -73,13 +75,40 @@ class LLMService:
             if stream:
                 return self._stream_response(client, self.api_url, headers, payload)
             else:
-                response = await client.post(self.api_url, headers=headers, json=payload)
-                response.raise_for_status()
+                response = await self._post_with_retry(client, headers, payload)
                 data = response.json()
                 return {
                     "content": data["choices"][0]["message"]["content"],
                     "usage": data.get("usage", {}),
                 }
+
+    async def _post_with_retry(
+        self,
+        client: httpx.AsyncClient,
+        headers: dict,
+        payload: dict,
+    ) -> httpx.Response:
+        """对非流式 LLM 调用做轻量退避，避免临时限流直接让任务失败。"""
+        retry_statuses = {429, 500, 502, 503, 504}
+        for attempt in range(3):
+            try:
+                response = await client.post(self.api_url, headers=headers, json=payload)
+                if response.status_code not in retry_statuses or attempt == 2:
+                    response.raise_for_status()
+                    return response
+
+                retry_after = response.headers.get("Retry-After")
+                if retry_after and retry_after.isdigit():
+                    delay = min(float(retry_after), 8.0)
+                else:
+                    delay = 1.5 * (2 ** attempt)
+            except httpx.TransportError:
+                if attempt == 2:
+                    raise
+                delay = 1.5 * (2 ** attempt)
+            await asyncio.sleep(delay)
+
+        raise RuntimeError("LLM request retry loop exited unexpectedly")
 
     async def _stream_response(
         self,

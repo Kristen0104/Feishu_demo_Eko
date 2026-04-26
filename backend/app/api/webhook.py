@@ -2,6 +2,7 @@
 飞书 Webhook 回调 API 模块
 接收飞书平台事件回调（HTTP 模式备用，长连接模式主要使用 feishu_ws.py）
 """
+# TODO(PRD-2.2): normalize Feishu webhook events into module-level event handlers.
 import httpx
 from fastapi import APIRouter, Request
 from starlette.responses import JSONResponse
@@ -81,7 +82,6 @@ async def handle_message_received(event_data: dict) -> JSONResponse:
         # 回复意图识别结果
         intent_text = {
             "DOC": "我已识别您的意图为【文档生成】，正在准备为您生成 Word 文稿...",
-            "PPT": "我已识别您的意图为【演示文稿生成】，正在准备为您生成 PPT...",
             "SUMMARY": "我已识别您的意图为【摘要生成】，正在为您总结...",
             "CHAT": "我已收到您的消息，正在思考回复..."
         }.get(intent, f"收到消息，意图识别为: {intent}")
@@ -92,7 +92,7 @@ async def handle_message_received(event_data: dict) -> JSONResponse:
 
         # 如果是创作类意图，获取群聊天记录作为上下文
         chat_history = []
-        if intent in ("DOC", "PPT", "SUMMARY"):
+        if intent in ("DOC", "SUMMARY"):
             messages = await fetch_group_messages(chat_id, page_size=50)
             chat_history = [
                 {

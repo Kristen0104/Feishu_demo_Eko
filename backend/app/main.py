@@ -8,6 +8,10 @@ Eko AI Agent 后端服务入口
 - Canvas 白板协作
 - 飞书集成（WebSocket 长连接）
 """
+# TODO(PRD-2.1): move intent routing and scenario selection into backend/app/modules/intent.
+# TODO(PRD-2.0): add login/session auth routes under backend/app/api/auth.py and backend/app/modules/auth.
+# TODO(PRD-2.3): move workspace locking, creator permissions, and collaboration state into backend/app/modules/workspace.
+# TODO(PRD-4.4): move Redis Pub/Sub and realtime broadcast into backend/app/modules/sync.
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -41,6 +45,10 @@ import os
 frontend_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "frontend")
 if os.path.exists(frontend_path):
     app.mount("/frontend", StaticFiles(directory=frontend_path, html=True), name="frontend")
+
+generated_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "generated")
+os.makedirs(generated_path, exist_ok=True)
+app.mount("/generated", StaticFiles(directory=generated_path), name="generated")
 
 # CORS
 app.add_middleware(
@@ -100,15 +108,17 @@ async def check_redis():
 
 
 # Import and register routers
-from app.api import auth, sessions, rag, agent, canvas, settings as settings_router, webhook
+from app.api import sessions, rag, agent, canvas, settings as settings_router, webhook, ppt, ppt_templates, auth
 
-app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(sessions.router, prefix="/api/v1/sessions", tags=["sessions"])
 app.include_router(rag.router, prefix="/api/v1/rag", tags=["rag"])
 app.include_router(agent.router, prefix="/api/v1/agent", tags=["agent"])
 app.include_router(canvas.router, prefix="/api/v1/canvas", tags=["canvas"])
 app.include_router(settings_router.router, prefix="/api/v1/settings", tags=["settings"])
 app.include_router(webhook.router, prefix="/api/v1/webhook", tags=["webhook"])
+app.include_router(ppt.router, prefix="/api/v1/ppt", tags=["ppt"])
+app.include_router(ppt_templates.router, prefix="/api/v1/ppt/templates", tags=["ppt-templates"])
+app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
 
 
 if __name__ == "__main__":

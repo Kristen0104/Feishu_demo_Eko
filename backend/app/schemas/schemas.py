@@ -2,6 +2,9 @@
 API Schema 定义模块
 定义所有 API 请求/响应数据结构，用于 FastAPI 参数验证和数据序列化
 """
+# TODO(PRD-2.2): add explicit schemas for Feishu card payloads, Bitable rows, and RAG retrieval results.
+# TODO(PRD-2.3): add workspace permission, creator identity, and lock-state schemas.
+# TODO(PRD-2.5): add realtime sync event schemas for multi-device collaboration.
 from pydantic import BaseModel, Field
 from typing import Optional
 from datetime import datetime
@@ -10,23 +13,10 @@ from enum import Enum
 
 class IntentType(str, Enum):
     """用户意图类型枚举"""
-    """用户意图类型枚举"""
     CHAT = "CHAT"
     DOC = "DOC"
     PPT = "PPT"
     SUMMARY = "SUMMARY"
-
-
-class TokenResponse(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
-
-
-class UserInfo(BaseModel):
-    id: str
-    name: str
-    avatar_url: Optional[str] = None
-    feishu_open_id: Optional[str] = None
 
 
 # --- Session ---
@@ -114,6 +104,65 @@ class TaskHistoryItem(BaseModel):
     result: Optional[str] = None
     intent: IntentType
     created_at: datetime
+
+
+# --- PPT ---
+class PptPage(BaseModel):
+    layout: str = "content"
+    title: Optional[str] = None
+    subtitle: Optional[str] = None
+    content: Optional[str | list[str]] = None
+    body: Optional[str] = None
+    notes: Optional[str | list[str]] = None
+    footer: Optional[str] = None
+
+
+class PptGenerateRequest(BaseModel):
+    project_name: str = "aippt"
+    pages: list[PptPage] = Field(..., min_length=1)
+    template_name: Optional[str] = None
+    template_dir: Optional[str] = None
+
+
+class PptGenerateResponse(BaseModel):
+    project_name: str
+    project_path: str
+    output_path: str
+    result_url: str
+
+
+class PptTemplateImportRequest(BaseModel):
+    source_paths: list[str] = Field(..., min_length=1)
+    collection_name: Optional[str] = None
+    preferred_template: Optional[str] = None
+    style_group: Optional[str] = None
+
+
+class PptTemplatePackResponse(BaseModel):
+    pack_dir: str
+    source_pptx: str
+    base_template: str
+    manifest_path: str
+
+
+class PptTemplateImportResponse(BaseModel):
+    packs: list[PptTemplatePackResponse]
+
+
+class PptTestRequest(BaseModel):
+    chat_history: str = ""
+    requirement: str
+    ppt_mode: str = "fast"
+    ppt_template: str = "auto"
+
+
+class PptTestResponse(BaseModel):
+    result: str
+    result_url: Optional[str] = None
+    slide_count: int
+    generation_mode: str
+    template_id: Optional[str] = None
+    template_label: Optional[str] = None
 
 
 # --- Canvas ---
@@ -208,3 +257,27 @@ class BitableFieldResponse(BaseModel):
 class PingResponse(BaseModel):
     status: str
     timestamp: datetime
+
+
+# --- Auth ---
+class FeishuLoginRequest(BaseModel):
+    feishu_open_id: str
+    name: Optional[str] = None
+    avatar_url: Optional[str] = None
+
+
+class AuthUserResponse(BaseModel):
+    id: str
+    feishu_open_id: Optional[str] = None
+    name: str
+    avatar_url: Optional[str] = None
+
+
+class AuthLoginResponse(BaseModel):
+    access_token: str
+    token_type: str = "Bearer"
+    user: AuthUserResponse
+
+
+class AuthMeResponse(BaseModel):
+    user: AuthUserResponse

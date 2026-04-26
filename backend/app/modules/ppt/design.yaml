@@ -1,0 +1,18 @@
+canvas:
+  width: 1280
+  height: 720
+  view_box: "0 0 1280 720"
+colors:
+  background: "#F7F3EA"
+  surface: "#FFFFFF"
+  primary: "#173B45"
+  secondary: "#D95F43"
+  muted: "#667085"
+  accent: "#F4B942"
+fonts:
+  title: "Microsoft YaHei, Arial, Calibri"
+  body: "Microsoft YaHei, Arial, Calibri"
+spacing:
+  page_x: 84
+  page_y: 64
+  gap: 28

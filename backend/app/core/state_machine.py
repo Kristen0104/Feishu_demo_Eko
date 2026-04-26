@@ -2,6 +2,7 @@
 Agent 状态机模块
 定义 Agent 处理流程的状态转换：IDLE -> ANALYZING -> RETRIEVING -> GENERATING -> SYNCING -> COMPLETED
 """
+# TODO(PRD-4.4): split task-state transitions from realtime broadcast so state machine stays domain-only.
 from enum import Enum
 
 

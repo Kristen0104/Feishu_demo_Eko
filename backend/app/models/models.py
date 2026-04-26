@@ -8,7 +8,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID, ARRAY
 import uuid
 
-from app.core.database import Base
+from ..core.database import Base
 
 
 class User(Base):
