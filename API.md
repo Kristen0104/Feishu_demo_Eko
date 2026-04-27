@@ -109,7 +109,7 @@
 
 ## 4. Canvas
 
-Canvas 是当前内容工作台的主框架术语。现在的路由只暴露按会话维度的画板元数据。
+Canvas 是当前内容工作台的画板协作模块。现阶段已经支持单会话的飞书文档导入、working board 读取与编辑、AI patch 生成与应用、冲突审查、导出与发布回飞书。
 
 ### GET `/canvas/sessions/{session_id}`
 
@@ -132,6 +132,88 @@ Canvas 是当前内容工作台的主框架术语。现在的路由只暴露按�
   }
 }
 ```
+
+### GET `/canvas/sessions/{session_id}/detail`
+
+返回当前画板会话的完整调试态数据，包含：
+
+- `session`
+- `source_board`
+- `working_board`
+- `element_mappings`
+- `recent_changes`
+- `merge_reviews`
+
+前端联调页以这个接口作为主状态源。
+
+### POST `/canvas/sessions/{session_id}/import-feishu-document`
+
+输入飞书文档 `share_url`，解析文档中的首个 whiteboard，并把结果导入到当前 canvas session。返回 `CanvasSessionDetail`。
+
+### POST `/canvas/sessions/{session_id}/import-mermaid`
+
+把 Mermaid 语法导入到当前 canvas session 关联的飞书白板，并在导入后刷新 working board。
+
+**请求体**
+
+```json
+{
+  "code": "graph TD; A-->B;",
+  "syntax_type": 2,
+  "style_type": 1,
+  "diagram_type": 0
+}
+```
+
+### POST `/canvas/sessions/{session_id}/refresh-feishu-document`
+
+重新读取同一飞书文档的首个 whiteboard 并刷新 source board。
+
+- 如果 source version 未变化：保持 `sync_state=idle`
+- 如果 source version 已变化且本地 working board 已编辑：保留 working board，不覆盖用户内容，并切到 `sync_state=conflict`
+
+### POST `/canvas/sessions/{session_id}/refresh-feishu-document-review`
+
+执行刷新并在检测到 source conflict 时自动创建或复用 merge review。
+
+### POST `/canvas/sessions/{session_id}/changes`
+
+提交单次 working board 变更。当前主要用于前端把 Tldraw 画布内容回写到：
+
+- `working_board.latest_snapshot`
+- `working_board.crdt_document`
+- `element_mappings`
+- `recent_changes`
+
+### POST `/canvas/sessions/{session_id}/generate`
+
+生成画板 patch。
+
+- `full_board`：生成整板草稿
+- `targeted_patch`：针对选区生成节点替换或新增操作
+
+### POST `/canvas/sessions/{session_id}/apply-patch`
+
+把生成结果应用到当前 working board，并记录 `ai_patch` 变更。
+
+### GET `/canvas/sessions/{session_id}/merge-reviews`
+
+列出当前会话的 merge review。
+
+### POST `/canvas/sessions/{session_id}/merge-resolve`
+
+提交冲突解决结果。当前支持针对每个 conflict 选择：
+
+- `source`
+- `working`
+
+### POST `/canvas/sessions/{session_id}/export-feishu-board`
+
+导出当前 canvas session 为飞书画板适配格式。默认情况下，若仍存在未解决冲突则返回 `409`。
+
+### POST `/canvas/sessions/{session_id}/publish-feishu-board`
+
+在 export 成功的基础上，把结果发布回飞书。
 
 ---
 
@@ -186,7 +268,7 @@ Canvas 是当前内容工作台的主框架术语。现在的路由只暴露按�
 
 ## 7. 飞书
 
-飞书面当前只保留卡片元数据读取能力，属于后续平台集成的框架预留接口。
+飞书面当前除了卡片元数据读取，还保留了画板语法导入、白板节点读取和发布适配的接口，便于 Canvas 工作台直接对接飞书白板。
 
 ### GET `/feishu/cards/{card_id}`
 
@@ -207,6 +289,39 @@ Canvas 是当前内容工作台的主框架术语。现在的路由只暴露按�
     "title": "string",
     "platform": "feishu"
   }
+}
+```
+
+### POST `/feishu/boards/{whiteboard_id}/syntax-import`
+
+把语法图导入到指定飞书白板。当前代码路径会把请求转给飞书白板的语法导入接口，适合 PlantUML / Mermaid 这类文本图表。
+
+**路径参数**
+
+- `whiteboard_id`：飞书白板标识
+
+**请求体**
+
+```json
+{
+  "code": "graph TD; A-->B;",
+  "syntax_type": 2,
+  "style_type": 1,
+  "diagram_type": 0
+}
+```
+
+### POST `/feishu/boards/{whiteboard_id}/mermaid-import`
+
+Mermaid 语法导入的便捷入口。默认把 `syntax_type` 固定为 `2`，其余字段与通用语法导入一致，前端可以直接把 Mermaid 文本提交到当前白板。
+
+**请求体**
+
+```json
+{
+  "code": "graph TD; A-->B;",
+  "style_type": 1,
+  "diagram_type": 0
 }
 ```
 

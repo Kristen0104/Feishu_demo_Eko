@@ -4,8 +4,12 @@
 包含：数据库、Redis、JWT、飞书、LLM 等配置项
 """
 from functools import lru_cache
+from pathlib import Path
 from pydantic import ConfigDict
 from pydantic_settings import BaseSettings
+
+
+BACKEND_ENV_FILE = Path(__file__).resolve().parents[1] / ".env"
 
 
 class Settings(BaseSettings):
@@ -47,7 +51,16 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7 days
 
     # CORS
-    CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:1420"]
+    CORS_ORIGINS: list[str] = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:1420",
+        "http://127.0.0.1:1420",
+        "http://localhost:4173",
+        "http://127.0.0.1:4173",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ]
     FRONTEND_STATIC_DIR: str | None = None
 
     # Feishu
@@ -55,6 +68,28 @@ class Settings(BaseSettings):
     FEISHU_APP_SECRET: str = ""
     FEISHU_VERIFICATION_TOKEN: str = ""
     FEISHU_ENCRYPT_KEY: str = ""
+    FEISHU_DOC_RESOLVE_ENDPOINT_TEMPLATE: str = (
+        "https://open.feishu.cn/open-apis/docx/v1/documents/{document_token}"
+    )
+    FEISHU_DOC_RAW_CONTENT_ENDPOINT_TEMPLATE: str = (
+        "https://open.feishu.cn/open-apis/docx/v1/documents/{document_token}/raw_content"
+    )
+    FEISHU_DOC_BLOCKS_ENDPOINT_TEMPLATE: str = (
+        "https://open.feishu.cn/open-apis/docx/v1/documents/{document_id}/blocks"
+    )
+    FEISHU_WHITEBOARD_NODES_ENDPOINT_TEMPLATE: str = (
+        "https://open.feishu.cn/open-apis/board/v1/whiteboards/{whiteboard_id}/nodes"
+    )
+    FEISHU_WHITEBOARD_PUBLISH_ENDPOINT_TEMPLATE: str = (
+        "https://open.feishu.cn/open-apis/board/v1/whiteboards/{whiteboard_id}/nodes"
+    )
+    FEISHU_WHITEBOARD_THEME_UPDATE_ENDPOINT_TEMPLATE: str = (
+        "https://open.feishu.cn/open-apis/board/v1/whiteboards/{whiteboard_id}/update_theme"
+    )
+    FEISHU_WHITEBOARD_SYNTAX_IMPORT_ENDPOINT_TEMPLATE: str = (
+        "https://open.feishu.cn/open-apis/board/v1/whiteboards/{whiteboard_id}/nodes/plantuml"
+    )
+    FEISHU_DOC_ACCESS_TOKEN: str = ""
 
     # Agent (DeepSeek)
     AGENT_MODEL: str = "deepseek"
@@ -68,7 +103,7 @@ class Settings(BaseSettings):
 
     AGENT_EMBEDDING_MODEL: str = "text-embedding-3-small"
 
-    model_config = ConfigDict(env_file=".env", extra="allow")
+    model_config = ConfigDict(env_file=str(BACKEND_ENV_FILE), extra="allow")
 
 
 @lru_cache

@@ -1,0 +1,62 @@
+<h2>Eko x Feishu Canvas</h2>
+<p class="subtitle">推荐架构：双轨镜像 + 实时协作 + 单人离线恢复</p>
+
+<div class="mockup">
+  <div class="mockup-header">整体文档流转</div>
+  <div class="mockup-body">
+    <div style="display:grid;grid-template-columns:1fr 80px 1fr;gap:16px;align-items:center;">
+      <div style="border:1px solid #d7e3f4;border-radius:20px;padding:18px;background:#f8fbff;">
+        <h3 style="margin:0 0 10px;">Feishu Source Board</h3>
+        <p style="margin:0 0 8px;">飞书原始画板</p>
+        <p style="margin:0;font-size:14px;color:#5f6b7a;">保留原始结构、来源、版本号</p>
+      </div>
+      <div style="text-align:center;font-size:28px;color:#7c8aa5;">⇄</div>
+      <div style="border:1px solid #d7e3f4;border-radius:20px;padding:18px;background:#fffef8;">
+        <h3 style="margin:0 0 10px;">Eko Working Board</h3>
+        <p style="margin:0 0 8px;">AI + 用户可编辑副本</p>
+        <p style="margin:0;font-size:14px;color:#5f6b7a;">用于生成、重排、局部改写、协作编辑</p>
+      </div>
+    </div>
+
+    <div style="margin-top:18px;border:1px dashed #c8d7ea;border-radius:18px;padding:16px;background:white;">
+      <strong>中间层：Board Mapping + Change Log + Merge Review</strong>
+      <p style="margin:8px 0 0;font-size:14px;color:#5f6b7a;">
+        记录元素映射、AI 补丁、用户编辑、飞书侧更新；发生双向改动时进入人工确认合并。
+      </p>
+    </div>
+  </div>
+</div>
+
+<div class="cards" style="margin-top:18px;">
+  <div class="card">
+    <div class="card-body">
+      <h3>多人在线协作</h3>
+      <p>在线时所有编辑都进入实时协作通道，创建者与成员共同编辑同一份 Eko Working Board。</p>
+      <p style="font-size:14px;color:#5f6b7a;">建议用 CRDT / 操作日志，而不是简单整板覆盖。</p>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-body">
+      <h3>单人离线恢复</h3>
+      <p>断网后继续在本地编辑 Eko Working Board，恢复联网后自动回放本地操作并进入同步检查。</p>
+      <p style="font-size:14px;color:#5f6b7a;">仅单人离线时开放，避免多人离线冲突在 MVP 阶段失控。</p>
+    </div>
+  </div>
+</div>
+
+<div class="options" style="margin-top:18px;">
+  <div class="option" data-choice="approve-direction" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>方向正确</h3>
+      <p>认同这套“双轨镜像 + 实时协作 + 单人离线恢复”的总体架构</p>
+    </div>
+  </div>
+  <div class="option" data-choice="adjust-direction" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>需要调整</h3>
+      <p>架构大体可以，但某个部分要改，比如同步、权限或离线策略</p>
+    </div>
+  </div>
+</div>

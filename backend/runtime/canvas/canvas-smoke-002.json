@@ -1,0 +1,657 @@
+{
+  "session": {
+    "session_id": "canvas-smoke-002",
+    "title": "Stub Canvas Session",
+    "mode": "canvas",
+    "owner_user_id": "creator-001",
+    "collaborator_ids": [
+      "editor-002",
+      "reviewer-003"
+    ],
+    "permission_mode": "collaborative",
+    "sync_state": "idle",
+    "offline_capability": "single_user_only"
+  },
+  "source_board": {
+    "source_board_id": "wb-first",
+    "session_id": "canvas-smoke-002",
+    "source_version": "v5",
+    "raw_payload": {
+      "source_metadata": {
+        "source_type": "feishu_document_whiteboard",
+        "share_url": "https://jcneyh7qlo8i.feishu.cn/docx/QFQVd8EEnoD58zxNwLNcmJRJnAg?from=from_copylink",
+        "document_id": "QFQVd8EEnoD58zxNwLNcmJRJnAg",
+        "document_token": "QFQVd8EEnoD58zxNwLNcmJRJnAg",
+        "whiteboard_id": "wb-first",
+        "block_id": "block-2",
+        "source_version": "v5",
+        "raw_document": {
+          "document_token": "QFQVd8EEnoD58zxNwLNcmJRJnAg",
+          "document_id": "QFQVd8EEnoD58zxNwLNcmJRJnAg",
+          "title": "产品路线图",
+          "plain_text": "需求收集\n方案设计\n执行计划",
+          "raw_content": {
+            "content": "需求收集\n方案设计\n执行计划"
+          },
+          "share_url": "https://jcneyh7qlo8i.feishu.cn/docx/QFQVd8EEnoD58zxNwLNcmJRJnAg?from=from_copylink"
+        },
+        "raw_whiteboard": {
+          "document_id": "QFQVd8EEnoD58zxNwLNcmJRJnAg",
+          "whiteboard_id": "wb-first",
+          "block_id": "block-2",
+          "nodes": [
+            {
+              "node_id": "node-1",
+              "title": "Start",
+              "type": "text_shape",
+              "x": 120,
+              "y": 160,
+              "width": 240,
+              "height": 64
+            },
+            {
+              "node_id": "node-2",
+              "title": "Discuss",
+              "type": "text_shape",
+              "x": 420,
+              "y": 160,
+              "width": 260,
+              "height": 64
+            }
+          ],
+          "raw_payload": {
+            "items": [
+              {
+                "node_id": "node-1",
+                "title": "Start",
+                "type": "text_shape",
+                "x": 120,
+                "y": 160,
+                "width": 240,
+                "height": 64
+              },
+              {
+                "node_id": "node-2",
+                "title": "Discuss",
+                "type": "text_shape",
+                "x": 420,
+                "y": 160,
+                "width": 260,
+                "height": 64
+              }
+            ]
+          }
+        }
+      },
+      "source_board": {
+        "board_id": "wb-first",
+        "title": "产品路线图",
+        "nodes": [
+          {
+            "node_id": "node-1",
+            "title": "Start",
+            "type": "text_shape",
+            "x": 120,
+            "y": 160,
+            "width": 240,
+            "height": 64,
+            "id": "node-1",
+            "text": "Start"
+          },
+          {
+            "node_id": "node-2",
+            "title": "Discuss",
+            "type": "text_shape",
+            "x": 420,
+            "y": 160,
+            "width": 260,
+            "height": 64,
+            "id": "node-2",
+            "text": "Discuss"
+          }
+        ],
+        "edges": [],
+        "metadata": {
+          "source_type": "feishu_document_whiteboard",
+          "share_url": "https://jcneyh7qlo8i.feishu.cn/docx/QFQVd8EEnoD58zxNwLNcmJRJnAg?from=from_copylink",
+          "document_id": "QFQVd8EEnoD58zxNwLNcmJRJnAg",
+          "document_token": "QFQVd8EEnoD58zxNwLNcmJRJnAg",
+          "whiteboard_id": "wb-first",
+          "block_id": "block-2",
+          "source_version": "v5",
+          "raw_document": {
+            "document_token": "QFQVd8EEnoD58zxNwLNcmJRJnAg",
+            "document_id": "QFQVd8EEnoD58zxNwLNcmJRJnAg",
+            "title": "产品路线图",
+            "plain_text": "需求收集\n方案设计\n执行计划",
+            "raw_content": {
+              "content": "需求收集\n方案设计\n执行计划"
+            },
+            "share_url": "https://jcneyh7qlo8i.feishu.cn/docx/QFQVd8EEnoD58zxNwLNcmJRJnAg?from=from_copylink"
+          },
+          "raw_whiteboard": {
+            "document_id": "QFQVd8EEnoD58zxNwLNcmJRJnAg",
+            "whiteboard_id": "wb-first",
+            "block_id": "block-2",
+            "nodes": [
+              {
+                "node_id": "node-1",
+                "title": "Start",
+                "type": "text_shape",
+                "x": 120,
+                "y": 160,
+                "width": 240,
+                "height": 64
+              },
+              {
+                "node_id": "node-2",
+                "title": "Discuss",
+                "type": "text_shape",
+                "x": 420,
+                "y": 160,
+                "width": 260,
+                "height": 64
+              }
+            ],
+            "raw_payload": {
+              "items": [
+                {
+                  "node_id": "node-1",
+                  "title": "Start",
+                  "type": "text_shape",
+                  "x": 120,
+                  "y": 160,
+                  "width": 240,
+                  "height": 64
+                },
+                {
+                  "node_id": "node-2",
+                  "title": "Discuss",
+                  "type": "text_shape",
+                  "x": 420,
+                  "y": 160,
+                  "width": 260,
+                  "height": 64
+                }
+              ]
+            }
+          }
+        }
+      },
+      "adapter_payload": {
+        "session_id": "canvas-smoke-002",
+        "source_board": {
+          "board_id": "wb-first",
+          "title": "产品路线图",
+          "nodes": [
+            {
+              "node_id": "node-1",
+              "title": "Start",
+              "type": "text_shape",
+              "x": 120,
+              "y": 160,
+              "width": 240,
+              "height": 64,
+              "id": "node-1",
+              "text": "Start"
+            },
+            {
+              "node_id": "node-2",
+              "title": "Discuss",
+              "type": "text_shape",
+              "x": 420,
+              "y": 160,
+              "width": 260,
+              "height": 64,
+              "id": "node-2",
+              "text": "Discuss"
+            }
+          ],
+          "edges": [],
+          "metadata": {
+            "source_type": "feishu_document_whiteboard",
+            "share_url": "https://jcneyh7qlo8i.feishu.cn/docx/QFQVd8EEnoD58zxNwLNcmJRJnAg?from=from_copylink",
+            "document_id": "QFQVd8EEnoD58zxNwLNcmJRJnAg",
+            "document_token": "QFQVd8EEnoD58zxNwLNcmJRJnAg",
+            "whiteboard_id": "wb-first",
+            "block_id": "block-2",
+            "source_version": "v5",
+            "raw_document": {
+              "document_token": "QFQVd8EEnoD58zxNwLNcmJRJnAg",
+              "document_id": "QFQVd8EEnoD58zxNwLNcmJRJnAg",
+              "title": "产品路线图",
+              "plain_text": "需求收集\n方案设计\n执行计划",
+              "raw_content": {
+                "content": "需求收集\n方案设计\n执行计划"
+              },
+              "share_url": "https://jcneyh7qlo8i.feishu.cn/docx/QFQVd8EEnoD58zxNwLNcmJRJnAg?from=from_copylink"
+            },
+            "raw_whiteboard": {
+              "document_id": "QFQVd8EEnoD58zxNwLNcmJRJnAg",
+              "whiteboard_id": "wb-first",
+              "block_id": "block-2",
+              "nodes": [
+                {
+                  "node_id": "node-1",
+                  "title": "Start",
+                  "type": "text_shape",
+                  "x": 120,
+                  "y": 160,
+                  "width": 240,
+                  "height": 64
+                },
+                {
+                  "node_id": "node-2",
+                  "title": "Discuss",
+                  "type": "text_shape",
+                  "x": 420,
+                  "y": 160,
+                  "width": 260,
+                  "height": 64
+                }
+              ],
+              "raw_payload": {
+                "items": [
+                  {
+                    "node_id": "node-1",
+                    "title": "Start",
+                    "type": "text_shape",
+                    "x": 120,
+                    "y": 160,
+                    "width": 240,
+                    "height": 64
+                  },
+                  {
+                    "node_id": "node-2",
+                    "title": "Discuss",
+                    "type": "text_shape",
+                    "x": 420,
+                    "y": 160,
+                    "width": 260,
+                    "height": 64
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "working_board": {
+          "working_board_id": "wb-first-working",
+          "session_id": "canvas-smoke-002",
+          "latest_version": 1,
+          "crdt_document": {
+            "nodes": [
+              {
+                "node_id": "node-1",
+                "title": "Start",
+                "type": "text_shape",
+                "x": 120,
+                "y": 160,
+                "width": 240,
+                "height": 64,
+                "id": "node-1",
+                "text": "Start"
+              },
+              {
+                "node_id": "node-2",
+                "title": "Discuss",
+                "type": "text_shape",
+                "x": 420,
+                "y": 160,
+                "width": 260,
+                "height": 64,
+                "id": "node-2",
+                "text": "Discuss"
+              }
+            ],
+            "edges": []
+          },
+          "latest_snapshot": {
+            "nodes": [
+              {
+                "node_id": "node-1",
+                "title": "Start",
+                "type": "text_shape",
+                "x": 120,
+                "y": 160,
+                "width": 240,
+                "height": 64,
+                "id": "node-1",
+                "text": "Start"
+              },
+              {
+                "node_id": "node-2",
+                "title": "Discuss",
+                "type": "text_shape",
+                "x": 420,
+                "y": 160,
+                "width": 260,
+                "height": 64,
+                "id": "node-2",
+                "text": "Discuss"
+              }
+            ],
+            "edges": []
+          },
+          "offline_state": "clean"
+        },
+        "element_mappings": [
+          {
+            "source_element_id": "node-1",
+            "working_element_id": "node-1",
+            "element_type": "node",
+            "origin_type": "source_import",
+            "mapping_status": "active",
+            "metadata": {
+              "source_type": "feishu_document_whiteboard",
+              "document_id": "QFQVd8EEnoD58zxNwLNcmJRJnAg",
+              "whiteboard_id": "wb-first",
+              "block_id": "block-2"
+            }
+          },
+          {
+            "source_element_id": "node-2",
+            "working_element_id": "node-2",
+            "element_type": "node",
+            "origin_type": "source_import",
+            "mapping_status": "active",
+            "metadata": {
+              "source_type": "feishu_document_whiteboard",
+              "document_id": "QFQVd8EEnoD58zxNwLNcmJRJnAg",
+              "whiteboard_id": "wb-first",
+              "block_id": "block-2"
+            }
+          }
+        ]
+      }
+    },
+    "sync_cursor": null
+  },
+  "working_board": {
+    "working_board_id": "wb-first-working",
+    "session_id": "canvas-smoke-002",
+    "latest_version": 1,
+    "crdt_document": {
+      "nodes": [
+        {
+          "node_id": "node-1",
+          "title": "Start",
+          "type": "text_shape",
+          "x": 120,
+          "y": 160,
+          "width": 240,
+          "height": 64,
+          "id": "node-1",
+          "text": "Start"
+        },
+        {
+          "node_id": "node-2",
+          "title": "Discuss",
+          "type": "text_shape",
+          "x": 420,
+          "y": 160,
+          "width": 260,
+          "height": 64,
+          "id": "node-2",
+          "text": "Discuss"
+        }
+      ],
+      "edges": []
+    },
+    "latest_snapshot": {
+      "nodes": [
+        {
+          "node_id": "node-1",
+          "title": "Start",
+          "type": "text_shape",
+          "x": 120,
+          "y": 160,
+          "width": 240,
+          "height": 64,
+          "id": "node-1",
+          "text": "Start"
+        },
+        {
+          "node_id": "node-2",
+          "title": "Discuss",
+          "type": "text_shape",
+          "x": 420,
+          "y": 160,
+          "width": 260,
+          "height": 64,
+          "id": "node-2",
+          "text": "Discuss"
+        }
+      ],
+      "edges": []
+    },
+    "offline_state": "clean"
+  },
+  "element_mappings": [
+    {
+      "source_element_id": "node-1",
+      "working_element_id": "node-1",
+      "element_type": "node",
+      "origin_type": "source_import",
+      "mapping_status": "active",
+      "metadata": {
+        "source_type": "feishu_document_whiteboard",
+        "document_id": "QFQVd8EEnoD58zxNwLNcmJRJnAg",
+        "whiteboard_id": "wb-first",
+        "block_id": "block-2"
+      }
+    },
+    {
+      "source_element_id": "node-2",
+      "working_element_id": "node-2",
+      "element_type": "node",
+      "origin_type": "source_import",
+      "mapping_status": "active",
+      "metadata": {
+        "source_type": "feishu_document_whiteboard",
+        "document_id": "QFQVd8EEnoD58zxNwLNcmJRJnAg",
+        "whiteboard_id": "wb-first",
+        "block_id": "block-2"
+      }
+    }
+  ],
+  "recent_changes": [
+    {
+      "change_id": "canvas-smoke-002-source-import-001",
+      "session_id": "canvas-smoke-002",
+      "change_type": "source_import",
+      "actor_type": "feishu",
+      "actor_id": "wb-first",
+      "target_scope": "board:wb-first",
+      "payload": {
+        "session_id": "canvas-smoke-002",
+        "source_board": {
+          "board_id": "wb-first",
+          "title": "产品路线图",
+          "nodes": [
+            {
+              "node_id": "node-1",
+              "title": "Start",
+              "type": "text_shape",
+              "x": 120,
+              "y": 160,
+              "width": 240,
+              "height": 64,
+              "id": "node-1",
+              "text": "Start"
+            },
+            {
+              "node_id": "node-2",
+              "title": "Discuss",
+              "type": "text_shape",
+              "x": 420,
+              "y": 160,
+              "width": 260,
+              "height": 64,
+              "id": "node-2",
+              "text": "Discuss"
+            }
+          ],
+          "edges": [],
+          "metadata": {
+            "source_type": "feishu_document_whiteboard",
+            "share_url": "https://jcneyh7qlo8i.feishu.cn/docx/QFQVd8EEnoD58zxNwLNcmJRJnAg?from=from_copylink",
+            "document_id": "QFQVd8EEnoD58zxNwLNcmJRJnAg",
+            "document_token": "QFQVd8EEnoD58zxNwLNcmJRJnAg",
+            "whiteboard_id": "wb-first",
+            "block_id": "block-2",
+            "source_version": "v5",
+            "raw_document": {
+              "document_token": "QFQVd8EEnoD58zxNwLNcmJRJnAg",
+              "document_id": "QFQVd8EEnoD58zxNwLNcmJRJnAg",
+              "title": "产品路线图",
+              "plain_text": "需求收集\n方案设计\n执行计划",
+              "raw_content": {
+                "content": "需求收集\n方案设计\n执行计划"
+              },
+              "share_url": "https://jcneyh7qlo8i.feishu.cn/docx/QFQVd8EEnoD58zxNwLNcmJRJnAg?from=from_copylink"
+            },
+            "raw_whiteboard": {
+              "document_id": "QFQVd8EEnoD58zxNwLNcmJRJnAg",
+              "whiteboard_id": "wb-first",
+              "block_id": "block-2",
+              "nodes": [
+                {
+                  "node_id": "node-1",
+                  "title": "Start",
+                  "type": "text_shape",
+                  "x": 120,
+                  "y": 160,
+                  "width": 240,
+                  "height": 64
+                },
+                {
+                  "node_id": "node-2",
+                  "title": "Discuss",
+                  "type": "text_shape",
+                  "x": 420,
+                  "y": 160,
+                  "width": 260,
+                  "height": 64
+                }
+              ],
+              "raw_payload": {
+                "items": [
+                  {
+                    "node_id": "node-1",
+                    "title": "Start",
+                    "type": "text_shape",
+                    "x": 120,
+                    "y": 160,
+                    "width": 240,
+                    "height": 64
+                  },
+                  {
+                    "node_id": "node-2",
+                    "title": "Discuss",
+                    "type": "text_shape",
+                    "x": 420,
+                    "y": 160,
+                    "width": 260,
+                    "height": 64
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "working_board": {
+          "working_board_id": "wb-first-working",
+          "session_id": "canvas-smoke-002",
+          "latest_version": 1,
+          "crdt_document": {
+            "nodes": [
+              {
+                "node_id": "node-1",
+                "title": "Start",
+                "type": "text_shape",
+                "x": 120,
+                "y": 160,
+                "width": 240,
+                "height": 64,
+                "id": "node-1",
+                "text": "Start"
+              },
+              {
+                "node_id": "node-2",
+                "title": "Discuss",
+                "type": "text_shape",
+                "x": 420,
+                "y": 160,
+                "width": 260,
+                "height": 64,
+                "id": "node-2",
+                "text": "Discuss"
+              }
+            ],
+            "edges": []
+          },
+          "latest_snapshot": {
+            "nodes": [
+              {
+                "node_id": "node-1",
+                "title": "Start",
+                "type": "text_shape",
+                "x": 120,
+                "y": 160,
+                "width": 240,
+                "height": 64,
+                "id": "node-1",
+                "text": "Start"
+              },
+              {
+                "node_id": "node-2",
+                "title": "Discuss",
+                "type": "text_shape",
+                "x": 420,
+                "y": 160,
+                "width": 260,
+                "height": 64,
+                "id": "node-2",
+                "text": "Discuss"
+              }
+            ],
+            "edges": []
+          },
+          "offline_state": "clean"
+        },
+        "element_mappings": [
+          {
+            "source_element_id": "node-1",
+            "working_element_id": "node-1",
+            "element_type": "node",
+            "origin_type": "source_import",
+            "mapping_status": "active",
+            "metadata": {
+              "source_type": "feishu_document_whiteboard",
+              "document_id": "QFQVd8EEnoD58zxNwLNcmJRJnAg",
+              "whiteboard_id": "wb-first",
+              "block_id": "block-2"
+            }
+          },
+          {
+            "source_element_id": "node-2",
+            "working_element_id": "node-2",
+            "element_type": "node",
+            "origin_type": "source_import",
+            "mapping_status": "active",
+            "metadata": {
+              "source_type": "feishu_document_whiteboard",
+              "document_id": "QFQVd8EEnoD58zxNwLNcmJRJnAg",
+              "whiteboard_id": "wb-first",
+              "block_id": "block-2"
+            }
+          }
+        ]
+      },
+      "base_version": "v1",
+      "result_version": "v1"
+    }
+  ],
+  "merge_reviews": []
+}

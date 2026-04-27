@@ -1,0 +1,80 @@
+{
+  "session": {
+    "session_id": "session-001",
+    "title": "Stub Canvas Session",
+    "mode": "canvas",
+    "owner_user_id": "creator-001",
+    "collaborator_ids": [
+      "editor-002",
+      "reviewer-003"
+    ],
+    "permission_mode": "collaborative",
+    "sync_state": "idle",
+    "offline_capability": "single_user_only"
+  },
+  "source_board": {
+    "source_board_id": "session-001-source",
+    "session_id": "session-001",
+    "source_version": "v10",
+    "raw_payload": {
+      "nodes": [
+        {
+          "id": "source-node-1",
+          "text": "Imported idea"
+        }
+      ],
+      "edges": []
+    },
+    "sync_cursor": "cursor-session-001"
+  },
+  "working_board": {
+    "working_board_id": "session-001-working",
+    "session_id": "session-001",
+    "latest_version": 2,
+    "crdt_document": {
+      "nodes": [
+        {
+          "id": "node-1",
+          "text": "新增节点"
+        }
+      ]
+    },
+    "latest_snapshot": {
+      "nodes": [
+        {
+          "id": "node-1",
+          "text": "新增节点"
+        }
+      ]
+    },
+    "offline_state": "dirty"
+  },
+  "recent_changes": [
+    {
+      "change_id": "change-001",
+      "session_id": "session-001",
+      "change_type": "user_edit",
+      "actor_type": "user",
+      "payload": {
+        "latest_snapshot": {
+          "nodes": [
+            {
+              "id": "node-1",
+              "text": "新增节点"
+            }
+          ]
+        },
+        "crdt_document": {
+          "nodes": [
+            {
+              "id": "node-1",
+              "text": "新增节点"
+            }
+          ]
+        }
+      },
+      "base_version": "v1",
+      "result_version": "v2"
+    }
+  ]
+}

@@ -1,85 +1,367 @@
 <!DOCTYPE html>
 <html lang="zh">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Eko 测试</title>
-    <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 600px; margin: 40px auto; padding: 20px; }
-        h1 { font-size: 24px; margin-bottom: 20px; }
-        .chat-box { border: 1px solid #ddd; border-radius: 8px; height: 400px; overflow-y: auto; padding: 16px; margin-bottom: 16px; background: #fafafa; }
-        .msg { margin-bottom: 12px; padding: 8px 12px; border-radius: 8px; max-width: 80%; }
-        .msg.user { background: #007aff; color: white; margin-left: auto; }
-        .msg.assistant { background: #e9e9e9; color: #333; }
-        .input-area { display: flex; gap: 8px; }
-        input { flex: 1; padding: 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 16px; }
-        button { padding: 12px 24px; background: #007aff; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 16px; }
-        button:disabled { background: #ccc; }
-        .status { color: #666; font-size: 12px; margin-top: 8px; }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Eko Canvas 验证页</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f4f7fb;
+      --panel: #ffffff;
+      --border: #d9e3f0;
+      --text: #162033;
+      --muted: #61708a;
+      --accent: #2563eb;
+      --accent-weak: #e8f0ff;
+      --success: #0f9d58;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: linear-gradient(180deg, #eef4ff 0%, var(--bg) 100%);
+      color: var(--text);
+    }
+    .shell {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 32px 20px 48px;
+    }
+    .hero {
+      display: grid;
+      gap: 8px;
+      margin-bottom: 20px;
+    }
+    h1 {
+      font-size: 28px;
+      margin: 0;
+    }
+    .subtitle {
+      color: var(--muted);
+      line-height: 1.5;
+      margin: 0;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: 340px 1fr;
+      gap: 16px;
+    }
+    .card {
+      background: rgba(255,255,255,0.9);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 16px;
+      box-shadow: 0 10px 30px rgba(18, 38, 63, 0.05);
+    }
+    .field {
+      display: grid;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    label {
+      font-size: 13px;
+      color: var(--muted);
+    }
+    input, textarea, select {
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 11px 12px;
+      font: inherit;
+      background: #fff;
+      color: var(--text);
+    }
+    textarea { min-height: 110px; resize: vertical; }
+    .row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 8px;
+    }
+    button {
+      border: 0;
+      border-radius: 12px;
+      padding: 11px 14px;
+      background: var(--accent);
+      color: white;
+      cursor: pointer;
+      font: inherit;
+    }
+    button.secondary {
+      background: var(--accent-weak);
+      color: var(--accent);
+    }
+    button:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+    pre {
+      white-space: pre-wrap;
+      word-break: break-word;
+      background: #0f172a;
+      color: #e2e8f0;
+      border-radius: 16px;
+      padding: 16px;
+      min-height: 520px;
+      margin: 0;
+      overflow: auto;
+    }
+    .status {
+      margin-top: 10px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      width: fit-content;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: #eaf4ff;
+      color: #1e4fa3;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: var(--success);
+    }
+    @media (max-width: 900px) {
+      .grid { grid-template-columns: 1fr; }
+    }
+  </style>
 </head>
 <body>
-    <h1>Eko 测试页面</h1>
-    <div class="chat-box" id="chatBox"></div>
-    <div class="input-area">
-        <input type="text" id="messageInput" placeholder="输入消息..." onkeypress="if(event.key==='Enter')sendMessage()">
-        <button id="sendBtn" onclick="sendMessage()">发送</button>
+  <div class="shell">
+    <div class="hero">
+      <div class="badge"><span class="dot"></span>Canvas 验证页</div>
+      <h1>Eko Canvas 接口验证</h1>
+      <p class="subtitle">这个页面只负责验证后端契约，不追求完整前端体验。它可以读取会话、生成画板补丁、创建合并审查，并展示返回 JSON。</p>
     </div>
-    <div class="status" id="status"></div>
 
-    <script>
-        const API_BASE = 'http://localhost:8000/api/v1';
-        const SESSION_ID = 'test-session';
-        // 临时 token（测试用）
-        const TOKEN = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ0ZXN0LXVzZXItaWQiLCJleHAiOjE3Nzc2MjA5MzZ9.yMHy_cUuueu5fKPc8IFv7i4m5oL2uf3Ml4I-QY5Pp-E';
+    <div class="grid">
+      <section class="card">
+        <div class="field">
+          <label for="apiBase">API Base</label>
+          <input id="apiBase" value="http://localhost:8000/api/v1">
+        </div>
+        <div class="field">
+          <label for="sessionId">Session ID</label>
+          <input id="sessionId" value="canvas-demo-001">
+        </div>
+        <div class="field">
+          <label for="generationMode">Generation Mode</label>
+          <select id="generationMode">
+            <option value="full_board">full_board</option>
+            <option value="targeted_patch">targeted_patch</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="userPrompt">User Prompt</label>
+          <textarea id="userPrompt">根据聊天记录整理成一张产品路线图画板</textarea>
+        </div>
+        <div class="field">
+          <label for="selectionContext">Selection Context (JSON)</label>
+          <textarea id="selectionContext">{"selectedNodeIds":["node-1"]}</textarea>
+        </div>
+        <div class="field">
+          <label for="changePayload">Change Payload (JSON)</label>
+          <textarea id="changePayload">{"latest_snapshot":{"nodes":[{"id":"node-1","text":"新增节点"}]},"crdt_document":{"nodes":[{"id":"node-1","text":"新增节点"}]}}</textarea>
+        </div>
+        <div class="actions">
+          <button onclick="loadStubSession()">读取 Stub Session</button>
+          <button class="secondary" onclick="loadDetail()">读取 Detail</button>
+          <button class="secondary" onclick="loadBoardState()">读取 Board State</button>
+          <button onclick="generatePatch()">生成 Patch</button>
+          <button class="secondary" onclick="applyChange()">应用变更</button>
+          <button class="secondary" onclick="loadChanges()">读取历史</button>
+          <button class="secondary" onclick="createMergeReview()">创建合并审查</button>
+        </div>
+        <div class="status" id="status">等待操作。</div>
+      </section>
 
-        function addMsg(content, type) {
-            const box = document.getElementById('chatBox');
-            const div = document.createElement('div');
-            div.className = `msg ${type}`;
-            div.textContent = content;
-            box.appendChild(div);
-            box.scrollTop = box.scrollHeight;
-        }
+      <section class="card">
+        <pre id="output">{}</pre>
+      </section>
+    </div>
+  </div>
 
-        async function sendMessage() {
-            const input = document.getElementById('messageInput');
-            const btn = document.getElementById('sendBtn');
-            const msg = input.value.trim();
-            if (!msg) return;
+  <script>
+    function setStatus(text) {
+      document.getElementById("status").textContent = text;
+    }
 
-            addMsg(msg, 'user');
-            input.value = '';
-            btn.disabled = true;
-            document.getElementById('status').textContent = '等待回复...';
+    function setOutput(value) {
+      document.getElementById("output").textContent = JSON.stringify(value, null, 2);
+    }
 
-            try {
-                const res = await fetch(`${API_BASE}/agent/execute`, {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${TOKEN}`,
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        session_id: SESSION_ID,
-                        message: msg,
-                        stream: false
-                    })
-                });
-                const data = await res.json();
-                if (data.result) {
-                    addMsg(data.result, 'assistant');
-                } else {
-                    addMsg('错误: ' + JSON.stringify(data), 'assistant');
-                }
-            } catch (e) {
-                addMsg('请求失败: ' + e.message, 'assistant');
-            }
+    function readJsonField(id, fallback) {
+      const value = document.getElementById(id).value.trim();
+      if (!value) return fallback;
+      return JSON.parse(value);
+    }
 
-            btn.disabled = false;
-            document.getElementById('status').textContent = '';
-        }
-    </script>
+    async function requestJson(url, options) {
+      const response = await fetch(url, options);
+      const json = await response.json();
+      if (!response.ok) {
+        throw new Error(json?.message || `HTTP ${response.status}`);
+      }
+      return json;
+    }
+
+    async function loadStubSession() {
+      const apiBase = document.getElementById("apiBase").value.trim();
+      const sessionId = document.getElementById("sessionId").value.trim();
+      setStatus("读取 session 中...");
+
+      try {
+        const json = await requestJson(`${apiBase}/canvas/sessions/${encodeURIComponent(sessionId)}`);
+        setOutput(json);
+        setStatus("已读取 stub session。");
+      } catch (error) {
+        setOutput({ error: error.message });
+        setStatus("读取失败。");
+      }
+    }
+
+    async function loadBoardState() {
+      const apiBase = document.getElementById("apiBase").value.trim();
+      const sessionId = document.getElementById("sessionId").value.trim();
+      setStatus("读取 board state 中...");
+
+      try {
+        const json = await requestJson(`${apiBase}/canvas/sessions/${encodeURIComponent(sessionId)}/state`);
+        setOutput(json);
+        setStatus("已读取 board state。");
+      } catch (error) {
+        setOutput({ error: error.message });
+        setStatus("读取失败。");
+      }
+    }
+
+    async function loadDetail() {
+      const apiBase = document.getElementById("apiBase").value.trim();
+      const sessionId = document.getElementById("sessionId").value.trim();
+      setStatus("读取 detail 中...");
+
+      try {
+        const json = await requestJson(`${apiBase}/canvas/sessions/${encodeURIComponent(sessionId)}/detail`);
+        setOutput(json);
+        setStatus("已读取 detail。");
+      } catch (error) {
+        setOutput({ error: error.message });
+        setStatus("读取失败。");
+      }
+    }
+
+    async function generatePatch() {
+      const apiBase = document.getElementById("apiBase").value.trim();
+      const sessionId = document.getElementById("sessionId").value.trim();
+      const generationMode = document.getElementById("generationMode").value;
+      const userPrompt = document.getElementById("userPrompt").value.trim();
+      const selectionContext = readJsonField("selectionContext", null);
+
+      setStatus("生成 patch 中...");
+
+      try {
+        const json = await requestJson(`${apiBase}/canvas/sessions/${encodeURIComponent(sessionId)}/generate`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            generation_mode: generationMode,
+            chat_context: [
+              { role: "user", content: "整理本周项目讨论" }
+            ],
+            user_prompt: userPrompt,
+            board_context: { source: "chat+prompt" },
+            selection_context: selectionContext,
+          }),
+        });
+        setOutput(json);
+        setStatus("Patch 生成完成。");
+      } catch (error) {
+        setOutput({ error: error.message });
+        setStatus("生成失败。");
+      }
+    }
+
+    async function createMergeReview() {
+      const apiBase = document.getElementById("apiBase").value.trim();
+      const sessionId = document.getElementById("sessionId").value.trim();
+
+      setStatus("创建合并审查中...");
+
+      try {
+        const json = await requestJson(`${apiBase}/canvas/sessions/${encodeURIComponent(sessionId)}/merge-review`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            source_version: "v10",
+            working_version: 12,
+            conflicts: [{ element_id: "node-1", kind: "text_conflict" }],
+          }),
+        });
+        setOutput(json);
+        setStatus("合并审查已创建。");
+      } catch (error) {
+        setOutput({ error: error.message });
+        setStatus("创建失败。");
+      }
+    }
+
+    async function applyChange() {
+      const apiBase = document.getElementById("apiBase").value.trim();
+      const sessionId = document.getElementById("sessionId").value.trim();
+      const changePayload = readJsonField("changePayload", {});
+
+      setStatus("应用变更中...");
+
+      try {
+        const json = await requestJson(`${apiBase}/canvas/sessions/${encodeURIComponent(sessionId)}/changes`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            change_id: `change-${Date.now()}`,
+            session_id: sessionId,
+            change_type: "user_edit",
+            actor_type: "user",
+            payload: changePayload,
+            base_version: "v1",
+            result_version: "v2",
+          }),
+        });
+        setOutput(json);
+        setStatus("变更已应用。");
+      } catch (error) {
+        setOutput({ error: error.message });
+        setStatus("应用失败。");
+      }
+    }
+
+    async function loadChanges() {
+      const apiBase = document.getElementById("apiBase").value.trim();
+      const sessionId = document.getElementById("sessionId").value.trim();
+      setStatus("读取历史中...");
+
+      try {
+        const json = await requestJson(`${apiBase}/canvas/sessions/${encodeURIComponent(sessionId)}/changes`);
+        setOutput(json);
+        setStatus("已读取历史。");
+      } catch (error) {
+        setOutput({ error: error.message });
+        setStatus("读取失败。");
+      }
+    }
+  </script>
 </body>
 </html>
