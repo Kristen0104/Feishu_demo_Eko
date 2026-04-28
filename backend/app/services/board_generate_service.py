@@ -167,12 +167,12 @@ class BoardGenerateService:
             )
             parsed_plan = parse_create_notes_plan(_extract_json_object(plan_payload))
             if parsed_plan is None:
-                plan = fallback_plan_from_message(message)
+                plan = normalize_create_notes_plan(fallback_plan_from_message(message), message)
             else:
                 plan = normalize_create_notes_plan(parsed_plan, message)
                 groups = plan.get("groups")
                 if not isinstance(groups, list) or not groups:
-                    plan = fallback_plan_from_message(message)
+                    plan = normalize_create_notes_plan(fallback_plan_from_message(message), message)
             shape_entries, connector_entries = build_create_notes_payload(plan)
             shape_nodes = [entry["node"] for entry in shape_entries]
             execution_logs.append(("planning", f"已生成 create-notes 计划，shape_count={len(shape_nodes)} connector_count={len(connector_entries)}"))

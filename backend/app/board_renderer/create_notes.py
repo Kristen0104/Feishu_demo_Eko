@@ -176,7 +176,16 @@ NODE_SINGLE_LINE_SAFE_HEIGHT = 44
 NODE_DOUBLE_LINE_SAFE_HEIGHT = 64
 NODE_MULTI_LINE_SAFE_HEIGHT = 80
 TITLE_SAFE_HEIGHT = 60
-SECTION_SAFE_HEIGHT = 40
+SECTION_SAFE_HEIGHT = 48
+FISHBONE_SPINE_Y = 250
+FISHBONE_START_X = 260
+FISHBONE_ANCHOR_GAP = 150
+FISHBONE_BRANCH_DX = 64
+FISHBONE_BRANCH_GAP = 96
+FISHBONE_EFFECT_GAP = 84
+FISHBONE_SPINE_HEIGHT = 6
+FISHBONE_EFFECT_WIDTH = 164
+FISHBONE_EFFECT_HEIGHT = 56
 
 
 def get_palette(name: str = "classic") -> dict[str, Any]:
@@ -237,11 +246,16 @@ def estimate_text_layout(text: str, *, kind: str = "node") -> dict[str, Any]:
     width, height = estimate_node_size(text)
     horizontal_align, vertical_align = choose_text_alignment(text, kind=kind)
     typography = BOARD_RENDERER_TYPOGRAPHY_RULES.get(kind, BOARD_RENDERER_TYPOGRAPHY_RULES["node"])
+    font_weight = typography["font_weight"]
+    lines = _split_lines(text)
+    visible_len = max((len(line) for line in lines), default=0)
+    if kind == "node" and len(lines) == 1 and visible_len <= 12:
+        font_weight = "bold"
     return {
         "width": width,
         "height": height,
         "font_size": typography["font_size"],
-        "font_weight": typography["font_weight"],
+        "font_weight": font_weight,
         "horizontal_align": horizontal_align,
         "vertical_align": vertical_align,
     }
@@ -354,6 +368,34 @@ def build_shape_node(
             "vertical_align": "top",
         }
         node["style"] = {"fill_opacity": 0, "border_style": "none"}
+    elif kind == "anchor":
+        node["z_index"] = 1
+        node["text"] = {
+            "text": " ",
+            "font_size": 1,
+            "font_weight": "regular",
+            "horizontal_align": "center",
+            "vertical_align": "mid",
+        }
+        node["style"] = {
+            "fill_color": "#FFFFFF",
+            "fill_opacity": 0,
+            "border_style": "solid",
+            "border_color": "#FFFFFF",
+            "border_width": "narrow",
+            "border_opacity": 0,
+        }
+    elif kind == "bone":
+        node["z_index"] = 5
+        node["text"] = {"text": ""}
+        node["style"] = {
+            "fill_color": palette_data["line_color"],
+            "fill_opacity": 100,
+            "border_style": "none",
+            "border_color": palette_data["line_color"],
+            "border_width": "narrow",
+            "border_opacity": 0,
+        }
 
     return node
 
@@ -403,6 +445,9 @@ def build_connector(
     target_total: int = 1,
     shape: str | None = None,
     dashed: bool = False,
+    start_arrow_style: str | None = None,
+    end_arrow_style: str | None = None,
+    border_width: str | None = None,
 ) -> dict[str, Any]:
     palette_data = get_palette(palette)
     direction_key = direction.lower()
@@ -421,7 +466,7 @@ def build_connector(
         "connector": {
             "shape": shape or BOARD_RENDERER_CONNECTOR_RULES["default_shape"],
             "start": {
-                "arrow_style": BOARD_RENDERER_CONNECTOR_RULES["default_start_arrow"],
+                "arrow_style": start_arrow_style or BOARD_RENDERER_CONNECTOR_RULES["default_start_arrow"],
                 "attached_object": {
                     "id": source_id,
                     "position": _fanout_position(start_position, source_slot, source_total, axis=start_axis),
@@ -429,7 +474,7 @@ def build_connector(
                 },
             },
             "end": {
-                "arrow_style": BOARD_RENDERER_CONNECTOR_RULES["default_end_arrow"],
+                "arrow_style": end_arrow_style or BOARD_RENDERER_CONNECTOR_RULES["default_end_arrow"],
                 "attached_object": {
                     "id": target_id,
                     "position": _fanout_position(end_position, target_slot, target_total, axis=end_axis),
@@ -441,7 +486,7 @@ def build_connector(
             "border_color": palette_data["line_color"],
             "border_opacity": 100,
             "border_style": "dash" if dashed else BOARD_RENDERER_CONNECTOR_RULES["default_style"],
-            "border_width": BOARD_RENDERER_CONNECTOR_RULES["default_width"],
+            "border_width": border_width or BOARD_RENDERER_CONNECTOR_RULES["default_width"],
         },
     }
 
@@ -557,7 +602,50 @@ def recenter_shape_entries(
             updated_node["x"] = int(updated_node["x"]) + offset
         updated_entry["node"] = updated_node
         centered.append(updated_entry)
-    return centered
+    return ensure_title_clearance(centered)
+
+
+def ensure_title_clearance(
+    shape_entries: list[dict[str, Any]],
+    *,
+    min_gap: int = 30,
+) -> list[dict[str, Any]]:
+    title_entry = next((entry for entry in shape_entries if entry.get("key") == "title"), None)
+    if title_entry is None:
+        return shape_entries
+    title_node = title_entry.get("node")
+    if not isinstance(title_node, dict):
+        return shape_entries
+
+    content_entries = [
+        entry for entry in shape_entries
+        if isinstance(entry, dict)
+        and entry.get("key") != "title"
+        and isinstance(entry.get("node"), dict)
+        and isinstance(entry["node"].get("y"), int)
+    ]
+    if not content_entries:
+        return shape_entries
+
+    title_bottom = int(title_node["y"]) + int(title_node["height"])
+    min_content_y = min(int(entry["node"]["y"]) for entry in content_entries)
+    required_top = title_bottom + min_gap
+    if min_content_y >= required_top:
+        return shape_entries
+
+    offset_y = required_top - min_content_y
+    shifted: list[dict[str, Any]] = []
+    for entry in shape_entries:
+        node = entry.get("node")
+        if not isinstance(node, dict) or entry.get("key") == "title":
+            shifted.append(entry)
+            continue
+        updated_entry = dict(entry)
+        updated_node = dict(node)
+        updated_node["y"] = int(updated_node["y"]) + offset_y
+        updated_entry["node"] = updated_node
+        shifted.append(updated_entry)
+    return shifted
 
 
 def _normalize_text(value: str) -> str:
@@ -630,6 +718,8 @@ def parse_create_notes_plan(payload: str) -> dict[str, Any] | None:
 
 
 def normalize_create_notes_plan(plan: dict[str, Any], message: str) -> dict[str, Any]:
+    if "鱼骨图" in message:
+        return _normalize_fishbone_plan(plan, message)
     normalized = dict(plan)
     groups = normalized.get("groups") if isinstance(normalized.get("groups"), list) else []
     layout = str(normalized.get("layout") or "").strip().lower()
@@ -688,6 +778,120 @@ def _normalize_matrix_groups(groups: list[dict[str, Any]]) -> list[dict[str, Any
             "rows": node_rows[1:],
         }
     ]
+
+
+def _normalize_fishbone_plan(plan: dict[str, Any], message: str) -> dict[str, Any]:
+    explicit_causes = _extract_fishbone_cause_labels(message)
+    groups = plan.get("groups") if isinstance(plan.get("groups"), list) else []
+    causes: list[str] = []
+    for group in groups:
+        if not isinstance(group, dict):
+            continue
+        title = str(group.get("title") or "").strip()
+        if title:
+            causes.append(_truncate_label(title))
+        for node in _string_list(group.get("nodes")):
+            if len(causes) >= 6:
+                break
+            causes.append(_truncate_label(node.split("\n", 1)[0]))
+        if len(causes) >= 6:
+            break
+
+    if not causes and not explicit_causes:
+        fallback = fallback_plan_from_message(message)
+        fallback["variant"] = "fishbone"
+        return fallback
+
+    unique_causes: list[str] = []
+    source_causes = explicit_causes or causes
+    for cause in source_causes:
+        if cause and cause not in unique_causes:
+            unique_causes.append(cause)
+        if len(unique_causes) >= 6:
+            break
+
+    effect = _infer_fishbone_effect_text(message)
+    nodes = [effect, *[label for label in unique_causes]]
+
+    edges: list[dict[str, Any]] = []
+    cause_count = len(nodes) - 1
+    for index in range(cause_count):
+        source_key = f"g0n{index + 1}"
+        anchor_key = f"a{index}"
+        direction = "tb" if index % 2 == 0 else "bt"
+        edges.append(
+            {
+                "from": source_key,
+                "to": anchor_key,
+                "direction": direction,
+                "shape": "straight",
+                "start_arrow_style": "none",
+                "end_arrow_style": "none",
+            }
+        )
+
+    title = str(plan.get("title") or "").strip()
+    if not title or title == "鱼骨图":
+        effect_title = effect.split("\n", 1)[0].strip()
+        title = f"{effect_title}原因分析鱼骨图" if effect_title else _infer_title(message)
+
+    return {
+        "title": title,
+        "palette": infer_palette_name(message),
+        "layout": LAYOUT_FREE,
+        "variant": "fishbone",
+        "groups": [{"title": "问题", "nodes": nodes}],
+        "edges": edges,
+    }
+
+
+def _infer_fishbone_effect_text(message: str) -> str:
+    normalized = message.replace("请", "").replace("帮我", "")
+    patterns = (
+        r"分析(.+?)的原因",
+        r"(.+?)原因鱼骨图",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, normalized)
+        if match:
+            value = match.group(1).strip(" ，。")
+            if value:
+                return f"{_truncate_label(value)}\n核心结论"
+    if "延期" in message:
+        return "项目延期\n核心结论"
+    return "核心问题\n待分析事项"
+
+
+def _extract_fishbone_cause_labels(message: str) -> list[str]:
+    patterns = (
+        r"主因包括(.+?)[。.!！]?$",
+        r"主因为(.+?)[。.!！]?$",
+        r"主因有(.+?)[。.!！]?$",
+        r"包含(.+?)等主干",
+        r"包含(.+?)主干",
+        r"包含(.+?)等原因",
+        r"包含(.+?)原因",
+        r"包括(.+?)等主干",
+        r"包括(.+?)主干",
+        r"包括(.+?)等原因",
+        r"包括(.+?)原因",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, message)
+        if not match:
+            continue
+        segment = match.group(1)
+        parts = re.split(r"[、，,；;]", segment)
+        labels = [_truncate_label(part) for part in parts if _truncate_label(part)]
+        if labels:
+            return labels[:6]
+    return []
+
+
+def _truncate_label(value: str) -> str:
+    cleaned = re.sub(r"\s+", "", value)
+    cleaned = re.sub(r"[：:，,。；;].*$", "", cleaned)
+    return cleaned[:8] if len(cleaned) > 8 else cleaned
 
 
 def infer_palette_name(message: str) -> str:
@@ -805,24 +1009,61 @@ def fallback_plan_from_message(message: str) -> dict[str, Any]:
             "edges": edges,
         }
     if layout_mode == LAYOUT_FREE:
+        variant = "fishbone" if "鱼骨" in message else "free"
         free_nodes = ["核心问题\n待分析事项", "原因一\n流程阻塞", "原因二\n资源不足", "原因三\n协作偏差"]
         if detail_level != "simple":
             free_nodes[1] = "原因一\n链路阻塞"
             free_nodes[2] = "原因二\n资源排队"
         if detail_level == "detailed":
+            free_nodes[3] = "原因三\n协作偏差"
             free_nodes.append("原因四\n数据延迟")
         return {
             "title": title,
             "palette": infer_palette_name(message),
             "layout": LAYOUT_FREE,
+            "variant": variant,
             "groups": [
                 {"title": "问题", "nodes": free_nodes},
             ],
             "edges": [
-                {"from": "g0n1", "to": "g0n0", "direction": "lr"},
-                {"from": "g0n2", "to": "g0n0", "direction": "lr", "dashed": True},
-                {"from": "g0n3", "to": "g0n0", "direction": "rl"},
-                *([{"from": "g0n4", "to": "g0n0", "direction": "tb", "dashed": True}] if detail_level == "detailed" else []),
+                {
+                    "from": "g0n1",
+                    "to": "a0",
+                    "direction": "tb",
+                    "shape": "straight",
+                    "start_arrow_style": "none",
+                    "end_arrow_style": "none",
+                },
+                {
+                    "from": "g0n2",
+                    "to": "a1",
+                    "direction": "bt",
+                    "shape": "straight",
+                    "start_arrow_style": "none",
+                    "end_arrow_style": "none",
+                },
+                {
+                    "from": "g0n3",
+                    "to": "a1",
+                    "direction": "tb",
+                    "shape": "straight",
+                    "start_arrow_style": "none",
+                    "end_arrow_style": "none",
+                },
+                *(
+                    [
+                        {
+                            "from": "g0n4",
+                            "to": "a2",
+                            "direction": "bt",
+                            "shape": "straight",
+                            "start_arrow_style": "none",
+                            "end_arrow_style": "none",
+                        }
+                    ]
+                    if detail_level == "detailed"
+                    else []
+                ),
             ],
         }
     layered_groups = _layered_groups_for_detail(detail_level)
@@ -860,14 +1101,17 @@ def build_create_notes_payload(
     elif layout_mode == LAYOUT_ISLAND:
         shape_entries.extend(_build_island_payload(groups, palette))
     elif layout_mode == LAYOUT_FREE:
-        shape_entries.extend(_build_free_payload(groups, palette))
+        shape_entries.extend(_build_free_payload(groups, palette, variant=str(plan.get("variant") or "free")))
     else:
         shape_entries.extend(_build_layered_payload(groups, palette))
 
     shape_entries = recenter_shape_entries(shape_entries)
 
-    group_node_keys = [entry["key"] for entry in shape_entries if entry["key"].startswith("g")]
-    clipped_edges = _select_representative_edges(edges)
+    group_node_keys = [entry["key"] for entry in shape_entries if entry["key"].startswith("g") or entry["key"].startswith("a")]
+    if layout_mode == LAYOUT_FREE and str(plan.get("variant") or "") == "fishbone":
+        clipped_edges = list(edges)
+    else:
+        clipped_edges = _select_representative_edges(edges)
     for edge in clipped_edges:
         if not isinstance(edge, dict):
             continue
@@ -882,6 +1126,9 @@ def build_create_notes_payload(
                 "direction": str(edge.get("direction") or "lr"),
                 "shape": edge.get("shape"),
                 "dashed": bool(edge.get("dashed", False)),
+                "start_arrow_style": edge.get("start_arrow_style"),
+                "end_arrow_style": edge.get("end_arrow_style"),
+                "border_width": edge.get("border_width"),
             }
         )
 
@@ -918,6 +1165,9 @@ def build_connectors_from_mapping(
                 target_total=len(target_groups[target_key]),
                 shape=connector.get("shape"),
                 dashed=connector["dashed"],
+                start_arrow_style=connector.get("start_arrow_style"),
+                end_arrow_style=connector.get("end_arrow_style"),
+                border_width=connector.get("border_width"),
             )
         )
     return built
@@ -928,7 +1178,7 @@ def _build_layered_payload(groups: list[dict[str, Any]], palette: str) -> list[d
     base_y = 70
     band_gap = 8
     section_padding = 25
-    label_height = 36
+    label_height = SECTION_SAFE_HEIGHT
     current_region_y = base_y
     for group_index, group in enumerate(groups):
         nodes = _string_list(group.get("nodes"))
@@ -942,13 +1192,13 @@ def _build_layered_payload(groups: list[dict[str, Any]], palette: str) -> list[d
         canvas_width = max(800, total_width + 100)
         max_height = max(heights)
         region_y = current_region_y
-        label_y = region_y + 12
-        node_y = region_y + 54
+        label_y = region_y + 14
+        node_y = region_y + label_height + 18
         positions = build_variable_row_positions(widths, canvas_width=canvas_width, gap=60, y=node_y)
         min_x = min(position[0] for position in positions)
         max_x = max(position[0] + widths[index] for index, position in enumerate(positions))
         region_width = max_x - min_x + section_padding * 2
-        region_height = label_height + max_height + 42
+        region_height = label_height + max_height + 36
         entries.append(
             {
                 "key": f"bg{group_index}",
@@ -1110,16 +1360,19 @@ def _build_tree_payload(groups: list[dict[str, Any]], palette: str) -> list[dict
             width, height = estimate_node_size(grandchild)
             grandchild_size_map[grandchild] = (max(180, width), max(55, height))
     tree_gap = 60
+    background_padding = 25
     subtree_gap = 40
 
-    subtree_widths: list[int] = []
+    subtree_content_widths: list[int] = []
     for child_index, child_text in enumerate(children):
         grand_children = grouped_children.get(child_text, [])
         grandchild_total_width = (
             sum(grandchild_size_map[grandchild][0] for grandchild in grand_children)
             + max(0, len(grand_children) - 1) * tree_gap
         )
-        subtree_widths.append(max(parent_widths[child_index], grandchild_total_width))
+        subtree_content_widths.append(max(parent_widths[child_index], grandchild_total_width))
+
+    subtree_widths = [content_width + background_padding * 2 for content_width in subtree_content_widths]
 
     total_subtree_width = sum(subtree_widths) + max(0, len(subtree_widths) - 1) * subtree_gap
     canvas_width = max(800, total_subtree_width + 120)
@@ -1145,10 +1398,13 @@ def _build_tree_payload(groups: list[dict[str, Any]], palette: str) -> list[dict
     entries.append({"key": "g0n0", "node": root})
 
     positions: list[tuple[int, int]] = []
+    subtree_origins: list[int] = []
     start_subtree_x = int(round((canvas_width - total_subtree_width) / 2))
     current_subtree_x = start_subtree_x
     for child_index, subtree_width in enumerate(subtree_widths):
-        node_x = current_subtree_x + int(round((subtree_width - parent_widths[child_index]) / 2))
+        subtree_origins.append(current_subtree_x)
+        content_width = subtree_content_widths[child_index]
+        node_x = current_subtree_x + background_padding + int(round((content_width - parent_widths[child_index]) / 2))
         positions.append((node_x, child_y))
         current_subtree_x += subtree_width + subtree_gap
 
@@ -1180,12 +1436,12 @@ def _build_tree_payload(groups: list[dict[str, Any]], palette: str) -> list[dict
         parent_position_index = children.index(parent_text)
         parent_x, _ = positions[parent_position_index]
         grand_children = _string_list(child_group.get("children"))[:2]
-        subtree_width = subtree_widths[parent_position_index]
-        subtree_x = parent_x - int(round((subtree_width - parent_widths[parent_position_index]) / 2))
+        subtree_content_width = subtree_content_widths[parent_position_index]
+        subtree_x = subtree_origins[parent_position_index]
         grandchild_total_width = sum(grandchild_size_map[grandchild][0] for grandchild in grand_children) + max(
             0, len(grand_children) - 1
         ) * tree_gap
-        grand_start_x = subtree_x + int(round((subtree_width - grandchild_total_width) / 2))
+        grand_start_x = subtree_x + background_padding + int(round((subtree_content_width - grandchild_total_width) / 2))
         grandchild_y = child_y + parent_heights[parent_position_index] + 55
         if split_grandchild_rows and parent_position_index >= midpoint:
             grandchild_y += 110
@@ -1213,7 +1469,6 @@ def _build_tree_payload(groups: list[dict[str, Any]], palette: str) -> list[dict
             )
 
     background_entries: list[dict[str, Any]] = []
-    padding = 25
     for parent_index, child_text in enumerate(children):
         parent_x, parent_y = positions[parent_index]
         min_x = parent_x
@@ -1243,10 +1498,10 @@ def _build_tree_payload(groups: list[dict[str, Any]], palette: str) -> list[dict
                 "key": f"bg{parent_index}",
                 "node": build_background_region(
                     "",
-                    x=min_x - padding,
-                    y=min_y - padding,
-                    width=(max_x - min_x) + padding * 2,
-                    height=(max_y - min_y) + padding * 2,
+                    x=subtree_origins[parent_index],
+                    y=min_y - background_padding,
+                    width=subtree_widths[parent_index],
+                    height=(max_y - min_y) + background_padding * 2,
                     palette=palette,
                     group_index=parent_index,
                 ),
@@ -1324,14 +1579,58 @@ def _build_island_payload(groups: list[dict[str, Any]], palette: str) -> list[di
     return entries
 
 
-def _build_free_payload(groups: list[dict[str, Any]], palette: str) -> list[dict[str, Any]]:
+def _build_free_payload(groups: list[dict[str, Any]], palette: str, *, variant: str = "free") -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
     if not groups:
         return entries
     nodes = _string_list(groups[0].get("nodes"))
-    free_positions = [(320, 210), (70, 110), (130, 310), (560, 120), (360, 40)]
+    if variant == "fishbone":
+        cause_count = max(0, len(nodes) - 1)
+        spine_anchor_positions = [
+            (FISHBONE_START_X + index * FISHBONE_ANCHOR_GAP, FISHBONE_SPINE_Y)
+            for index in range(cause_count)
+        ]
+        cause_positions: list[tuple[int, int]] = []
+        for index in range(cause_count):
+            node_width, node_height = estimate_node_size(nodes[index + 1])
+            anchor_x, anchor_y = spine_anchor_positions[index]
+            x = anchor_x - FISHBONE_BRANCH_DX - int(round(node_width / 2))
+            if index % 2 == 0:
+                y = anchor_y - FISHBONE_BRANCH_GAP - node_height
+            else:
+                y = anchor_y + FISHBONE_BRANCH_GAP
+            cause_positions.append((x, y))
+        effect_width, effect_height = FISHBONE_EFFECT_WIDTH, FISHBONE_EFFECT_HEIGHT
+        tail_x = spine_anchor_positions[-1][0] if spine_anchor_positions else FISHBONE_START_X
+        effect_x = tail_x + FISHBONE_EFFECT_GAP
+        effect_y = FISHBONE_SPINE_Y + 3 - int(round(effect_height / 2))
+        spine_start_x = (spine_anchor_positions[0][0] + 3) if spine_anchor_positions else FISHBONE_START_X
+        spine_width = max(120, effect_x - spine_start_x)
+        free_positions = [(effect_x, effect_y), *cause_positions]
+        entries.append(
+            {
+                "key": "spine",
+                "node": build_shape_node(
+                    "",
+                    x=spine_start_x,
+                    y=FISHBONE_SPINE_Y + 3 - int(round(FISHBONE_SPINE_HEIGHT / 2)),
+                    width=spine_width,
+                    height=FISHBONE_SPINE_HEIGHT,
+                    palette=palette,
+                    group_index=0,
+                    kind="bone",
+                    shape_type="rect",
+                ),
+            }
+        )
+    else:
+        free_positions = [(320, 210), (70, 110), (130, 310), (560, 120), (360, 40)]
     for index, text in enumerate(nodes[: len(free_positions)]):
         x, y = free_positions[index]
+        node_kind = "independent" if variant == "fishbone" and index == 0 else "node"
+        node_shape_type = "ellipse" if variant == "fishbone" and index == 0 else "round_rect"
+        override_width = effect_width if variant == "fishbone" and index == 0 else None
+        override_height = effect_height if variant == "fishbone" and index == 0 else None
         entries.append(
             {
                 "key": f"g0n{index}",
@@ -1339,11 +1638,33 @@ def _build_free_payload(groups: list[dict[str, Any]], palette: str) -> list[dict
                     text,
                     x=x,
                     y=y,
+                    width=override_width,
+                    height=override_height,
                     palette=palette,
                     group_index=min(index, 4),
+                    kind=node_kind,
+                    shape_type=node_shape_type,
                 ),
             }
         )
+    if variant == "fishbone":
+        for anchor_index, (x, y) in enumerate(spine_anchor_positions):
+            entries.append(
+                {
+                    "key": f"a{anchor_index}",
+                    "node": build_shape_node(
+                        "",
+                        x=x,
+                        y=y,
+                        width=6,
+                        height=6,
+                        palette=palette,
+                        group_index=0,
+                        kind="anchor",
+                        shape_type="ellipse",
+                    ),
+                }
+            )
     return entries
 
 

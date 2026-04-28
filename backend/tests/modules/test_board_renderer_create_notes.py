@@ -165,9 +165,17 @@ def test_layered_section_label_sits_inside_background_with_top_padding() -> None
     assert label["y"] >= background["y"] + 12
     assert label["x"] + label["width"] <= background["x"] + background["width"] + 1
     assert label["width"] < background["width"] / 2
-    assert label["height"] >= 40
+    assert label["height"] >= 48
     assert first_node["y"] >= label["y"] + label["height"] - 2
     assert label["z_index"] > 50
+
+
+def test_section_label_uses_taller_safe_box_for_bold_chinese_text() -> None:
+    label = build_shape_node("数据层", x=120, y=80, width=220, height=48, kind="section")
+
+    assert label["height"] >= 48
+    assert label["text"]["font_size"] == 18
+    assert label["text"]["font_weight"] == "bold"
 
 
 def test_layered_section_label_shortens_overlong_group_titles() -> None:
@@ -305,6 +313,62 @@ def test_normalize_matrix_groups_translates_llm_style_group_rows_into_columns_an
     assert normalized["groups"][0]["rows"] == [["成本", "高", "中", "低"], ["可控性", "高", "中", "低"]]
 
 
+def test_normalize_fishbone_plan_forces_free_variant_from_layered_groups() -> None:
+    plan = {
+        "title": "AI平台项目延期原因鱼骨分析",
+        "layout": "layered",
+        "groups": [
+            {"title": "需求变更", "nodes": ["范围膨胀", "频繁调整"]},
+            {"title": "数据准备", "nodes": ["标注延迟", "质量不足"]},
+            {"title": "工程稳定性", "nodes": ["服务抖动", "回滚频繁"]},
+        ],
+        "edges": [],
+    }
+
+    normalized = normalize_create_notes_plan(plan, "请画一个鱼骨图，分析 AI 平台项目延期的原因")
+
+    assert normalized["layout"] == "free"
+    assert normalized["variant"] == "fishbone"
+    assert normalized["groups"][0]["nodes"][0].startswith("AI平台项目延期")
+
+
+def test_normalize_fishbone_plan_uses_explicit_prompt_causes() -> None:
+    normalized = normalize_create_notes_plan(
+        {"title": "", "layout": "layered", "groups": [], "edges": []},
+        "请用商务风画一个完整详细的鱼骨图，分析 AI 平台项目延期的原因，需要包含需求变更、数据准备、模型效果、工程稳定性、资源协调、验收流程等主干",
+    )
+
+    assert normalized["layout"] == "free"
+    assert normalized["variant"] == "fishbone"
+    assert normalized["groups"][0]["nodes"][1:] == [
+        "需求变更",
+        "数据准备",
+        "模型效果",
+        "工程稳定性",
+        "资源协调",
+        "验收流程",
+    ]
+    assert normalized["title"] == "AI平台项目延期原因分析鱼骨图"
+
+
+def test_normalize_fishbone_plan_extracts_main_causes_from_zhuyin_baokuo_prompt() -> None:
+    normalized = normalize_create_notes_plan(
+        {"title": "", "layout": "layered", "groups": [], "edges": []},
+        "请生成一张AI平台项目延期原因分析鱼骨图，主因包括需求变更、数据准备、模型效果、工程稳定性、资源协调、验收流程。",
+    )
+
+    assert normalized["layout"] == "free"
+    assert normalized["variant"] == "fishbone"
+    assert normalized["groups"][0]["nodes"][1:] == [
+        "需求变更",
+        "数据准备",
+        "模型效果",
+        "工程稳定性",
+        "资源协调",
+        "验收流程",
+    ]
+
+
 def test_island_plan_uses_representative_dashed_edges() -> None:
     plan = fallback_plan_from_message("做一个完整详细的微服务系统拓扑")
     shape_entries, connector_entries = build_create_notes_payload(plan)
@@ -342,9 +406,146 @@ def test_free_plan_keeps_compact_problem_analysis_content() -> None:
     plan = fallback_plan_from_message("画一个完整详细的鱼骨图分析问题")
 
     assert plan["layout"] == "free"
+    assert plan["variant"] == "fishbone"
     assert len(plan["groups"]) == 1
     assert 4 <= len(plan["groups"][0]["nodes"]) <= 5
-    assert any(edge.get("dashed") for edge in plan["edges"])
+    assert any(str(edge.get("to") or "").startswith("a") for edge in plan["edges"])
+
+
+def test_fishbone_payload_places_effect_rightmost_and_adds_spine_anchors() -> None:
+    plan = fallback_plan_from_message("画一个完整详细的鱼骨图分析问题")
+    shape_entries, connector_entries = build_create_notes_payload(plan)
+
+    effect = next(entry["node"] for entry in shape_entries if entry["key"] == "g0n0")
+    spine = next(entry["node"] for entry in shape_entries if entry["key"] == "spine")
+    causes = [entry["node"] for entry in shape_entries if entry["key"].startswith("g0n") and entry["key"] != "g0n0"]
+    anchors = [entry["node"] for entry in shape_entries if entry["key"].startswith("a")]
+
+    assert anchors
+    assert causes
+    assert all(int(node["x"]) < int(effect["x"]) for node in causes)
+    assert all(anchor["composite_shape"]["type"] == "ellipse" for anchor in anchors)
+    assert all(anchor["width"] == 6 and anchor["height"] == 6 for anchor in anchors)
+    assert all(anchor["text"]["text"].strip() == "" for anchor in anchors)
+    assert all(anchor["style"]["fill_opacity"] == 0 for anchor in anchors)
+    assert all(anchor["style"]["border_opacity"] == 0 for anchor in anchors)
+    assert int(spine["x"]) + int(spine["width"]) >= int(effect["x"])
+    assert all(not connector["source_key"].startswith("a") for connector in connector_entries)
+
+
+def test_fishbone_keeps_full_spine_edges_without_representative_clipping() -> None:
+    plan = normalize_create_notes_plan(
+        {"title": "", "layout": "layered", "groups": [], "edges": []},
+        "请用商务风画一个完整详细的鱼骨图，分析 AI 平台项目延期的原因，需要包含需求变更、数据准备、模型效果、工程稳定性、资源协调、验收流程等主干",
+    )
+    shape_entries, connector_entries = build_create_notes_payload(plan)
+    spine = next(entry["node"] for entry in shape_entries if entry["key"] == "spine")
+
+    assert spine["composite_shape"]["type"] == "rect"
+    assert spine["height"] <= 8
+    assert spine["text"]["text"] == ""
+    assert len(connector_entries) == 6
+    assert all(not connector["source_key"].startswith("a") for connector in connector_entries)
+
+
+def test_fishbone_payload_uses_uniform_branch_gap_and_keeps_effect_close_to_tail() -> None:
+    plan = normalize_create_notes_plan(
+        {"title": "", "layout": "layered", "groups": [], "edges": []},
+        "请用商务风画一个完整详细的鱼骨图，分析 AI 平台项目延期的原因，需要包含需求变更、数据准备、模型效果、工程稳定性、资源协调、验收流程等主干",
+    )
+    shape_entries, _ = build_create_notes_payload(plan)
+
+    nodes_by_key = {entry["key"]: entry["node"] for entry in shape_entries}
+    effect = nodes_by_key["g0n0"]
+    tail_anchor = nodes_by_key["a5"]
+    branch_gaps: list[int] = []
+
+    for index in range(6):
+        cause = nodes_by_key[f"g0n{index + 1}"]
+        anchor = nodes_by_key[f"a{index}"]
+        if index % 2 == 0:
+            gap = int(anchor["y"]) - (int(cause["y"]) + int(cause["height"]))
+        else:
+            gap = int(cause["y"]) - int(anchor["y"])
+        branch_gaps.append(gap)
+
+    assert len(set(branch_gaps)) == 1
+    assert int(effect["x"]) - int(tail_anchor["x"]) <= 140
+
+
+def test_fishbone_effect_center_aligns_with_spine_center() -> None:
+    plan = normalize_create_notes_plan(
+        {"title": "", "layout": "layered", "groups": [], "edges": []},
+        "请用商务风画一个完整详细的鱼骨图，分析 AI 平台项目延期的原因，需要包含需求变更、数据准备、模型效果、工程稳定性、资源协调、验收流程等主干",
+    )
+    shape_entries, _ = build_create_notes_payload(plan)
+
+    nodes_by_key = {entry["key"]: entry["node"] for entry in shape_entries}
+    effect = nodes_by_key["g0n0"]
+    tail_anchor = nodes_by_key["a5"]
+
+    effect_center_y = int(effect["y"]) + int(effect["height"]) // 2
+    spine_center_y = int(tail_anchor["y"]) + int(tail_anchor["height"]) // 2
+
+    assert effect_center_y == spine_center_y
+    assert effect["composite_shape"]["type"] == "ellipse"
+
+
+def test_fishbone_connectors_remove_arrowheads_and_dashes() -> None:
+    plan = normalize_create_notes_plan(
+        {"title": "", "layout": "layered", "groups": [], "edges": []},
+        "请用商务风画一个完整详细的鱼骨图，分析 AI 平台项目延期的原因，需要包含需求变更、数据准备、模型效果、工程稳定性、资源协调、验收流程等主干",
+    )
+    shape_entries, connector_entries = build_create_notes_payload(plan)
+    key_to_node_id = {
+        entry["key"]: f"node-{index}"
+        for index, entry in enumerate(shape_entries)
+        if entry["key"].startswith(("g", "a"))
+    }
+
+    connectors = build_connectors_from_mapping(connector_entries, key_to_node_id)
+
+    assert connectors
+    assert all(connector["connector"]["start"]["arrow_style"] == "none" for connector in connectors)
+    assert all(connector["connector"]["end"]["arrow_style"] == "none" for connector in connectors)
+    assert all(connector["style"]["border_style"] == "solid" for connector in connectors)
+
+
+def test_fishbone_branch_connectors_alternate_vertical_directions_to_form_ribs() -> None:
+    plan = normalize_create_notes_plan(
+        {"title": "", "layout": "layered", "groups": [], "edges": []},
+        "请用商务风画一个完整详细的鱼骨图，分析 AI 平台项目延期的原因，需要包含需求变更、数据准备、模型效果、工程稳定性、资源协调、验收流程等主干",
+    )
+    _, connector_entries = build_create_notes_payload(plan)
+    branch_edges = [
+        connector
+        for connector in connector_entries
+        if connector["source_key"].startswith("g0n") and connector["target_key"].startswith("a")
+    ]
+
+    assert branch_edges
+    assert [connector["direction"] for connector in branch_edges] == ["tb", "bt", "tb", "bt", "tb", "bt"]
+
+
+def test_fishbone_payload_keeps_single_spine_when_cause_count_changes() -> None:
+    plan = normalize_create_notes_plan(
+        {"title": "", "layout": "layered", "groups": [], "edges": []},
+        "请画一个鱼骨图，分析 AI 平台项目延期的原因，需要包含需求变更、数据准备、工程稳定性等主干",
+    )
+    shape_entries, connector_entries = build_create_notes_payload(plan)
+
+    spine = next(entry["node"] for entry in shape_entries if entry["key"] == "spine")
+    anchor_keys = sorted(entry["key"] for entry in shape_entries if entry["key"].startswith("a"))
+    branch_edges = [
+        connector
+        for connector in connector_entries
+        if connector["source_key"].startswith("g0n") and connector["target_key"].startswith("a")
+    ]
+
+    assert anchor_keys == ["a0", "a1", "a2"]
+    assert spine["composite_shape"]["type"] == "rect"
+    assert len(branch_edges) == 3
+    assert len(connector_entries) == 3
 
 
 def test_matrix_headers_use_accent_cells_instead_of_transparent_titles() -> None:
@@ -475,12 +676,40 @@ def test_tree_root_uses_independent_neutral_border() -> None:
     assert root["style"]["border_color"] == "#DEE0E3"
 
 
+def test_tree_background_regions_do_not_overlap_horizontally() -> None:
+    plan = fallback_plan_from_message("请画一个完整详细的 AI 产品研发组织架构图")
+    shape_entries, _ = build_create_notes_payload(plan)
+    backgrounds = sorted(
+        (entry["node"] for entry in shape_entries if entry["key"].startswith("bg")),
+        key=lambda node: int(node["x"]),
+    )
+
+    assert len(backgrounds) >= 2
+
+    for left, right in zip(backgrounds, backgrounds[1:]):
+        left_right_edge = int(left["x"]) + int(left["width"])
+        right_left_edge = int(right["x"])
+        assert left_right_edge <= right_left_edge
+
+
 def test_title_node_uses_taller_safe_box_for_chinese_bold_text() -> None:
     plan = fallback_plan_from_message("帮我画一个完整详细的 AI 产品研发组织架构图")
     shape_entries, _ = build_create_notes_payload(plan)
     title = next(entry["node"] for entry in shape_entries if entry["key"] == "title")
 
     assert title["height"] == 60
+
+
+def test_title_keeps_global_clearance_above_all_content() -> None:
+    plan = fallback_plan_from_message("帮我画一个完整详细的 AI 产品研发组织架构图")
+    shape_entries, _ = build_create_notes_payload(plan)
+    title = next(entry["node"] for entry in shape_entries if entry["key"] == "title")
+    content_nodes = [entry["node"] for entry in shape_entries if entry["key"] != "title"]
+
+    title_bottom = int(title["y"]) + int(title["height"])
+    min_content_y = min(int(node["y"]) for node in content_nodes)
+
+    assert min_content_y >= title_bottom + 30
 
 
 
