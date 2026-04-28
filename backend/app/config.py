@@ -47,19 +47,26 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "your-secret-key-change-in-production"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7 days
+    JWT_ISSUER: str = "eko-auth"
 
     # CORS
     CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:1420"]
-    FRONTEND_STATIC_DIR: str | None = None
+    FRONTEND_STATIC_DIR: str | None = str(Path(__file__).resolve().parents[2] / "frontend")
 
     # Feishu
     FEISHU_APP_ID: str = ""
     FEISHU_APP_SECRET: str = ""
     FEISHU_VERIFICATION_TOKEN: str = ""
     FEISHU_ENCRYPT_KEY: str = ""
+    FEISHU_BASE_URL: str = "https://open.feishu.cn"
+    FEISHU_AUTH_BASE_URL: str = "https://accounts.feishu.cn"
+    FEISHU_OAUTH_REDIRECT_URI: str = "http://127.0.0.1:8010/frontend/test.html"
+    FEISHU_OAUTH_SCOPE: str = "contact:user.base:readonly"
+    FEISHU_OAUTH_STATE_TTL_SECONDS: int = 600
+    FRONTEND_LOGIN_SUCCESS_URL: str = "http://127.0.0.1:8010/frontend/test.html"
 
     # Agent (DeepSeek)
-    AGENT_MODEL: str = "deepseek"
+    AGENT_MODEL: str = "deepseek-v4-flash"
     AGENT_API_BASE: str = "https://api.deepseek.com"
     AGENT_API_KEY: str = ""
 

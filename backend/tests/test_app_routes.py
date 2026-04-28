@@ -146,6 +146,23 @@ def test_frontend_mount_and_cors_registration(monkeypatch, tmp_path) -> None:
     ]
 
 
+def test_root_redirects_to_test_frontend(monkeypatch, tmp_path) -> None:
+    frontend_dir = tmp_path / "frontend"
+    frontend_dir.mkdir()
+    (frontend_dir / "test.html").write_text("<html>test</html>", encoding="utf-8")
+
+    client_harness = build_client_harness(
+        monkeypatch,
+        settings=Settings(FRONTEND_STATIC_DIR=str(frontend_dir)),
+    )
+
+    with client_harness.app_factory() as client:
+        response = client.get("/", follow_redirects=False)
+
+        assert response.status_code in {307, 308}
+        assert response.headers["location"] == "/frontend/test.html"
+
+
 def test_startup_failure_cleans_initialized_resources(monkeypatch) -> None:
     calls = {
         "init_redis": False,

@@ -1,3 +1,1 @@
-from app.modules.feishu.router import router
-
-__all__ = ["router"]
+__all__: list[str] = []

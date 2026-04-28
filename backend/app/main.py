@@ -16,6 +16,7 @@ from time import perf_counter
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.config import Settings, get_settings
@@ -72,6 +73,14 @@ def maybe_mount_frontend(app: FastAPI, settings: Settings) -> None:
         )
 
 
+def maybe_mount_root_frontend(app: FastAPI, settings: Settings) -> None:
+    if settings.FRONTEND_STATIC_DIR:
+
+        @app.get("/", include_in_schema=False)
+        async def root() -> RedirectResponse:
+            return RedirectResponse(url="/frontend/test.html")
+
+
 def build_lifespan(
     *,
     database_initializer: AsyncCallable,
@@ -121,6 +130,7 @@ def create_app(
     )
 
     maybe_mount_frontend(app, app_settings)
+    maybe_mount_root_frontend(app, app_settings)
     configure_middlewares(app, app_settings)
     app.middleware("http")(log_requests)
     router_registrar(app)
