@@ -3,83 +3,579 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Eko 测试</title>
+    <title>Eko PPT 调试台</title>
     <style>
+        :root {
+            --bg: #f3f0e8;
+            --panel: rgba(255, 255, 255, 0.82);
+            --ink: #181613;
+            --muted: #6f675e;
+            --line: rgba(24, 22, 19, 0.12);
+            --accent: #1747d1;
+            --accent-2: #0d2f8a;
+            --ok: #1f7a4a;
+            --warn: #a15a14;
+        }
+
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 600px; margin: 40px auto; padding: 20px; }
-        h1 { font-size: 24px; margin-bottom: 20px; }
-        .chat-box { border: 1px solid #ddd; border-radius: 8px; height: 400px; overflow-y: auto; padding: 16px; margin-bottom: 16px; background: #fafafa; }
-        .msg { margin-bottom: 12px; padding: 8px 12px; border-radius: 8px; max-width: 80%; }
-        .msg.user { background: #007aff; color: white; margin-left: auto; }
-        .msg.assistant { background: #e9e9e9; color: #333; }
-        .input-area { display: flex; gap: 8px; }
-        input { flex: 1; padding: 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 16px; }
-        button { padding: 12px 24px; background: #007aff; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 16px; }
-        button:disabled { background: #ccc; }
-        .status { color: #666; font-size: 12px; margin-top: 8px; }
+
+        body {
+            min-height: 100vh;
+            padding: 32px;
+            color: var(--ink);
+            background:
+                radial-gradient(circle at top left, rgba(23, 71, 209, 0.12), transparent 32%),
+                radial-gradient(circle at bottom right, rgba(30, 122, 74, 0.10), transparent 28%),
+                linear-gradient(135deg, #f5f1ea, #ece6da 60%, #e7ded0);
+            font-family: "SF Pro Text", "PingFang SC", -apple-system, BlinkMacSystemFont, sans-serif;
+        }
+
+        .page {
+            max-width: 1180px;
+            margin: 0 auto;
+        }
+
+        .hero {
+            margin-bottom: 24px;
+            padding: 28px 32px;
+            border: 1px solid var(--line);
+            border-radius: 24px;
+            background: rgba(24, 22, 19, 0.92);
+            color: #f5f1ea;
+            box-shadow: 0 24px 60px rgba(24, 22, 19, 0.14);
+        }
+
+        .eyebrow {
+            margin-bottom: 10px;
+            color: rgba(245, 241, 234, 0.65);
+            font-size: 12px;
+            letter-spacing: 0.22em;
+            text-transform: uppercase;
+        }
+
+        .hero h1 {
+            font-family: "Iowan Old Style", "Songti SC", "Noto Serif SC", serif;
+            font-size: clamp(36px, 6vw, 68px);
+            line-height: 1.02;
+            font-weight: 700;
+        }
+
+        .hero p {
+            max-width: 760px;
+            margin-top: 16px;
+            color: rgba(245, 241, 234, 0.82);
+            font-size: 18px;
+            line-height: 1.7;
+        }
+
+        .layout {
+            display: grid;
+            grid-template-columns: minmax(0, 1.25fr) minmax(360px, 0.85fr);
+            gap: 20px;
+            align-items: start;
+        }
+
+        .panel {
+            border: 1px solid var(--line);
+            border-radius: 24px;
+            background: var(--panel);
+            backdrop-filter: blur(20px);
+            box-shadow: 0 18px 40px rgba(24, 22, 19, 0.08);
+        }
+
+        .panel-header {
+            padding: 22px 24px 14px;
+            border-bottom: 1px solid var(--line);
+        }
+
+        .panel-header h2 {
+            font-size: 22px;
+            font-weight: 650;
+        }
+
+        .panel-header p {
+            margin-top: 8px;
+            color: var(--muted);
+            font-size: 14px;
+            line-height: 1.65;
+        }
+
+        .panel-body {
+            padding: 24px;
+        }
+
+        .stack {
+            display: grid;
+            gap: 16px;
+        }
+
+        .field {
+            display: grid;
+            gap: 8px;
+        }
+
+        .field label {
+            color: var(--muted);
+            font-size: 13px;
+            font-weight: 600;
+            letter-spacing: 0.03em;
+        }
+
+        input, textarea {
+            width: 100%;
+            border: 1px solid rgba(24, 22, 19, 0.14);
+            border-radius: 16px;
+            background: rgba(255, 255, 255, 0.88);
+            color: var(--ink);
+            font: inherit;
+            outline: none;
+            transition: border-color .2s ease, box-shadow .2s ease, transform .2s ease;
+        }
+
+        input {
+            padding: 14px 16px;
+            font-size: 15px;
+        }
+
+        textarea {
+            min-height: 180px;
+            padding: 16px;
+            font-size: 15px;
+            line-height: 1.65;
+            resize: vertical;
+        }
+
+        input:focus, textarea:focus {
+            border-color: rgba(23, 71, 209, 0.48);
+            box-shadow: 0 0 0 4px rgba(23, 71, 209, 0.08);
+        }
+
+        .button-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 12px;
+        }
+
+        button, .link-button {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 48px;
+            padding: 0 16px;
+            border: none;
+            border-radius: 14px;
+            background: var(--accent);
+            color: white;
+            cursor: pointer;
+            text-decoration: none;
+            font-size: 14px;
+            font-weight: 650;
+            transition: transform .18s ease, box-shadow .18s ease, background .18s ease, opacity .18s ease;
+            box-shadow: 0 10px 20px rgba(23, 71, 209, 0.18);
+        }
+
+        button:hover, .link-button:hover {
+            transform: translateY(-1px);
+            background: var(--accent-2);
+        }
+
+        button:disabled {
+            transform: none;
+            cursor: not-allowed;
+            opacity: 0.45;
+            box-shadow: none;
+        }
+
+        .button-secondary {
+            background: rgba(24, 22, 19, 0.08);
+            color: var(--ink);
+            box-shadow: none;
+        }
+
+        .button-secondary:hover {
+            background: rgba(24, 22, 19, 0.14);
+        }
+
+        .button-success {
+            background: var(--ok);
+            box-shadow: 0 10px 20px rgba(31, 122, 74, 0.18);
+        }
+
+        .button-success:hover {
+            background: #16643d;
+        }
+
+        .meta-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 12px;
+        }
+
+        .meta-card {
+            padding: 16px 18px;
+            border-radius: 16px;
+            border: 1px solid var(--line);
+            background: rgba(255, 255, 255, 0.68);
+        }
+
+        .meta-card .label {
+            color: var(--muted);
+            font-size: 12px;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+        }
+
+        .meta-card .value {
+            margin-top: 8px;
+            font-size: 15px;
+            font-weight: 600;
+            line-height: 1.5;
+            word-break: break-word;
+        }
+
+        .status-bar {
+            padding: 12px 14px;
+            border-radius: 14px;
+            background: rgba(24, 22, 19, 0.06);
+            color: var(--muted);
+            font-size: 13px;
+            line-height: 1.6;
+        }
+
+        .status-bar.ok {
+            background: rgba(31, 122, 74, 0.12);
+            color: #165437;
+        }
+
+        .status-bar.warn {
+            background: rgba(161, 90, 20, 0.14);
+            color: #7b440f;
+        }
+
+        .log-box, .json-box {
+            min-height: 180px;
+            padding: 16px;
+            border-radius: 16px;
+            background: rgba(16, 17, 20, 0.95);
+            color: #f5f1ea;
+            font-family: "SF Mono", "IBM Plex Mono", "JetBrains Mono", monospace;
+            font-size: 12px;
+            line-height: 1.7;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .link-list {
+            display: grid;
+            gap: 10px;
+        }
+
+        .link-pill {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            padding: 12px 14px;
+            border: 1px solid var(--line);
+            border-radius: 14px;
+            background: rgba(255,255,255,0.72);
+        }
+
+        .link-pill strong {
+            min-width: 78px;
+            font-size: 13px;
+        }
+
+        .link-pill a {
+            color: var(--accent);
+            text-decoration: none;
+            word-break: break-all;
+            font-size: 13px;
+        }
+
+        @media (max-width: 980px) {
+            body { padding: 18px; }
+            .layout { grid-template-columns: 1fr; }
+            .button-grid, .meta-grid { grid-template-columns: 1fr; }
+            .hero { padding: 24px 22px; }
+        }
     </style>
 </head>
 <body>
-    <h1>Eko 测试页面</h1>
-    <div class="chat-box" id="chatBox"></div>
-    <div class="input-area">
-        <input type="text" id="messageInput" placeholder="输入消息..." onkeypress="if(event.key==='Enter')sendMessage()">
-        <button id="sendBtn" onclick="sendMessage()">发送</button>
+    <div class="page">
+        <section class="hero">
+            <div class="eyebrow">Eko Workspace · PPT Export Debug</div>
+            <h1>HTML Deck 转 PPTX 调试台</h1>
+            <p>这个页面只做一件事：方便你把一条 prompt 从 HTML 生成、预览、导出到 PPTX 下载一口气点通。适合本地联调，不依赖复杂前端框架。</p>
+        </section>
+
+        <main class="layout">
+            <section class="panel">
+                <div class="panel-header">
+                    <h2>任务输入</h2>
+                    <p>先创建任务，再依次执行生成、预览、导出和下载。接口默认指向本地 `http://localhost:8000/api/v1`。</p>
+                </div>
+                <div class="panel-body stack">
+                    <div class="field">
+                        <label for="apiBase">API Base</label>
+                        <input id="apiBase" value="http://localhost:8000/api/v1">
+                    </div>
+
+                    <div class="field">
+                        <label for="titleInput">标题</label>
+                        <input id="titleInput" value="AI 协作工作流">
+                    </div>
+
+                    <div class="field">
+                        <label for="topicInput">主题</label>
+                        <input id="topicInput" value="AI 协作工作流">
+                    </div>
+
+                    <div class="field">
+                        <label for="promptInput">生成 Prompt</label>
+                        <textarea id="promptInput">做一份 6 页左右的杂志风 HTML PPT，讲清楚 AI 协作工作流的价值、流程、案例和结论。</textarea>
+                    </div>
+
+                    <div class="button-grid">
+                        <button id="createBtn" onclick="createTask()">1. 创建任务</button>
+                        <button id="runBtn" class="button-secondary" onclick="runTask()" disabled>2. 生成 HTML</button>
+                        <button id="previewBtn" class="button-secondary" onclick="openPreview()" disabled>3. 打开预览</button>
+                        <button id="exportBtn" class="button-success" onclick="exportPptx()" disabled>4. 导出 PPTX</button>
+                        <button id="downloadBtn" class="button-secondary" onclick="downloadPptx()" disabled>5. 下载 PPTX</button>
+                        <button class="button-secondary" onclick="refreshTask()" disabled id="refreshBtn">刷新任务状态</button>
+                    </div>
+
+                    <div id="statusBar" class="status-bar">等待操作。</div>
+
+                    <div class="field">
+                        <label>接口日志</label>
+                        <div id="logBox" class="log-box">还没有请求。</div>
+                    </div>
+                </div>
+            </section>
+
+            <aside class="panel">
+                <div class="panel-header">
+                    <h2>任务状态</h2>
+                    <p>这里会显示当前 `task_id`、产物路径、下载链接和原始 JSON，方便排查接口行为。</p>
+                </div>
+                <div class="panel-body stack">
+                    <div class="meta-grid">
+                        <div class="meta-card">
+                            <div class="label">Task ID</div>
+                            <div class="value" id="taskIdValue">-</div>
+                        </div>
+                        <div class="meta-card">
+                            <div class="label">Status</div>
+                            <div class="value" id="taskStatusValue">pending</div>
+                        </div>
+                        <div class="meta-card">
+                            <div class="label">Current Step</div>
+                            <div class="value" id="taskStepValue">pending</div>
+                        </div>
+                        <div class="meta-card">
+                            <div class="label">Artifact Kind</div>
+                            <div class="value" id="artifactKindValue">html</div>
+                        </div>
+                    </div>
+
+                    <div class="link-list">
+                        <div class="link-pill">
+                            <strong>Preview</strong>
+                            <a id="previewLink" href="#" target="_blank" rel="noreferrer">-</a>
+                        </div>
+                        <div class="link-pill">
+                            <strong>PPTX</strong>
+                            <a id="downloadLink" href="#" target="_blank" rel="noreferrer">-</a>
+                        </div>
+                    </div>
+
+                    <div class="field">
+                        <label>当前任务 JSON</label>
+                        <div id="jsonBox" class="json-box">尚未创建任务。</div>
+                    </div>
+                </div>
+            </aside>
+        </main>
     </div>
-    <div class="status" id="status"></div>
 
     <script>
-        const API_BASE = 'http://localhost:8000/api/v1';
-        const SESSION_ID = 'test-session';
-        // 临时 token（测试用）
-        const TOKEN = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ0ZXN0LXVzZXItaWQiLCJleHAiOjE3Nzc2MjA5MzZ9.yMHy_cUuueu5fKPc8IFv7i4m5oL2uf3Ml4I-QY5Pp-E';
+        let currentTask = null;
+        let pollTimer = null;
 
-        function addMsg(content, type) {
-            const box = document.getElementById('chatBox');
-            const div = document.createElement('div');
-            div.className = `msg ${type}`;
-            div.textContent = content;
-            box.appendChild(div);
-            box.scrollTop = box.scrollHeight;
+        function apiBase() {
+            return document.getElementById('apiBase').value.replace(/\/$/, '');
         }
 
-        async function sendMessage() {
-            const input = document.getElementById('messageInput');
-            const btn = document.getElementById('sendBtn');
-            const msg = input.value.trim();
-            if (!msg) return;
+        function setStatus(message, tone = '') {
+            const el = document.getElementById('statusBar');
+            el.textContent = message;
+            el.className = `status-bar ${tone}`.trim();
+        }
 
-            addMsg(msg, 'user');
-            input.value = '';
-            btn.disabled = true;
-            document.getElementById('status').textContent = '等待回复...';
+        function appendLog(title, payload) {
+            const box = document.getElementById('logBox');
+            const stamp = new Date().toLocaleTimeString();
+            const rendered = typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2);
+            box.textContent = `[${stamp}] ${title}\n${rendered}\n\n` + (box.textContent || '');
+        }
 
+        function updateButtons() {
+            const hasTask = !!currentTask?.task_id;
+            const hasHtml = !!currentTask?.artifact_path;
+            const hasPptx = currentTask?.pptx_status === 'succeeded' && !!currentTask?.pptx_path;
+
+            document.getElementById('runBtn').disabled = !hasTask;
+            document.getElementById('refreshBtn').disabled = !hasTask;
+            document.getElementById('previewBtn').disabled = !hasHtml;
+            document.getElementById('exportBtn').disabled = !hasHtml || ['running', 'succeeded'].includes(currentTask?.pptx_status || '');
+            document.getElementById('downloadBtn').disabled = !hasPptx;
+        }
+
+        function updateTaskView(task) {
+            currentTask = task;
+            document.getElementById('taskIdValue').textContent = task?.task_id || '-';
+            document.getElementById('taskStatusValue').textContent = `${task?.status || '-'} / pptx: ${task?.pptx_status || '-'}`;
+            document.getElementById('taskStepValue').textContent = `${task?.current_step || '-'} / ${task?.pptx_current_step || '-'}`;
+            document.getElementById('artifactKindValue').textContent = task?.artifact_kind || '-';
+            document.getElementById('jsonBox').textContent = task ? JSON.stringify(task, null, 2) : '尚未创建任务。';
+
+            const previewHref = task?.preview_url ? `${apiBase().replace(/\/api\/v1$/, '')}${task.preview_url}` : '#';
+            const downloadHref = task?.pptx_download_url ? `${apiBase().replace(/\/api\/v1$/, '')}${task.pptx_download_url}` : '#';
+
+            const previewLink = document.getElementById('previewLink');
+            previewLink.href = previewHref;
+            previewLink.textContent = task?.preview_url || '-';
+
+            const downloadLink = document.getElementById('downloadLink');
+            downloadLink.href = downloadHref;
+            downloadLink.textContent = task?.pptx_download_url || '-';
+
+            updateButtons();
+        }
+
+        function stopPolling() {
+            if (pollTimer) {
+                clearInterval(pollTimer);
+                pollTimer = null;
+            }
+        }
+
+        function startPollingTask() {
+            stopPolling();
+            if (!currentTask?.task_id) return;
+            pollTimer = setInterval(async () => {
+                try {
+                    const task = await requestJson(`/ppt/tasks/${currentTask.task_id}`);
+                    updateTaskView(task);
+                    if (task?.pptx_status === 'succeeded') {
+                        setStatus('HTML 已可用，PPTX 也已后台生成完成。', 'ok');
+                        stopPolling();
+                    } else if (task?.pptx_status === 'failed') {
+                        setStatus(`HTML 已生成，但 PPTX 后台导出失败：${task?.pptx_error_message || '未知错误'}`, 'warn');
+                        stopPolling();
+                    }
+                } catch (error) {
+                    setStatus(`后台状态轮询失败：${error.message}`, 'warn');
+                    stopPolling();
+                }
+            }, 1500);
+        }
+
+        async function requestJson(path, options = {}) {
+            const response = await fetch(`${apiBase()}${path}`, {
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(options.headers || {})
+                },
+                ...options
+            });
+            const data = await response.json();
+            appendLog(`${options.method || 'GET'} ${path}`, data);
+            if (!response.ok || data.code !== 0) {
+                throw new Error(data.detail || data.message || JSON.stringify(data));
+            }
+            return data.data;
+        }
+
+        async function createTask() {
+            setStatus('正在创建任务...');
             try {
-                const res = await fetch(`${API_BASE}/agent/execute`, {
+                const task = await requestJson('/ppt/tasks', {
                     method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${TOKEN}`,
-                        'Content-Type': 'application/json'
-                    },
                     body: JSON.stringify({
-                        session_id: SESSION_ID,
-                        message: msg,
-                        stream: false
+                        topic: document.getElementById('topicInput').value.trim(),
+                        prompt: document.getElementById('promptInput').value.trim(),
+                        title: document.getElementById('titleInput').value.trim() || null
                     })
                 });
-                const data = await res.json();
-                if (data.result) {
-                    addMsg(data.result, 'assistant');
-                } else {
-                    addMsg('错误: ' + JSON.stringify(data), 'assistant');
-                }
-            } catch (e) {
-                addMsg('请求失败: ' + e.message, 'assistant');
+                updateTaskView(task);
+                setStatus(`任务已创建：${task.task_id}`, 'ok');
+            } catch (error) {
+                setStatus(`创建失败：${error.message}`, 'warn');
             }
-
-            btn.disabled = false;
-            document.getElementById('status').textContent = '';
         }
+
+        async function runTask() {
+            if (!currentTask?.task_id) return;
+            setStatus('正在生成 HTML deck，完成后会自动后台导出 PPTX...');
+            try {
+                const task = await requestJson(`/ppt/tasks/${currentTask.task_id}/run`, {
+                    method: 'POST'
+                });
+                updateTaskView(task);
+                if (task.status === 'succeeded') {
+                    setStatus('HTML 已生成，可先直接预览；PPTX 正在后台导出。', 'ok');
+                    startPollingTask();
+                } else {
+                    setStatus(`生成结束，状态：${task.status}`, 'warn');
+                }
+            } catch (error) {
+                setStatus(`生成失败：${error.message}`, 'warn');
+            }
+        }
+
+        async function refreshTask() {
+            if (!currentTask?.task_id) return;
+            setStatus('正在刷新任务状态...');
+            try {
+                const task = await requestJson(`/ppt/tasks/${currentTask.task_id}`);
+                updateTaskView(task);
+                setStatus(`状态已刷新：${task.status}`, 'ok');
+            } catch (error) {
+                setStatus(`刷新失败：${error.message}`, 'warn');
+            }
+        }
+
+        function openPreview() {
+            if (!currentTask?.preview_url) return;
+            window.open(`${apiBase().replace(/\/api\/v1$/, '')}${currentTask.preview_url}`, '_blank');
+            setStatus('已打开 HTML 预览。', 'ok');
+        }
+
+        async function exportPptx() {
+            if (!currentTask?.task_id) return;
+            setStatus('正在导出 PPTX，这一步可能需要几十秒...');
+            try {
+                const task = await requestJson(`/ppt/tasks/${currentTask.task_id}/export-pptx`, {
+                    method: 'POST'
+                });
+                updateTaskView(task);
+                setStatus(`已手动触发 PPTX 导出。`, 'ok');
+                startPollingTask();
+            } catch (error) {
+                setStatus(`导出失败：${error.message}`, 'warn');
+            }
+        }
+
+        function downloadPptx() {
+            if (!currentTask?.pptx_download_url) return;
+            window.open(`${apiBase().replace(/\/api\/v1$/, '')}${currentTask.pptx_download_url}`, '_blank');
+            setStatus('已触发 PPTX 下载。', 'ok');
+        }
+
+        window.addEventListener('beforeunload', stopPolling);
+
+        updateButtons();
     </script>
 </body>
 </html>

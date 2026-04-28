@@ -39,6 +39,12 @@ def test_register_routers_mounts_expected_paths() -> None:
         "/api/v1/feishu/board/image/{whiteboard_id}": {"GET"},
         "/api/v1/feishu/board/update": {"POST"},
         "/api/v1/feishu/board/delete": {"POST"},
+        "/api/v1/ppt/tasks": {"POST"},
+        "/api/v1/ppt/tasks/{task_id}": {"GET"},
+        "/api/v1/ppt/tasks/{task_id}/run": {"POST"},
+        "/api/v1/ppt/tasks/{task_id}/export-pptx": {"POST"},
+        "/api/v1/ppt/tasks/{task_id}/preview": {"GET"},
+        "/api/v1/ppt/tasks/{task_id}/download-pptx": {"GET"},
         "/api/v1/workspace/{workspace_id}": {"GET"},
         "/api/v1/sync/ws/{session_id}": {"GET"},
     }
@@ -158,6 +164,25 @@ def test_stub_module_endpoints_return_expected_contracts() -> None:
                     "workspace_id": "workspace-789",
                     "role": "owner",
                     "locked": False,
+                },
+            },
+        ),
+        (
+            "post",
+            "/api/v1/ppt/tasks",
+            {
+                "json": {
+                    "topic": "杂志风 HTML PPT",
+                    "prompt": "生成一份完整 deck",
+                    "title": "主题标题",
+                },
+                "data": {
+                    "topic": "杂志风 HTML PPT",
+                    "prompt": "生成一份完整 deck",
+                    "title": "主题标题",
+                    "status": "pending",
+                    "current_step": "pending",
+                    "artifact_kind": "html",
                 },
             },
         ),

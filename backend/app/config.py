@@ -4,6 +4,7 @@
 包含：数据库、Redis、JWT、飞书、LLM 等配置项
 """
 from functools import lru_cache
+from pathlib import Path
 from pydantic import ConfigDict
 from pydantic_settings import BaseSettings
 
@@ -17,6 +18,7 @@ class Settings(BaseSettings):
     # Server
     HOST: str = "0.0.0.0"
     PORT: int = 8000
+    GENERATED_ROOT: str = str(Path(__file__).resolve().parent.parent / "generated")
 
     # Database
     POSTGRES_USER: str = "postgres"
@@ -67,6 +69,14 @@ class Settings(BaseSettings):
     VOLCENGINE_MODEL: str = "ep-20260423222610-xbx2l"
 
     AGENT_EMBEDDING_MODEL: str = "text-embedding-3-small"
+    PPT_USE_LIVE_LLM: bool = False
+    PPT_LLM_TIMEOUT_SECONDS: int = 180
+    PPT_LLM_MAX_TOKENS: int = 16000
+    PPT_EXPORT_NODE_BIN: str = "node"
+    PPT_EXPORT_NODE_MODULES: str = ""
+    PPT_EXPORT_VIEWPORT_WIDTH: int = 1600
+    PPT_EXPORT_VIEWPORT_HEIGHT: int = 900
+    PPT_EXPORT_DEVICE_SCALE_FACTOR: int = 2
 
     model_config = ConfigDict(env_file=".env", extra="allow")
 

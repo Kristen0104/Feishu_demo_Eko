@@ -15,10 +15,28 @@ class LlmClient:
     def is_configured(self) -> bool:
         return bool(self._resolve_provider())
 
-    def complete(self, *, system_prompt: str, user_prompt: str) -> str:
+    def complete(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        timeout: float = 60,
+        max_tokens: int | None = None,
+    ) -> str:
         provider = self._resolve_provider()
         if provider is None:
             raise RuntimeError("LLM client is not configured")
+
+        payload = {
+            "model": provider["model"],
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": 0.3,
+        }
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
 
         response = httpx.post(
             f"{str(provider['base']).rstrip('/')}/chat/completions",
@@ -26,15 +44,8 @@ class LlmClient:
                 "Authorization": f"Bearer {provider['key']}",
                 "Content-Type": "application/json",
             },
-            json={
-                "model": provider["model"],
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                "temperature": 0.3,
-            },
-            timeout=60,
+            json=payload,
+            timeout=timeout,
             trust_env=False,
         )
         response.raise_for_status()
