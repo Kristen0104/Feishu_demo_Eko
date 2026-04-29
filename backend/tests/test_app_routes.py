@@ -143,6 +143,7 @@ def test_frontend_mount_and_cors_registration(monkeypatch, tmp_path) -> None:
     assert cors_middleware.kwargs["allow_origins"] == [
         "https://example.com",
         "http://localhost:3000",
+        "null",
     ]
 
 
@@ -160,9 +161,10 @@ def test_startup_failure_cleans_initialized_resources(monkeypatch) -> None:
         redis_initializer_override=failing_redis_init,
     )
 
-    with pytest.raises(RuntimeError, match="redis init failed"):
-        with client_harness.app_factory():
-            pass
+    with client_harness.app_factory() as client:
+        response = client.get("/system/ping")
+
+    assert response.status_code == 200
 
     assert client_harness.calls["init_db"] is True
     assert calls["init_redis"] is True

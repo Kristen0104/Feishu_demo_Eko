@@ -25,14 +25,14 @@ def test_register_routers_mounts_expected_paths() -> None:
 
     expected_surface = {
         "/system/ping": {"GET"},
-        "/api/v1/auth/feishu/login": {"POST"},
-        "/api/v1/auth/me": {"GET"},
-        "/api/v1/canvas/sessions/{session_id}": {"GET"},
-        "/api/v1/agent/tasks": {"POST"},
-        "/api/v1/rag/files": {"GET"},
+        "/api/v1/document/generate": {"POST"},
+        "/api/v1/document/generate/stream": {"POST"},
+        "/api/v1/document/save": {"POST"},
+        "/api/v1/document/test/generate": {"POST"},
+        "/api/v1/document/test/save": {"POST"},
         "/api/v1/feishu/cards/{card_id}": {"GET"},
-        "/api/v1/workspace/{workspace_id}": {"GET"},
-        "/api/v1/sync/ws/{session_id}": {"GET"},
+        "/api/v1/feishu/sync/publish": {"POST"},
+        "/api/v1/feishu/sync/status/{ticket}": {"GET"},
     }
 
     assert expected_surface.keys() <= routes.keys()
@@ -46,77 +46,69 @@ def test_stub_module_endpoints_return_expected_contracts() -> None:
     cases = [
         (
             "get",
-            "/api/v1/canvas/sessions/session-123",
+            "/system/ping",
+            lambda payload: (
+                payload["code"] == 0
+                and payload["message"] == "success"
+                and payload["data"]["status"] == "ok"
+                and isinstance(payload["data"]["timestamp"], str)
+            ),
+        ),
+        (
+            "post",
+            "/api/v1/document/test/generate",
+            lambda payload: (
+                payload["code"] == 0
+                and payload["message"] == "success"
+                and payload["data"]["session_id"] == "session-123"
+                and payload["data"]["status"] == "completed"
+                and "# 校园挑战赛方案" in payload["data"]["content"]
+            ),
             {
-                "data": {
-                    "session_id": "session-123",
-                    "title": "Stub Canvas Session",
-                    "mode": "canvas",
-                },
+                "session_id": "session-123",
+                "topic": "校园挑战赛方案",
+                "requirement": "生成一份活动方案",
             },
         ),
         (
             "post",
-            "/api/v1/agent/tasks",
+            "/api/v1/document/test/save",
+            lambda payload: (
+                payload["code"] == 0
+                and payload["message"] == "success"
+                and payload["data"]["session_id"] == "session-123"
+                and payload["data"]["status"] == "saved"
+            ),
             {
-                "data": {
-                    "task_id": "stub-task",
-                    "status": "accepted",
-                },
-            },
-        ),
-        (
-            "get",
-            "/api/v1/rag/files",
-            {
-                "data": [
-                    {
-                        "file_id": "stub-file",
-                        "filename": "knowledge-base.md",
-                        "source": "stub",
-                    }
-                ],
+                "session_id": "session-123",
+                "title": "校园挑战赛方案",
+                "content": "# 校园挑战赛方案",
+                "sync_to_feishu": False,
             },
         ),
         (
             "get",
             "/api/v1/feishu/cards/card-456",
-            {
-                "data": {
+            lambda payload: (
+                payload["code"] == 0
+                and payload["message"] == "success"
+                and payload["data"] == {
                     "card_id": "card-456",
                     "title": "Stub Feishu Card",
                     "platform": "feishu",
-                },
-            },
-        ),
-        (
-            "get",
-            "/api/v1/workspace/workspace-789",
-            {
-                "data": {
-                    "workspace_id": "workspace-789",
-                    "role": "owner",
-                    "locked": False,
-                },
-            },
-        ),
-        (
-            "get",
-            "/api/v1/sync/ws/session-999",
-            {
-                "data": {
-                    "session_id": "session-999",
-                    "transport": "websocket",
-                },
-            },
+                }
+            ),
         ),
     ]
 
-    for method, path, expected in cases:
-        response = getattr(client, method)(path)
+    for case in cases:
+        if len(case) == 4:
+            method, path, validator, request_json = case
+            response = getattr(client, method)(path, json=request_json)
+        else:
+            method, path, validator = case
+            response = getattr(client, method)(path)
 
         assert response.status_code == 200
         payload = response.json()
-        assert payload["code"] == 0
-        assert payload["message"] == "success"
-        assert payload["data"] == expected["data"]
+        assert validator(payload)

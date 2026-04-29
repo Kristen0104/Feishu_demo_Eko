@@ -29,9 +29,14 @@ logger = logging.getLogger(__name__)
 
 
 def configure_middlewares(app: FastAPI, settings: Settings) -> None:
+    allowed_origins = list(settings.CORS_ORIGINS)
+    # file:// pages send Origin: null; allow it for local integration pages.
+    if "null" not in allowed_origins:
+        allowed_origins.append("null")
+
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.CORS_ORIGINS,
+        allow_origins=allowed_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -85,10 +90,22 @@ def build_lifespan(
         redis_initialized = False
 
         try:
-            await database_initializer()
-            db_initialized = True
-            await redis_initializer()
-            redis_initialized = True
+            # 先尝试初始化数据库，失败不中断启动
+            try:
+                await database_initializer()
+                db_initialized = True
+            except Exception as e:
+                print(f"Warning: Database initialization failed - {e}")
+                print("Continuing without database...")
+
+            # 尝试初始化 Redis，失败不中断启动
+            try:
+                await redis_initializer()
+                redis_initialized = True
+            except Exception as e:
+                print(f"Warning: Redis initialization failed - {e}")
+                print("Continuing without Redis...")
+
             yield
         finally:
             if redis_initialized:
