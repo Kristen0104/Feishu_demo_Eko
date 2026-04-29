@@ -96,6 +96,40 @@ def test_board_generate_service_keeps_valid_llm_plan_instead_of_forcing_fallback
     assert 8 <= len(result.node_ids) <= 20
 
 
+def test_board_generate_service_normalizes_fishbone_when_llm_plan_is_invalid() -> None:
+    class StubBoardClient(FeishuBoardClient):
+        def create_notes(self, whiteboard_id, nodes_json_or_nodes, source_type="content", client_token="", user_id_type="open_id"):
+            return {
+                "node_ids": [f"node-{index}" for index, _ in enumerate(nodes_json_or_nodes)],
+                "failed_items": [],
+            }
+
+        def get_board_image(self, whiteboard_id):
+            return {"preview_url": f"https://stub.preview/{whiteboard_id}.png"}
+
+    class StubLlmClient:
+        def is_configured(self) -> bool:
+            return True
+
+        def complete(self, *, system_prompt: str, user_prompt: str) -> str:
+            return "not-json"
+
+    service = BoardGenerateService(
+        feishu_board_client=StubBoardClient(),
+        llm_client=StubLlmClient(),  # type: ignore[arg-type]
+    )
+
+    result = service.generate(
+        message="请生成一张AI平台项目延期原因分析鱼骨图，主因包括需求变更、数据准备、模型效果、工程稳定性、资源协调、验收流程。",
+        sharing_url="https://example.feishu.cn/wiki/board/wbcnFISH",
+    )
+
+    assert result.render_mode == "create_notes"
+    assert result.whiteboard_id == "wbcnFISH"
+    assert len(result.node_ids) == 21
+    assert any("shape_count=15 connector_count=6" in log for _, log in result.execution_logs)
+
+
 def test_canvas_service_run_board_task_updates_task_state() -> None:
     repository = CanvasRepository()
     generator = BoardGenerateService(feishu_board_client=FeishuBoardClient())
