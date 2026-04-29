@@ -64,6 +64,10 @@ class Settings(BaseSettings):
     FEISHU_OAUTH_SCOPE: str = "contact:user.base:readonly"
     FEISHU_OAUTH_STATE_TTL_SECONDS: int = 600
     FRONTEND_LOGIN_SUCCESS_URL: str = "http://127.0.0.1:8010/frontend/test.html"
+    FEISHU_BITABLE_APP_TOKEN: str = ""
+    FEISHU_BITABLE_TABLE_ID: str = ""
+    FEISHU_BITABLE_FIELD_TITLE: str = "标题"
+    FEISHU_BITABLE_FIELD_URL: str = "文档链接"
 
     # Agent (DeepSeek)
     AGENT_MODEL: str = "deepseek-v4-flash"

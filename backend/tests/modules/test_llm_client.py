@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.config import Settings
+from app.core.llm_client import LLMClient
 from app.services.llm_client import LlmClient
 
 
@@ -79,3 +81,23 @@ def test_llm_client_complete_accepts_custom_max_tokens(monkeypatch) -> None:
 
     assert result == "ok"
     assert captured["max_tokens"] == 9999
+
+
+def test_document_llm_client_appends_chat_completions_for_base_endpoint() -> None:
+    client = LLMClient(
+        settings_override=Settings(
+            VOLCENGINE_ENDPOINT="https://ark.cn-beijing.volces.com/api/v3",
+        )
+    )
+
+    assert client._endpoint == "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
+
+
+def test_document_llm_client_keeps_explicit_chat_completions_endpoint() -> None:
+    client = LLMClient(
+        settings_override=Settings(
+            VOLCENGINE_ENDPOINT="https://ark.cn-beijing.volces.com/api/v3/chat/completions",
+        )
+    )
+
+    assert client._endpoint == "https://ark.cn-beijing.volces.com/api/v3/chat/completions"

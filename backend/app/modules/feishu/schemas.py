@@ -11,6 +11,25 @@ class FeishuCardSchema(BaseModel):
     platform: str
 
 
+class PublishToFeishuRequest(BaseModel):
+    session_id: str
+    title: str
+    markdown_content: str
+    app_token: str | None = None
+    table_id: str | None = None
+
+
+class PublishToFeishuResponse(BaseModel):
+    ticket: str
+    status: Literal["processing", "success", "failed"] = "processing"
+
+
+class ImportTaskStatus(BaseModel):
+    ticket: str
+    status: Literal["processing", "success", "failed"]
+    document_url: str | None = None
+
+
 class FeishuBoardImportRequest(BaseModel):
     whiteboard_id: str
     source: str

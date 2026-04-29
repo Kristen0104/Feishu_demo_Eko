@@ -11,8 +11,8 @@ Eko AI Agent 后端服务入口
 import logging
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
-from typing import Any
 from time import perf_counter
+from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -30,9 +30,13 @@ logger = logging.getLogger(__name__)
 
 
 def configure_middlewares(app: FastAPI, settings: Settings) -> None:
+    allowed_origins = list(settings.CORS_ORIGINS)
+    if "null" not in allowed_origins:
+        allowed_origins.append("null")
+
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.CORS_ORIGINS,
+        allow_origins=allowed_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
