@@ -52,9 +52,41 @@ class LlmClient:
         payload = response.json()
         return payload["choices"][0]["message"]["content"].strip()
 
-    def complete_json(self, *, system_prompt: str, user_prompt: str) -> dict[str, object]:
-        content = self.complete(system_prompt=system_prompt, user_prompt=user_prompt)
-        return json.loads(content)
+    def complete_json(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        timeout: float = 60,
+        max_tokens: int | None = None,
+    ) -> dict[str, object]:
+        content = self.complete(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            timeout=timeout,
+            max_tokens=max_tokens,
+        )
+        stripped = content.strip()
+        if stripped.startswith("```") and stripped.endswith("```"):
+            lines = stripped.splitlines()
+            if len(lines) >= 3:
+                stripped = "\n".join(lines[1:-1]).strip()
+        return json.loads(stripped)
+
+    def complete_json_with_options(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        timeout: float = 60,
+        max_tokens: int | None = None,
+    ) -> dict[str, object]:
+        return self.complete_json(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            timeout=timeout,
+            max_tokens=max_tokens,
+        )
 
     def _resolve_provider(self) -> dict[str, Any] | None:
         if self._settings.AGENT_API_KEY and self._settings.AGENT_API_BASE:

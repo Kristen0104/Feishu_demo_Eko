@@ -5,6 +5,7 @@ import types
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
+import pytest
 from _pytest.monkeypatch import MonkeyPatch
 from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
@@ -177,10 +178,10 @@ def test_startup_failure_cleans_initialized_resources(monkeypatch) -> None:
         redis_initializer_override=failing_redis_init,
     )
 
-    with client_harness.app_factory() as client:
-        response = client.get("/system/ping")
+    with pytest.raises(RuntimeError, match="redis init failed"):
+        with client_harness.app_factory():
+            pass
 
-    assert response.status_code == 200
     assert client_harness.calls["init_db"] is True
     assert calls["init_redis"] is True
     assert client_harness.calls["close_redis"] is False

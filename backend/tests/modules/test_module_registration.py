@@ -28,6 +28,8 @@ def test_register_routers_mounts_expected_paths() -> None:
     expected_surface = {
         "/system/ping": {"GET"},
         "/api/v1/auth/feishu/login": {"POST"},
+        "/api/v1/auth/feishu/login-url": {"GET"},
+        "/api/v1/auth/feishu/callback": {"GET"},
         "/api/v1/auth/me": {"GET"},
         "/api/v1/document/generate": {"POST"},
         "/api/v1/document/generate/stream": {"POST"},
@@ -49,12 +51,10 @@ def test_register_routers_mounts_expected_paths() -> None:
         "/api/v1/feishu/board/delete": {"POST"},
         "/api/v1/feishu/sync/publish": {"POST"},
         "/api/v1/feishu/sync/status/{ticket}": {"GET"},
-        "/api/v1/ppt/tasks": {"POST"},
-        "/api/v1/ppt/tasks/{task_id}": {"GET"},
-        "/api/v1/ppt/tasks/{task_id}/run": {"POST"},
-        "/api/v1/ppt/tasks/{task_id}/export-pptx": {"POST"},
-        "/api/v1/ppt/tasks/{task_id}/preview": {"GET"},
-        "/api/v1/ppt/tasks/{task_id}/download-pptx": {"GET"},
+        "/api/v1/ppt/decks": {"POST"},
+        "/api/v1/ppt/decks/{deck_id}/modify": {"POST"},
+        "/api/v1/ppt/decks/{deck_id}/export": {"POST"},
+        "/api/v1/ppt/themes": {"GET"},
         "/api/v1/workspace/{workspace_id}": {"GET"},
         "/api/v1/sync/ws/{session_id}": {"GET"},
     }
@@ -132,7 +132,7 @@ def test_stub_module_endpoints_return_expected_contracts() -> None:
             lambda payload: (
                 payload["code"] == 0
                 and payload["message"] == "success"
-                and payload["data"]["status"] == "pending"
+                and payload["data"]["status"] == "accepted"
             ),
             None,
         ),
@@ -151,40 +151,21 @@ def test_stub_module_endpoints_return_expected_contracts() -> None:
             None,
         ),
         (
-            "post",
-            "/api/v1/feishu/board/import",
+            "get",
+            "/api/v1/ppt/themes",
             lambda payload: (
                 payload["code"] == 0
                 and payload["message"] == "success"
-                and payload["data"]["whiteboard_id"] == "wbcn123"
-                and payload["data"]["syntax"] == "mermaid"
-                and payload["data"]["diagram_type"] == "flowchart"
+                and payload["data"]
+                == [
+                    {"theme_id": "business", "label": "business 商务风"},
+                    {"theme_id": "academic", "label": "academic 学术风"},
+                    {"theme_id": "apple_black", "label": "apple_black 苹果黑风"},
+                    {"theme_id": "apple_white", "label": "apple_white 苹果白风"},
+                    {"theme_id": "eco", "label": "eco 绿色环保风"},
+                ]
             ),
-            {
-                "whiteboard_id": "wbcn123",
-                "source": "flowchart TD\nA-->B",
-                "source_type": "content",
-                "syntax": "mermaid",
-                "diagram_type": "flowchart",
-                "style": "board",
-            },
-        ),
-        (
-            "post",
-            "/api/v1/feishu/board/create-notes",
-            lambda payload: (
-                payload["code"] == 0
-                and payload["message"] == "success"
-                and payload["data"]["whiteboard_id"] == "wbcn123"
-                and payload["data"]["count"] == 1
-            ),
-            {
-                "whiteboard_id": "wbcn123",
-                "nodes": [{"type": "composite_shape", "text": {"text": "A"}}],
-                "source_type": "content",
-                "client_token": "",
-                "user_id_type": "open_id",
-            },
+            None,
         ),
         (
             "get",
@@ -197,22 +178,6 @@ def test_stub_module_endpoints_return_expected_contracts() -> None:
                 and payload["data"]["locked"] is False
             ),
             None,
-        ),
-        (
-            "post",
-            "/api/v1/ppt/tasks",
-            lambda payload: (
-                payload["code"] == 0
-                and payload["message"] == "success"
-                and payload["data"]["topic"] == "杂志风 HTML PPT"
-                and payload["data"]["status"] == "pending"
-                and payload["data"]["artifact_kind"] == "html"
-            ),
-            {
-                "topic": "杂志风 HTML PPT",
-                "prompt": "生成一份完整 deck",
-                "title": "主题标题",
-            },
         ),
         (
             "get",

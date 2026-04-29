@@ -55,11 +55,44 @@
 
 - 当前登录方式基于飞书认证。
 - 受保护接口使用 Bearer Token 鉴权。
-- 文档只保留当前 stub 已暴露的身份字段。
+- 飞书 OAuth `state` 使用 Redis 一次性保存与消费。
+- 本地用户、飞书账号和 OAuth token 使用 PostgreSQL 持久化。
+
+### GET `/auth/feishu/login-url`
+
+生成飞书 OAuth 授权 URL，并在 Redis 写入一次性 `state`。
+
+**查询参数**
+
+- `redirect_uri`：可选。测试页可传当前页面地址，后端默认使用配置里的飞书回调地址。
+
+**响应**
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "authorize_url": "https://accounts.feishu.cn/open-apis/authen/v1/authorize?...",
+    "state": "string",
+    "expires_in": 600
+  }
+}
+```
+
+### GET `/auth/feishu/callback`
+
+飞书 OAuth 回调入口，使用 `code + state` 完成登录并签发本系统 JWT。
+
+**查询参数**
+
+- `code`：飞书回调 code
+- `state`：此前 `/auth/feishu/login-url` 返回的一次性 state
+- `redirect_uri`：可选。需要与生成授权 URL 时的 redirect URI 保持一致。
 
 ### POST `/auth/feishu/login`
 
-使用飞书登录 `code` 换取访问令牌和基础用户信息。
+测试页使用飞书登录 `code + state` 换取本系统 JWT 和基础用户信息。该接口与 callback 共用登录服务逻辑，便于前端手动粘贴 code 联测。
 
 **请求体**
 
@@ -90,7 +123,11 @@
 
 ### GET `/auth/me`
 
-返回当前登录用户的 stub 信息。
+返回当前 Bearer Token 对应的登录用户信息。
+
+**请求头**
+
+- `Authorization: Bearer {access_token}`
 
 **响应**
 
@@ -105,6 +142,15 @@
   }
 }
 ```
+
+### 登录相关存储
+
+| 存储 | Key / 表 | 用途 |
+|------|----------|------|
+| Redis | `feishu:oauth:state:{state}` | OAuth state 一次性校验，过期后无法登录 |
+| PostgreSQL | `users` | 本系统用户 |
+| PostgreSQL | `feishu_accounts` | 飞书 open_id / union_id 与本地用户绑定 |
+| PostgreSQL | `feishu_oauth_tokens` | 用户飞书 access token / refresh token，用于后续邀请好友等飞书 API |
 
 ---
 
@@ -215,19 +261,65 @@ Canvas 是当前内容工作台的主框架术语。现在的路由只暴露按�
 
 ## 8. PPT
 
-PPT 模块独立于 `canvas/board`。它负责生成和预览单文件 HTML deck，不参与飞书白板节点渲染，也不会复用 `board` 的导图/便签流程。
+PPT 模块独立于 `canvas/board`。它以 JSON deck 作为中间层：生成、自然语言修改、HTML 预览和 PPTX 导出都围绕同一份 deck 数据工作，不复用飞书白板节点渲染流程。
 
-### POST `/ppt/tasks`
+试验版多布局 schema 已明确支持 slide 级 `layout` 字段，当前可用值为 `cover`、`bullets`、`two_column`、`timeline`、`metrics`、`summary`。这一版的目标是让前端联测和导出验证能直接看出结构差异，而不是把所有页面都压成同一种版式。
 
-创建一个 HTML PPT 生成任务。
+### 预期新增 layout
+
+下面这些布局名称和字段是后续扩展的预期约定，供前端联测和文档对齐使用，当前可以先按这些名字准备内容：
+
+| layout | 预期字段 |
+|---|---|
+| `section_divider` | `title`, `subtitle`, `section`, `accent`, `notes` |
+| `quote` | `quote`, `author`, `context`, `notes` |
+| `comparison` | `left_title`, `right_title`, `left_items`, `right_items`, `summary`, `notes` |
+| `process` | `title`, `steps`, `inputs`, `outputs`, `notes` |
+| `matrix` | `title`, `quadrants`, `axis_x`, `axis_y`, `highlights`, `notes` |
+| `architecture` | `title`, `modules`, `layers`, `links`, `notes` |
+
+说明：
+
+- `section_divider`：适合章节页、转场页、阶段切换页。
+- `quote`：适合金句页、结论页、态度表达页。
+- `comparison`：适合对比页、方案取舍页、前后版本页。
+- `process`：适合流程页、步骤页、操作链路页。
+- `matrix`：适合四象限页、优先级页、分类判断页。
+- `architecture`：适合架构模块页、系统结构页、能力分层页。
+
+### GET `/ppt/themes`
+
+返回当前支持的主题。
+
+**响应**
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": [
+    { "theme_id": "tech", "label": "科技风" },
+    { "theme_id": "business", "label": "商务风" },
+    { "theme_id": "minimal", "label": "简约风" }
+  ]
+}
+```
+
+### POST `/ppt/decks`
+
+根据文本或聊天记录生成 PPT deck。`theme` 支持中文值如 `科技风`，服务端会归一化为 `tech`。如果 `content` 中出现明确页数（如 `生成 3 页`、`做 6 页`、`输出 8-10 页`），服务端会优先使用消息里的页数；范围写法取上限，并统一限制在 `1-20`，覆盖 `preferences.slides_limit`。
 
 **请求体**
 
 ```json
 {
-  "topic": "string",
-  "prompt": "string",
-  "title": "string"
+  "type": "chat_record",
+  "content": "今天团队讨论了项目进度，需要生成 PPT 总结。",
+  "preferences": {
+    "theme": "科技风",
+    "slides_limit": 10,
+    "author": "user123"
+  }
 }
 ```
 
@@ -238,67 +330,76 @@ PPT 模块独立于 `canvas/board`。它负责生成和预览单文件 HTML deck
   "code": 0,
   "message": "success",
   "data": {
-    "task_id": "string",
-    "topic": "string",
-    "prompt": "string",
+    "deck_id": "deck_xxx",
+    "type": "chat_record",
     "title": "string",
-    "status": "pending",
-    "current_step": "pending",
-    "artifact_kind": "html",
-    "preview_url": "/api/v1/ppt/tasks/{task_id}/preview",
-    "artifact_path": null,
-    "pptx_path": null,
-    "pptx_download_url": null,
-    "error_message": null,
-    "logs": []
+    "source_content": "string",
+    "theme": "tech",
+    "author": "user123",
+    "version": 1,
+    "last_modified": "2026-04-28T12:00:00Z",
+    "slides": [
+      {
+        "id": "slide_xxx",
+        "slide_id": "slide_xxx",
+        "title": "第一页标题",
+        "body": ["要点 1"],
+        "images": [],
+        "notes": "讲稿备注",
+        "theme": "tech",
+        "author": "user123",
+        "last_modified": "2026-04-28T12:00:00Z",
+        "version": 1
+      }
+    ],
+    "html": "<!DOCTYPE html>...",
+    "history": []
   }
 }
 ```
 
-### GET `/ppt/tasks/{task_id}`
+### POST `/ppt/decks/{deck_id}/modify`
 
-查询 HTML PPT 任务状态。
+通过自然语言修改 deck。可传 `slide_id` 做增量修改；目标 slide 的 `version` 会递增，deck 的 `version` 与 `last_modified` 也会更新。
 
-### POST `/ppt/tasks/{task_id}/run`
+**请求体**
 
-执行 HTML PPT 生成任务。当前实现会生成单文件 `index.html`，并把产物保存到 `backend/generated/ppt_html/{task_id}/index.html`。
-
-### POST `/ppt/tasks/{task_id}/export-pptx`
-
-基于已生成的 HTML deck 导出 `.pptx` 文件。当前实现会先把每一页渲染为 PNG，再将这些 PNG 组装为 PowerPoint 文件，因此导出的页面视觉保真度较高，但单页内容默认不是 PowerPoint 原生可编辑元素。
-
-导出成功后，任务对象会补充：
-
-- `pptx_path`
-- `pptx_download_url`
-
-### GET `/ppt/tasks/{task_id}/download-pptx`
-
-下载导出的 PPTX 文件。
+```json
+{
+  "instruction": "把第二页的标题改为“下周计划”",
+  "slide_id": "slide_xxx"
+}
+```
 
 **响应**
 
-- `200 OK`
-- `Content-Type: application/vnd.openxmlformats-officedocument.presentationml.presentation`
+返回更新后的 deck，结构同 `POST /ppt/decks`。
 
-### GET `/ppt/tasks/{task_id}/preview`
+### POST `/ppt/decks/{deck_id}/export`
 
-返回任务对应的 HTML 产物预览。
+把当前 deck 同步导出为 PPTX。
 
 **响应**
 
-- `200 OK`
-- `Content-Type: text/html`
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "deck_id": "deck_xxx",
+    "file_name": "deck.pptx",
+    "path": "/absolute/path/to/deck.pptx",
+    "url": null,
+    "version": 2
+  }
+}
+```
 
-### 导出运行时说明
+### 运行时说明
 
-`export-pptx` 依赖服务端可用的 Node.js、Playwright 和 Chromium 浏览器内核：
+当前实现会把 HTML 和 JSON 产物保存到 `GENERATED_ROOT/ppt/{deck_id}/`。PPTX 导出优先使用 Node.js 和 `pptxgenjs` 生成原生幻灯片；如果本机运行时不可用，服务会返回一个可追踪的 fallback 文件，保证 demo 链路和 API 契约不中断。
 
-- `PPT_EXPORT_NODE_BIN`
-- `PPT_EXPORT_NODE_MODULES`
-- Playwright Chromium 浏览器
-
-生产环境建议在导出 worker 或后端容器镜像中预装这些依赖。
+PPT 生成与自然语言修改必须配置 DeepSeek 兼容接口，当前默认模型为 `deepseek-v4-flash`。未配置 `AGENT_API_KEY` 时，生成和修改接口会返回 `503`，不会走本地内容 fallback。
 
 ---
 
