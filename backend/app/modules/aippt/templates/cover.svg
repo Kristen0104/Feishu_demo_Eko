@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" width="1280" height="720">
+  <rect width="1280" height="720" fill="#F8FAFC"/>
+  <rect x="0" y="0" width="22" height="720" fill="{{ACCENT}}"/>
+  <rect x="72" y="86" width="96" height="8" rx="4" fill="{{ACCENT}}"/>
+  <text x="72" y="178" font-family="Microsoft YaHei, Arial, sans-serif" font-size="34" font-weight="800" fill="#0F172A">{{PAGE_TITLE}}</text>
+  {{OBJECTIVE_LINES}}
+  <text x="72" y="536" font-family="Microsoft YaHei, Arial, sans-serif" font-size="20" font-weight="600" fill="#475569">{{DECK_TITLE}}</text>
+  <rect x="736" y="128" width="448" height="420" rx="34" fill="{{ACCENT_PALE}}" stroke="#E2E8F0" stroke-width="1"/>
+  <rect x="766" y="158" width="388" height="360" rx="28" fill="#FFFFFF"/>
+  <circle cx="1114" cy="198" r="28" fill="{{ACCENT_SOFT}}"/>
+  <circle cx="1058" cy="474" r="18" fill="{{ACCENT}}"/>
+  {{RIGHT_CONTENT}}
+</svg>

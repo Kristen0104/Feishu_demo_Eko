@@ -1,0 +1,1767 @@
+from __future__ import annotations
+
+import json
+import re
+from html import escape
+from dataclasses import dataclass
+from datetime import date
+
+import httpx
+
+from app.config import Settings
+from app.modules.aippt.spec_lock import SpecLock
+from app.modules.aippt.template_renderer import AIPPTTemplateRenderer
+
+
+@dataclass
+class DeckSlide:
+    slide_number: int
+    title: str
+    objective: str
+    bullets: list[str]
+    visual: str = ""
+    template: str = "three_cards"
+    text_box: list[str] | None = None
+    cards: list[str] | None = None
+    timeline_items: list[str] | None = None
+    metrics: list[str] | None = None
+    comparison_items: list[str] | None = None
+    process_items: list[str] | None = None
+    architecture_parent: str | None = None
+    architecture_items: list[str] | None = None
+    architecture_flow: list[str] | None = None
+    layout_intent: str | None = None
+    page_rhythm: str | None = None
+
+
+@dataclass
+class DeckPlan:
+    title: str
+    subtitle: str
+    visual_style: str
+    palette: list[str]
+    slides: list[DeckSlide]
+    body_density: str = "standard"
+    theme_colors: dict[str, str] | None = None
+    image_resources: list[dict[str, str]] | None = None
+    generation_mode: str = "llm"
+    execution_mode: str = "renderer"
+    fallback_reason: str | None = None
+    raw_plan_excerpt: str | None = None
+
+
+class DeepSeekAIPPTClient:
+    def __init__(self, settings: Settings) -> None:
+        self._settings = settings
+        self._renderer = AIPPTTemplateRenderer()
+
+    def generate_deck_plan(
+        self,
+        source_text: str,
+        page_count: int,
+        style: str,
+        *,
+        design_mode: str = "template",
+    ) -> DeckPlan:
+        if self._normalize_design_mode(design_mode) == "free_design":
+            return self._generate_free_design_deck_plan(source_text, page_count, style)
+
+        prompt = f"""
+Return JSON only.
+Create a realistic business presentation from the following source text.
+Page count: {page_count}
+Return exactly {page_count} slides.
+
+Source text:
+{source_text[:6000]}
+
+Required JSON schema:
+{{
+  "title": "deck title",
+  "subtitle": "one sentence subtitle",
+  "body_density": "sparse|standard|detailed|dense",
+  "theme_colors": {{
+    "bg": "#F8FAFC",
+    "panel": "#FFFFFF",
+    "primary": "#2563EB",
+    "accent": "#DBEAFE",
+    "secondary_accent": "#EFF6FF",
+    "text": "#0F172A",
+    "text_secondary": "#475569",
+    "border": "#E2E8F0"
+  }},
+  "slides": [
+    {{
+      "slide_number": 1,
+      "title": "slide title",
+      "objective": "what this slide should achieve",
+      "text_box": ["left point 1", "left point 2", "left point 3"],
+      "cards": ["card 1", "card 2", "card 3", "card 4"],
+      "timeline_items": ["step 1", "step 2", "step 3"],
+      "metrics": ["metric 1", "metric 2", "metric 3"],
+      "comparison_items": ["comparison 1", "comparison 2", "comparison 3"],
+      "process_items": ["process 1", "process 2", "process 3"],
+      "architecture_parent": "parent container or system name",
+      "architecture_items": ["module 1", "module 2", "module 3"],
+      "architecture_flow": ["input", "processing", "output"],
+      "visual_type": "cards|timeline|metrics|comparison|process|architecture|matrix|swimlane"
+    }}
+  ]
+}}
+
+Visual text rules for PPT Master export:
+- Build a deck for a real stakeholder meeting, not a demo of this generator.
+- Infer body_density from the user's intent, excluding slide titles:
+  - sparse: executive live talk, pitch, board update, few words on slide.
+  - standard: normal project update, balanced explanation.
+  - detailed: review/training/workshop, enough body text to understand without much context.
+  - dense: leave-behind memo, operations handbook, implementation pack; still readable, never tiny.
+- Match text_box length to body_density: sparse 1-2 items, standard 3 items, detailed 4 items, dense 5-6 items.
+- Choose theme_colors from the actual subject and audience. Do not always use blue.
+- Use PPT Master-style layout themes: government can be red/blue, finance can be green/gold, healthcare can be teal/green, education can be navy/red, consumer/brand can be warmer, technology can be blue/cyan/purple.
+- Keep theme_colors readable and PPT-safe: use hex colors only; bg/panel must contrast with text; accent and secondary_accent should be lighter support colors.
+- Use concrete nouns from the source text; avoid generic slide titles such as "项目概览", "现状与痛点", "核心方案" unless the source itself uses them.
+- Do not mention "AI 生成 PPT", "后端联调", "demo", "模板", "本页希望观众带走" unless these are the actual business subject.
+- Prefer a narrative arc: context/problem -> current vs target -> solution or architecture -> operating workflow -> value/risk/next steps.
+- For decks with 8+ pages, think in PPT Master page roles: cover, agenda/TOC, chapter divider, content pages, ending.
+- Vary content structures. Avoid using cards for more than one third of the content slides. Prefer matrix for capability maps, swimlane for cross-team work, process for operations, architecture for systems, metrics for dashboards, comparison for before/after.
+- Make every slide title specific and decision-oriented, for example "统一入口降低任务遗漏" instead of "核心方案".
+- Left text should be business statements with evidence or action, not labels.
+- Prefer concise Chinese labels for right-side visual fields when the source text is Chinese.
+- Every right-side visual array must contain at most 3 items.
+- Keep comparison_items to 8-14 Chinese chars or 2-4 English words each.
+- For matrix visual_type, provide exactly 4 short cards so all four quadrants are populated.
+- Keep process_items to 4-10 Chinese chars or 1-3 English words each.
+- For architecture, use module_composition semantics: one parent system, exactly 3 modules, exactly 3 flow labels.
+- Keep architecture_parent short: 8-18 Chinese chars or 2-4 English words.
+- Keep architecture_items short: 4-10 Chinese chars or 1-3 English words each.
+- Keep architecture_flow short: 2-8 Chinese chars or 1-2 English words each.
+- Do not put full sentences, long descriptions, extra alternatives, output lists, or foundation lists into right-side visual fields.
+""".strip()
+        content = ""
+        try:
+            content = self._chat_completion(prompt, temperature=0.4, max_tokens=max(4000, min(12000, page_count * 850)))
+            payload = self._extract_json(content)
+            body_density = self._body_density_from_payload(payload.get("body_density"), source_text=source_text, style=style)
+            text_box_limit = self._body_text_limit(body_density)
+            slides: list[DeckSlide] = []
+            for index, item in enumerate(payload.get("slides", [])[:page_count]):
+                text_box = self._normalize_string_list(item.get("text_box"), limit=text_box_limit)
+                cards = self._normalize_string_list(item.get("cards"), limit=4)
+                timeline_items = self._normalize_string_list(item.get("timeline_items"), limit=3)
+                metrics = self._normalize_string_list(item.get("metrics"), limit=3)
+                comparison_items = self._normalize_string_list(item.get("comparison_items"), limit=3)
+                process_items = self._normalize_string_list(item.get("process_items"), limit=3)
+                architecture_items = self._normalize_string_list(item.get("architecture_items"), limit=3)
+                architecture_flow = self._normalize_string_list(item.get("architecture_flow"), limit=3)
+                bullets = text_box or cards or timeline_items or metrics or comparison_items or process_items or architecture_items or ["Key point"]
+                template = self._template_for_content(
+                    requested_template=str(item.get("visual_type") or item.get("template") or ""),
+                    cards=cards,
+                    timeline_items=timeline_items,
+                    metrics=metrics,
+                    comparison_items=comparison_items,
+                    process_items=process_items,
+                    architecture_items=architecture_items,
+                    bullets=bullets,
+                )
+                architecture_parent = str(item.get("architecture_parent") or item.get("parent_title") or "").strip() or None
+                slide = DeckSlide(
+                    slide_number=index + 1,
+                    title=str(item.get("title", f"Slide {index + 1}")),
+                    objective=str(item.get("objective", "Summarize the key point.")),
+                    bullets=bullets,
+                    visual=str(item.get("visual", "")),
+                    template=template,
+                    text_box=self._complete_items(text_box or bullets, bullets, item.get("objective", ""), limit=text_box_limit),
+                    cards=self._complete_items(cards, bullets, item.get("objective", ""), limit=3),
+                    timeline_items=self._complete_items(timeline_items, bullets, item.get("objective", ""), limit=3),
+                    metrics=self._complete_items(metrics, bullets, item.get("objective", ""), limit=3),
+                    comparison_items=self._complete_items(comparison_items, bullets, item.get("objective", ""), limit=3),
+                    process_items=self._complete_items(process_items, bullets, item.get("objective", ""), limit=3),
+                    architecture_parent=architecture_parent,
+                    architecture_items=self._complete_items(architecture_items, bullets, item.get("objective", ""), limit=3),
+                    architecture_flow=self._complete_items(architecture_flow, bullets, item.get("objective", ""), limit=3),
+                )
+                slides.append(slide)
+            if not slides:
+                raise ValueError("empty slides")
+            self._apply_page_roles(slides)
+            theme_colors = self._theme_from_payload(
+                payload.get("theme_colors"),
+                source_text=source_text,
+                style=style,
+                title=str(payload.get("title", "")),
+            )
+            return DeckPlan(
+                title=str(payload.get("title", "AI PPT")),
+                subtitle=str(payload.get("subtitle", "AI-generated presentation")),
+                visual_style=style,
+                palette=self._palette_from_theme(theme_colors),
+                slides=slides,
+                body_density=body_density,
+                theme_colors=theme_colors,
+                image_resources=[],
+                generation_mode="llm",
+                execution_mode="renderer",
+                raw_plan_excerpt=content[:1200],
+            )
+        except Exception as exc:
+            return self._fallback_plan(source_text, page_count, style, fallback_reason=str(exc), raw_plan_excerpt=content[:1200])
+
+    def generate_design_spec(
+        self,
+        source_text: str,
+        page_count: int,
+        style: str,
+        plan: DeckPlan,
+    ) -> str:
+        _ = source_text
+        slides = plan.slides[:page_count]
+        if self._is_free_design_plan(plan):
+            return self._generate_free_design_spec(source_text, page_count, style, plan)
+        return f"""# {plan.title} - Design Spec
+
+> Human-readable design narrative. Machine-readable execution contract: `spec_lock.md`.
+
+## I. Project Information
+
+| Item | Value |
+| ---- | ----- |
+| **Project Name** | {plan.title} |
+| **Canvas Format** | PPT 16:9 (1280x720) |
+| **Page Count** | {page_count} |
+| **Design Style** | {style} |
+| **Body Density** | {plan.body_density} |
+| **Target Audience** | 项目评审、业务负责人、开发团队 |
+| **Use Case** | 业务方案汇报、项目评审与落地沟通 |
+| **Created Date** | {date.today().isoformat()} |
+
+---
+
+## II. Canvas Specification
+
+| Property | Value |
+| -------- | ----- |
+| **Format** | PPT 16:9 |
+| **Dimensions** | 1280 x 720 |
+| **viewBox** | `0 0 1280 720` |
+| **Margins** | left/right 72px, top/bottom 64px |
+| **Content Area** | x=72..1208, y=112..638 |
+
+---
+
+## III. Visual Theme
+
+### Theme Style
+
+- **Style**: {style}
+- **Theme**: Light theme
+- **Tone**: clean, professional, technical, presentation-ready
+
+### Color Scheme
+
+| Role | HEX | Purpose |
+| ---- | --- | ------- |
+| **Background** | `{self._theme_color(plan, "bg", "#F8FAFC")}` | Page background |
+| **Secondary bg** | `{self._theme_color(plan, "panel", "#FFFFFF")}` | Cards and content panels |
+| **Primary** | `{self._palette_item(plan.palette, 0, "#2563EB")}` | Header accent, key sections |
+| **Accent** | `{self._palette_item(plan.palette, 1, "#DBEAFE")}` | Secondary emphasis |
+| **Secondary accent** | `{self._palette_item(plan.palette, 2, "#EFF6FF")}` | Right-side panel background |
+| **Body text** | `{self._theme_color(plan, "text", "#0F172A")}` | Main body text |
+| **Secondary text** | `{self._theme_color(plan, "text_secondary", "#475569")}` | Notes and annotations |
+| **Border/divider** | `{self._theme_color(plan, "border", "#E2E8F0")}` | Card borders |
+
+---
+
+## IV. Typography System
+
+### Font Plan
+
+**Typography direction**: Modern CJK sans, PPT-safe.
+
+| Role | Chinese | English | Fallback tail |
+| ---- | ------- | ------- | ------------- |
+| **Title** | `"Microsoft YaHei"` | Arial | sans-serif |
+| **Body** | `"Microsoft YaHei"` | Arial | sans-serif |
+| **Emphasis** | `"Microsoft YaHei"` | Arial | sans-serif |
+| **Code** | — | Consolas, "Courier New" | monospace |
+
+**Per-role font stacks**
+
+- Title: `"Microsoft YaHei", Arial, sans-serif`
+- Body: `"Microsoft YaHei", Arial, sans-serif`
+- Emphasis: `"Microsoft YaHei", Arial, sans-serif`
+- Code: `Consolas, "Courier New", monospace`
+
+### Font Size Hierarchy
+
+**Baseline**: Body font size = 22px.
+
+| Purpose | Size | Weight |
+| ------- | ---- | ------ |
+| Page title | 34px | Bold |
+| Subtitle/objective | 20px | Regular |
+| Body content | 22px | Medium |
+| Right panel text | 16-18px | SemiBold/Bold |
+| Annotation | 14px | Regular |
+
+### Body Text Density
+
+| Density | Intended Use | Body Text Rule |
+| ------- | ------------ | -------------- |
+| **sparse** | executive live talk, pitch | 1-2 short body points per split content page |
+| **standard** | normal project update | 3 body points per split content page |
+| **detailed** | review, training, workshop | 4 explanatory body points per split content page |
+| **dense** | leave-behind or implementation pack | up to 5-6 body points, with smaller but readable text |
+
+---
+
+## V. Layout Principles
+
+### Page Structure
+
+- **Header area**: 104px deck title band on content pages.
+- **Title safe zone**: page titles must stay readable; content panels begin below the title zone.
+- **Content area**: flexible open canvas. Some pages use split explanation+visual, while timeline, metrics, process, matrix, and swimlane use full-width structures.
+- **Footer area**: reserved for page rhythm if needed.
+
+### Layout Pattern Library
+
+| Pattern | Suitable Scenarios |
+| ------- | ------------------ |
+| **Cover** | opening page, executive framing, first impression |
+| **TOC** | agenda, chapter overview, navigation |
+| **Chapter** | section divider, narrative reset |
+| **Three cards** | overview, parallel features, summary points |
+| **Comparison** | alternatives, before/after, plan selection |
+| **Process** | ordered steps, staged implementation, workflow |
+| **Architecture** | parent system, three internal modules, data flow |
+| **Timeline** | phases, implementation path, workflow |
+| **Metrics** | KPI, results, quantitative outcomes |
+| **Matrix** | capability maps, governance dimensions, option framing |
+| **Swimlane** | cross-team handoff, responsibility split, operating model |
+| **Closing** | decision checkpoint, next actions, final slide |
+
+---
+
+## VI. Icon System
+
+| Item | Value |
+| ---- | ----- |
+| **Library** | chunk-filled |
+| **Inventory** | target, bolt, shield, users, chart-bar, lightbulb |
+| **Rule** | One icon library per deck; icons are optional in current backend templates. |
+
+---
+
+## VII. Visualization Reference List
+
+| Page | Visualization | Template | Data / Labels |
+| ---- | ------------- | -------- | ------------- |
+{self._visualization_rows(slides)}
+
+---
+
+## VIII. Image Resource List
+
+| Filename | Dimensions | Purpose | Type | Status | Generation Description |
+| -------- | ---------- | ------- | ---- | ------ | ---------------------- |
+{self._image_resource_rows(plan)}
+
+---
+
+## IX. Content Outline
+
+{self._content_outline(slides)}
+
+---
+
+## X. Speaker Notes Plan
+
+- One markdown section per slide.
+- Headings must match SVG stems: `# slide_01`, `# slide_02`, etc.
+- Notes should explain the business logic behind each page, not repeat every on-slide word.
+
+---
+
+## XI. Technical Constraints
+
+- Canvas viewBox must be `0 0 1280 720`.
+- SVG must use inline attributes only.
+- Forbidden: `foreignObject`, `script`, external CSS, iframe, remote image/link references.
+- Post-processing and export must use PPT Master order: `total_md_split.py`, `finalize_svg.py`, `svg_to_pptx.py -s final`.
+- Export must read from `svg_final/`, not directly from `svg_output/`.
+""".strip()
+
+    def generate_slide_svg(self, plan: DeckPlan, slide: DeckSlide, design_spec: str, spec_lock: SpecLock | None = None) -> str:
+        if self._is_free_design_plan(plan):
+            svg = self._generate_free_design_slide_svg(plan, slide, design_spec, spec_lock=spec_lock)
+            return svg
+
+        _ = design_spec
+        template_name = self._normalize_template(slide.template)
+        accent = spec_lock.color("primary", plan.palette[0] if plan.palette else "#2563EB") if spec_lock else (plan.palette[0] if plan.palette else "#2563EB")
+        accent_soft = spec_lock.color("accent", plan.palette[1] if len(plan.palette) > 1 else "#DBEAFE") if spec_lock else (plan.palette[1] if len(plan.palette) > 1 else "#DBEAFE")
+        accent_pale = spec_lock.color("secondary_accent", plan.palette[2] if len(plan.palette) > 2 else "#EFF6FF") if spec_lock else (plan.palette[2] if len(plan.palette) > 2 else "#EFF6FF")
+        text_box = slide.text_box or slide.bullets or [slide.objective]
+        right_items = self._template_items(slide, template_name)
+        svg = self._renderer.render(
+            deck_title=plan.title,
+            slide_number=slide.slide_number,
+            template_name=template_name,
+            page_title=slide.title,
+            objective=slide.objective,
+            text_box=text_box,
+            right_items=right_items,
+            accent=accent,
+            accent_soft=accent_soft,
+            accent_pale=accent_pale,
+            spec_lock=spec_lock,
+            background_image_href=self._slide_background_image_href(plan, slide),
+            body_density=plan.body_density,
+        )
+        if self._is_valid_svg(svg):
+            return svg
+        return self._fallback_svg(plan, slide, spec_lock=spec_lock)
+
+    def generate_speaker_notes(self, design_spec: str, source_text: str, plan: DeckPlan) -> str:
+        prompt = f"""
+Write speaker notes in markdown for this deck.
+Deck title: {plan.title}
+Design spec:
+{design_spec}
+
+Source text:
+{source_text[:10000]}
+
+Slides:
+{self._slides_summary(plan)}
+
+Body density: {plan.body_density}
+
+Rules:
+- Output markdown only
+- Use one heading per slide
+- Keep each slide notes to 3-6 sentences
+- Make the notes natural for oral presentation
+- If body density is sparse, notes should carry more context because slides have fewer words.
+- If body density is dense, notes should summarize and avoid repeating every body point.
+- Use headings exactly like: # slide_01, # slide_02
+""".strip()
+        content = self._chat_completion(prompt, temperature=0.4, max_tokens=2200)
+        if "# slide_01" in content:
+            return content.strip()
+        return self._fallback_notes(plan)
+
+    def _generate_free_design_deck_plan(self, source_text: str, page_count: int, style: str) -> DeckPlan:
+        prompt = f"""
+Return JSON only.
+Create a PPT Master free-design presentation plan. Do not choose from a fixed template skin.
+The downstream Executor will generate each SVG page freely, page by page, while obeying PPT Master SVG constraints.
+
+Page count: {page_count}
+Style/user intent: {style}
+Return exactly {page_count} slides.
+
+The JSON sample is a schema, not a visual suggestion. Do not copy the sample
+colors, sample layout names, or technology aesthetic unless the user's source
+explicitly asks for them.
+
+You are the Strategist for this deck. The backend will treat your
+theme_colors as the canonical spec_lock colors; do not rely on backend defaults.
+Pick colors from the source's brand, audience, setting, and emotional tone.
+Avoid a generic "warm cream + terracotta + sage" palette for every lifestyle or
+operations deck. If two prompts are different industries or occasions, their
+palette should visibly differ.
+
+Source text:
+{source_text[:6000]}
+
+Required JSON schema:
+{{
+  "title": "deck title",
+  "subtitle": "one sentence subtitle",
+  "visual_direction": "specific visual art direction, not a generic style name",
+  "palette_rationale": "why these colors fit this deck, in one sentence",
+  "body_density": "sparse|standard|detailed|dense",
+  "theme_colors": {{
+    "bg": "actual hex chosen for this deck",
+    "panel": "actual hex chosen for this deck",
+    "primary": "actual hex chosen for this deck",
+    "accent": "actual hex chosen for this deck",
+    "secondary_accent": "actual hex chosen for this deck",
+    "text": "actual hex chosen for this deck",
+    "text_secondary": "actual hex chosen for this deck",
+    "border": "actual hex chosen for this deck"
+  }},
+  "typography": "PPT-safe typography direction",
+  "slides": [
+    {{
+      "slide_number": 1,
+      "title": "slide title",
+      "objective": "what this slide should achieve",
+      "layout_intent": "specific composition, e.g. full-bleed keynote opener / magazine split / data hero / diagonal comparison",
+      "page_rhythm": "anchor|breathing|dense",
+      "text_box": ["body point 1", "body point 2"],
+      "cards": ["short label 1", "short label 2", "short label 3", "short label 4"],
+      "timeline_items": ["phase 1", "phase 2", "phase 3"],
+      "metrics": ["metric 1", "metric 2", "metric 3"],
+      "comparison_items": ["before", "after", "impact"],
+      "process_items": ["step 1", "step 2", "step 3"],
+      "visual_type": "freeform|cover|toc|chapter|closing|statement|editorial_split|data_hero|matrix|timeline|process|architecture|comparison|swimlane"
+    }}
+  ]
+}}
+
+PPT Master alignment:
+- Default is free design. Do not force a repeated left-text/right-chart layout.
+- Every page needs a different composition unless the story genuinely needs repetition.
+- Use page_rhythm intentionally: anchor for cover/TOC/chapter/ending, breathing for high-impact low-text pages, dense for data or operational detail.
+- Choose theme_colors from the user's requested mood and subject. Do not default to blue unless appropriate.
+- Avoid repeating one house style across prompts. If the prompt asks for warmth, hospitality, nature, culture, retail, education, healthcare, luxury, public-sector, or playful tone, the palette and layout rhythm must visibly change.
+- Do not collapse all warm/lifestyle/business-operations prompts into the same cream/terracotta/sage palette. A coffee operations deck, a lakeside hospitality review, a retail launch, and a school workshop should each have a distinct color system.
+- Never default to dark-tech/cyan/gold unless the prompt explicitly asks for tech, AI, cyber, developer, launch, or cinematic technology.
+- Keep colors PPT-safe hex values only. Avoid rgba and CSS classes.
+- Keep all text in a safe area, but allow dramatic whitespace, oversized numbers, editorial typography, asymmetric layouts, bands, lines, and shapes.
+- If no real image is listed in the Image Resource List / spec_lock, do not reserve empty image frames, photo boxes, dashed placeholders, or blank rounded rectangles. Use editable SVG shapes, maps, tables, lines, icons, and text instead.
+- For Chinese decks, titles should sound like real business presentation titles.
+- Body text length follows body_density.
+- Do not mention AI PPT generator, template, backend, SVG, or PPT Master in slide titles unless that is the actual topic.
+- Do not put implementation labels such as "PPT Master", "aligned", "template", "free design", "SVG", or "Executor" anywhere on visible slides.
+- Do not use generic placeholder labels such as "Key point", "关键要点", "Section Focus", "Key Cards", "Metrics Dashboard", "Process Flow", "Capability Matrix", or "Executive Briefing".
+""".strip()
+        content = ""
+        try:
+            content = self._chat_completion(prompt, temperature=0.7, max_tokens=max(3500, min(9000, page_count * 650)))
+            payload = self._extract_json(content)
+            body_density = self._body_density_from_payload(payload.get("body_density"), source_text=source_text, style=style)
+            text_box_limit = self._body_text_limit(body_density)
+            slides: list[DeckSlide] = []
+            for index, item in enumerate(payload.get("slides", [])[:page_count]):
+                text_box = self._normalize_string_list(item.get("text_box"), limit=text_box_limit)
+                cards = self._normalize_string_list(item.get("cards"), limit=4)
+                timeline_items = self._normalize_string_list(item.get("timeline_items"), limit=4)
+                metrics = self._normalize_string_list(item.get("metrics"), limit=4)
+                comparison_items = self._normalize_string_list(item.get("comparison_items"), limit=4)
+                process_items = self._normalize_string_list(item.get("process_items"), limit=4)
+                architecture_items = self._normalize_string_list(item.get("architecture_items"), limit=4)
+                architecture_flow = self._normalize_string_list(item.get("architecture_flow"), limit=4)
+                bullets = text_box or cards or timeline_items or metrics or comparison_items or process_items or architecture_items or ["Key point"]
+                requested_template = str(item.get("visual_type") or item.get("template") or "")
+                template = self._normalize_free_design_template(requested_template, index=index, page_count=page_count)
+                slides.append(
+                    DeckSlide(
+                        slide_number=index + 1,
+                        title=str(item.get("title", f"Slide {index + 1}")),
+                        objective=str(item.get("objective", "Summarize the key point.")),
+                        bullets=bullets,
+                        visual=str(item.get("visual", requested_template)),
+                        template=template,
+                        text_box=self._complete_items(text_box or bullets, bullets, item.get("objective", ""), limit=text_box_limit),
+                        cards=self._complete_items(cards, bullets, item.get("objective", ""), limit=4),
+                        timeline_items=self._complete_items(timeline_items, bullets, item.get("objective", ""), limit=4),
+                        metrics=self._complete_items(metrics, bullets, item.get("objective", ""), limit=4),
+                        comparison_items=self._complete_items(comparison_items, bullets, item.get("objective", ""), limit=4),
+                        process_items=self._complete_items(process_items, bullets, item.get("objective", ""), limit=4),
+                        architecture_parent=str(item.get("architecture_parent") or item.get("parent_title") or "").strip() or None,
+                        architecture_items=self._complete_items(architecture_items, bullets, item.get("objective", ""), limit=4),
+                        architecture_flow=self._complete_items(architecture_flow, bullets, item.get("objective", ""), limit=4),
+                        layout_intent=str(item.get("layout_intent") or requested_template or "free-design composition").strip(),
+                        page_rhythm=self._normalize_page_rhythm(str(item.get("page_rhythm") or "")),
+                    )
+                )
+            if not slides:
+                raise ValueError("empty slides")
+            self._apply_free_design_page_roles(slides)
+            theme_colors = self._theme_from_payload(
+                payload.get("theme_colors"),
+                source_text=source_text,
+                style=style,
+                title=str(payload.get("title", "")),
+            )
+            return DeckPlan(
+                title=str(payload.get("title", "AI PPT")),
+                subtitle=str(payload.get("subtitle", "AI-generated presentation")),
+                visual_style=str(payload.get("visual_direction") or style),
+                palette=self._palette_from_theme(theme_colors),
+                slides=slides,
+                body_density=body_density,
+                theme_colors=theme_colors,
+                image_resources=self._default_image_resources(str(payload.get("title", "AI PPT")), style, allow_generated=True),
+                generation_mode="llm_free_design",
+                execution_mode="free_design",
+                raw_plan_excerpt=content[:1200],
+            )
+        except Exception as exc:
+            plan = self._fallback_plan(
+                source_text,
+                page_count,
+                style,
+                fallback_reason=str(exc),
+                raw_plan_excerpt=content[:1200],
+                allow_image_resources=True,
+            )
+            plan.execution_mode = "free_design"
+            plan.generation_mode = "fallback_free_design"
+            for slide in plan.slides:
+                slide.layout_intent = f"free design fallback using {slide.template}"
+                slide.page_rhythm = self._infer_page_rhythm_for_slide(slide)
+            return plan
+
+    def _generate_free_design_spec(self, source_text: str, page_count: int, style: str, plan: DeckPlan) -> str:
+        slides = plan.slides[:page_count]
+        return f"""# {plan.title} - PPT Master Free Design Spec
+
+> Default path: free design. Template files are not required; Executor generates SVG pages directly and sequentially.
+
+## I. Project Information
+
+| Item | Value |
+| ---- | ----- |
+| **Project Name** | {plan.title} |
+| **Canvas Format** | PPT 16:9 (1280x720) |
+| **Page Count** | {page_count} |
+| **Design Style** | {style} |
+| **Visual Direction** | {plan.visual_style} |
+| **Body Density** | {plan.body_density} |
+| **Target Audience** | 根据用户输入推断的实际业务受众 |
+| **Use Case** | 高表现力汇报、路演、发布、品牌化方案呈现 |
+| **Created Date** | {date.today().isoformat()} |
+
+---
+
+## II. Canvas Specification
+
+| Property | Value |
+| -------- | ----- |
+| **Format** | PPT 16:9 |
+| **Dimensions** | 1280 x 720 |
+| **viewBox** | `0 0 1280 720` |
+| **Safe Area** | x=64..1216, y=56..664 |
+
+---
+
+## III. Visual Theme
+
+- **Free-design objective**: let each page composition follow the user's requested mood and the slide's communication job.
+- **No fixed template repetition**: avoid repeating left-text/right-visual unless it is the best fit for that page.
+- **Visual direction**: {plan.visual_style}
+- **Source signal**: {source_text[:420].replace(chr(10), " ")}
+
+### Color Scheme
+
+| Role | HEX | Purpose |
+| ---- | --- | ------- |
+| **Background** | `{self._theme_color(plan, "bg", "#05070D")}` | Page background |
+| **Panel** | `{self._theme_color(plan, "panel", "#101827")}` | Cards, overlays, blocks |
+| **Primary** | `{self._palette_item(plan.palette, 0, "#7DD3FC")}` | Main emphasis |
+| **Accent** | `{self._palette_item(plan.palette, 1, "#F8C76A")}` | Premium contrast |
+| **Secondary accent** | `{self._palette_item(plan.palette, 2, "#233047")}` | Tinted zones |
+| **Body text** | `{self._theme_color(plan, "text", "#F8FAFC")}` | Main text |
+| **Secondary text** | `{self._theme_color(plan, "text_secondary", "#CBD5E1")}` | Captions |
+| **Border/divider** | `{self._theme_color(plan, "border", "#334155")}` | Lines and structure |
+
+---
+
+## IV. Typography System
+
+- **Title**: `"Microsoft YaHei", Arial, sans-serif`
+- **Body**: `"Microsoft YaHei", Arial, sans-serif`
+- **Code**: `Consolas, "Courier New", monospace`
+- **Body baseline**: 22px. Free design may use larger display type within PPT Master ratio discipline.
+
+---
+
+## V. Layout Principles
+
+- Use PPT Master free-design path.
+- Each page declares a `layout_intent` and `page_rhythm`.
+- `breathing` pages should use one strong visual idea, not card grids.
+- `dense` pages may use grids, dashboards, comparisons, process maps, or architecture diagrams.
+- `anchor` pages include cover, TOC, chapter, and closing.
+- Keep text readable and avoid overlap; dramatic composition is welcome only when information hierarchy remains clear.
+
+---
+
+## VI. Icon System
+
+| Item | Value |
+| ---- | ----- |
+| **Library** | chunk-filled |
+| **Inventory** | target, bolt, shield, users, chart-bar, lightbulb |
+| **Rule** | One icon library per deck; icons are optional. |
+
+---
+
+## VII. Visualization Reference List
+
+| Page | Visualization | Template Reference | Data / Labels |
+| ---- | ------------- | ------------------ | ------------- |
+{self._visualization_rows(slides)}
+
+---
+
+## VIII. Image Resource List
+
+| Filename | Dimensions | Purpose | Type | Status | Generation Description |
+| -------- | ---------- | ------- | ---- | ------ | ---------------------- |
+{self._image_resource_rows(plan)}
+
+---
+
+## IX. Content Outline
+
+{self._free_design_content_outline(slides)}
+
+---
+
+## X. Speaker Notes Plan
+
+- One markdown section per slide.
+- Headings must match SVG stems: `# slide_01`, `# slide_02`, etc.
+- Notes carry the spoken narrative; sparse slides should not be overloaded.
+
+---
+
+## XI. Technical Constraints
+
+- Canvas viewBox must be `0 0 1280 720`.
+- SVG must use inline attributes only.
+- Forbidden: `mask`, `<style>`, `class`, `<foreignObject>`, `textPath`, `@font-face`, `<animate*>`, `<script>`, `<iframe>`, `<symbol>`+`<use>`, remote images.
+- Use raw Unicode for typography symbols; escape XML reserved characters.
+- Post-processing and export must use PPT Master order: `total_md_split.py`, `finalize_svg.py`, `svg_to_pptx.py -s final`.
+""".strip()
+
+    def _generate_free_design_slide_svg(self, plan: DeckPlan, slide: DeckSlide, design_spec: str, spec_lock: SpecLock | None = None) -> str:
+        lock_excerpt = spec_lock.raw_text if spec_lock else ""
+        prompt = f"""
+You are PPT Master Executor_General generating one SVG page.
+Output a complete SVG only. Start with <svg and end with </svg>. No markdown, no explanation.
+
+Deck title: {plan.title}
+Visual direction: {plan.visual_style}
+Body density: {plan.body_density}
+
+Current page:
+- Number: {slide.slide_number}
+- Title: {slide.title}
+- Objective: {slide.objective}
+- Layout intent: {slide.layout_intent or slide.visual or slide.template}
+- Page rhythm: {slide.page_rhythm or "dense"}
+- Body points: {"; ".join(slide.text_box or slide.bullets)}
+- Visual labels: {"; ".join(self._template_items(slide, self._normalize_template(slide.template))[:6])}
+
+Execution lock:
+{lock_excerpt}
+
+Design spec excerpt:
+{design_spec[:1800]}
+
+PPT Master technical constraints:
+- SVG root must have width="1280" height="720" viewBox="0 0 1280 720".
+- Use only inline SVG attributes. Do not use <style>, class, foreignObject, script, iframe, textPath, animation, symbol/use, remote href, rgba(), mask, or <g opacity>.
+- Do not use CSS.
+- Use PPT-safe fonts from the lock.
+- Use only colors from the lock.
+- If the lock does not list images, do not create empty image placeholders or blank photo frames. Use editable vector shapes and actual text/data instead.
+- Keep all visible text readable and inside the canvas.
+- Use <text> and <tspan> for wrapping. No foreignObject.
+- Make this page visually distinct from a rigid left-text/right-chart template.
+- Still keep the deck professional and editable as PowerPoint shapes.
+- Do not add visible implementation labels, including "PPT Master", "aligned", "template", "free design", "SVG", or "Executor".
+- Do not add generic placeholder labels such as "Key point", "关键要点", "Section Focus", "Key Cards", "Metrics Dashboard", "Process Flow", "Capability Matrix", or "Executive Briefing".
+- If using gradients, define them in <defs> and use lock colors only; prefer solid layered shapes when unsure.
+""".strip()
+        content = self._chat_completion(prompt, temperature=0.6, max_tokens=3600)
+        svg = self._extract_svg(content)
+        if "<svg" not in svg:
+            svg = self._generate_free_design_slide_svg_compact(plan, slide, spec_lock=spec_lock)
+        svg = self._sanitize_free_design_svg(svg, spec_lock=spec_lock)
+        svg = self._ensure_free_design_image_usage(svg, plan, slide, spec_lock=spec_lock)
+        if not self._is_valid_svg(svg):
+            fallback_svg = self._fallback_free_design_svg(plan, slide, spec_lock=spec_lock)
+            return self._ensure_free_design_image_usage(fallback_svg, plan, slide, spec_lock=spec_lock)
+        return svg
+
+    def _generate_free_design_slide_svg_compact(self, plan: DeckPlan, slide: DeckSlide, spec_lock: SpecLock | None = None) -> str:
+        lock_excerpt = spec_lock.raw_text if spec_lock else ""
+        prompt = f"""
+Return only one complete SVG. Start with <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720"> and end with </svg>.
+
+Deck: {plan.title}
+Style: {plan.visual_style}
+Slide {slide.slide_number}: {slide.title}
+Goal: {slide.objective}
+Layout: {slide.layout_intent or slide.visual or "free editorial composition"}
+Text: {"; ".join((slide.text_box or slide.bullets)[:5])}
+Labels: {"; ".join(self._template_items(slide, self._normalize_template(slide.template))[:5])}
+
+Use this execution lock only:
+{lock_excerpt}
+
+Rules: no markdown, no <style>, no class, no foreignObject, no script, no iframe, no textPath, no symbol/use, no mask, no rgba, no <g opacity>, no remote href. Use inline attributes and readable <text>/<tspan>. Do not write implementation labels. If no images are listed in the lock, do not draw empty image boxes.
+""".strip()
+        return self._extract_svg(self._chat_completion(prompt, temperature=0.5, max_tokens=3200))
+
+    def _fallback_free_design_svg(self, plan: DeckPlan, slide: DeckSlide, spec_lock: SpecLock | None = None) -> str:
+        colors = {
+            "bg": spec_lock.color("bg", "#FDF6EE") if spec_lock else "#FDF6EE",
+            "panel": spec_lock.color("panel", "#F2E8D5") if spec_lock else "#F2E8D5",
+            "primary": spec_lock.color("primary", "#C4956A") if spec_lock else "#C4956A",
+            "accent": spec_lock.color("accent", "#8B6F47") if spec_lock else "#8B6F47",
+            "secondary": spec_lock.color("secondary_accent", "#A7B89B") if spec_lock else "#A7B89B",
+            "text": spec_lock.color("text", "#3E2C1B") if spec_lock else "#3E2C1B",
+            "muted": spec_lock.color("text_secondary", "#7A6B5A") if spec_lock else "#7A6B5A",
+            "border": spec_lock.color("border", "#D4C4B0") if spec_lock else "#D4C4B0",
+        }
+        font = escape(spec_lock.font_family("body") if spec_lock else '"Microsoft YaHei", Arial, sans-serif', quote=True)
+        title = escape(slide.title)
+        objective = escape(slide.objective)
+        body = [escape(item) for item in self._clean_free_items(slide.text_box or slide.bullets or [slide.objective], limit=4)]
+        labels = [escape(item) for item in self._clean_free_items(self._template_items(slide, self._normalize_template(slide.template)), limit=4)]
+        template = self._normalize_template(slide.template)
+
+        if template == "cover":
+            return self._fallback_free_cover(plan, slide, colors, font, title, objective, labels)
+        if template in {"timeline", "process"}:
+            return self._fallback_free_steps(plan, slide, colors, font, title, objective, labels or body)
+        if template in {"matrix", "comparison"}:
+            return self._fallback_free_matrix(plan, slide, colors, font, title, objective, labels or body)
+        if template == "metrics":
+            return self._fallback_free_metrics(plan, slide, colors, font, title, objective, labels or body)
+        if template == "closing":
+            return self._fallback_free_closing(plan, slide, colors, font, title, objective, labels or body)
+        return self._fallback_free_editorial(plan, slide, colors, font, title, objective, body, labels)
+
+    def _clean_free_items(self, items: list[str], *, limit: int) -> list[str]:
+        cleaned: list[str] = []
+        for item in items:
+            text = " ".join(str(item).split())
+            if not text:
+                continue
+            lowered = text.lower()
+            if lowered == "key point" or text.startswith("关键要点"):
+                continue
+            if len(text) > 34:
+                text = text[:34]
+            if text not in cleaned:
+                cleaned.append(text)
+            if len(cleaned) >= limit:
+                break
+        return cleaned
+
+    def _fallback_free_shell(self, colors: dict[str, str], font: str, body: str) -> str:
+        return f"""<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="{colors['bg']}"/>
+  {body}
+</svg>"""
+
+    def _fallback_free_cover(self, plan: DeckPlan, slide: DeckSlide, colors: dict[str, str], font: str, title: str, objective: str, labels: list[str]) -> str:
+        subtitle = escape(plan.subtitle or objective)
+        chips = labels[:3] or [escape(plan.visual_style), objective]
+        chip_svg = "\n".join(
+            f'<text x="96" y="{430 + i * 42}" font-family="{font}" font-size="22" font-weight="600" fill="{colors["text"]}">{item}</text>'
+            for i, item in enumerate(chips[:3])
+        )
+        return self._fallback_free_shell(colors, font, f"""
+  <circle cx="1080" cy="116" r="210" fill="{colors['panel']}"/>
+  <circle cx="1108" cy="124" r="132" fill="{colors['secondary']}"/>
+  <rect x="80" y="88" width="72" height="6" rx="3" fill="{colors['primary']}"/>
+  <text x="94" y="230" font-family="{font}" font-size="54" font-weight="700" fill="{colors['text']}">{title}</text>
+  <text x="98" y="292" font-family="{font}" font-size="24" fill="{colors['muted']}">{subtitle}</text>
+  <rect x="82" y="382" width="520" height="164" rx="28" fill="{colors['panel']}" stroke="{colors['border']}" stroke-width="1"/>
+  {chip_svg}
+  <rect x="724" y="490" width="390" height="10" rx="5" fill="{colors['primary']}"/>
+  <rect x="724" y="518" width="260" height="10" rx="5" fill="{colors['accent']}"/>
+""")
+
+    def _fallback_free_editorial(self, plan: DeckPlan, slide: DeckSlide, colors: dict[str, str], font: str, title: str, objective: str, body: list[str], labels: list[str]) -> str:
+        points = body[:3] or labels[:3]
+        point_svg = "\n".join(
+            f'<text x="112" y="{270 + i * 56}" font-family="{font}" font-size="22" fill="{colors["text"]}">{item}</text>'
+            for i, item in enumerate(points)
+        )
+        side_items = labels[:3] or body[:3]
+        side_svg = "\n".join(
+            f'<text x="850" y="{300 + i * 48}" font-family="{font}" font-size="18" font-weight="700" fill="{colors["text"]}">{item}</text>'
+            for i, item in enumerate(side_items)
+        )
+        return self._fallback_free_shell(colors, font, f"""
+  <rect x="0" y="0" width="1280" height="92" fill="{colors['primary']}"/>
+  <text x="82" y="58" font-family="{font}" font-size="26" font-weight="700" fill="{colors['bg']}">{escape(plan.title)}</text>
+  <text x="82" y="168" font-family="{font}" font-size="42" font-weight="700" fill="{colors['text']}">{title}</text>
+  <text x="84" y="218" font-family="{font}" font-size="18" fill="{colors['muted']}">{objective}</text>
+  {point_svg}
+  <rect x="760" y="190" width="340" height="340" rx="170" fill="{colors['secondary']}"/>
+  <rect x="826" y="250" width="310" height="210" rx="28" fill="{colors['panel']}" stroke="{colors['border']}" stroke-width="1"/>
+  {side_svg}
+""")
+
+    def _fallback_free_metrics(self, plan: DeckPlan, slide: DeckSlide, colors: dict[str, str], font: str, title: str, objective: str, labels: list[str]) -> str:
+        cards = "\n".join(
+            f'<rect x="{120 + i * 330}" y="320" width="260" height="128" rx="28" fill="{colors["panel"]}" stroke="{colors["border"]}" stroke-width="1"/><text x="{150 + i * 330}" y="382" font-family="{font}" font-size="24" font-weight="700" fill="{colors["text"]}">{item}</text>'
+            for i, item in enumerate((labels + ["指标待定"])[:3])
+        )
+        return self._fallback_free_shell(colors, font, f"""
+  <text x="84" y="142" font-family="{font}" font-size="42" font-weight="700" fill="{colors['text']}">{title}</text>
+  <text x="88" y="196" font-family="{font}" font-size="20" fill="{colors['muted']}">{objective}</text>
+  <text x="96" y="292" font-family="{font}" font-size="86" font-weight="700" fill="{colors['primary']}">{escape((labels or ['92%'])[0])}</text>
+  {cards}
+  <rect x="130" y="520" width="760" height="12" rx="6" fill="{colors['secondary']}"/>
+  <rect x="130" y="520" width="420" height="12" rx="6" fill="{colors['accent']}"/>
+""")
+
+    def _fallback_free_steps(self, plan: DeckPlan, slide: DeckSlide, colors: dict[str, str], font: str, title: str, objective: str, labels: list[str]) -> str:
+        steps = "\n".join(
+            f'<circle cx="{210 + i * 280}" cy="390" r="26" fill="{colors["primary"]}"/><text x="{203 + i * 280}" y="399" font-family="{font}" font-size="22" font-weight="700" fill="{colors["bg"]}">{i+1}</text><rect x="{150 + i * 280}" y="444" width="190" height="72" rx="20" fill="{colors["panel"]}"/><text x="{172 + i * 280}" y="488" font-family="{font}" font-size="20" font-weight="700" fill="{colors["text"]}">{item}</text>'
+            for i, item in enumerate((labels + ["步骤"])[:4])
+        )
+        return self._fallback_free_shell(colors, font, f"""
+  <text x="84" y="150" font-family="{font}" font-size="40" font-weight="700" fill="{colors['text']}">{title}</text>
+  <text x="86" y="202" font-family="{font}" font-size="19" fill="{colors['muted']}">{objective}</text>
+  <line x1="210" y1="390" x2="1050" y2="390" stroke="{colors['border']}" stroke-width="4"/>
+  {steps}
+""")
+
+    def _fallback_free_matrix(self, plan: DeckPlan, slide: DeckSlide, colors: dict[str, str], font: str, title: str, objective: str, labels: list[str]) -> str:
+        cells = [(130, 270), (650, 270), (130, 460), (650, 460)]
+        cell_svg = "\n".join(
+            f'<rect x="{x}" y="{y}" width="430" height="122" rx="26" fill="{colors["panel"]}" stroke="{colors["border"]}" stroke-width="1"/><text x="{x+32}" y="{y+70}" font-family="{font}" font-size="24" font-weight="700" fill="{colors["text"]}">{(labels + ["模块"] * 4)[i]}</text>'
+            for i, (x, y) in enumerate(cells)
+        )
+        return self._fallback_free_shell(colors, font, f"""
+  <text x="84" y="150" font-family="{font}" font-size="40" font-weight="700" fill="{colors['text']}">{title}</text>
+  <text x="86" y="202" font-family="{font}" font-size="19" fill="{colors['muted']}">{objective}</text>
+  {cell_svg}
+""")
+
+    def _fallback_free_closing(self, plan: DeckPlan, slide: DeckSlide, colors: dict[str, str], font: str, title: str, objective: str, labels: list[str]) -> str:
+        items = "\n".join(
+            f'<text x="812" y="{260 + i * 58}" font-family="{font}" font-size="22" font-weight="700" fill="{colors["text"]}">{item}</text>'
+            for i, item in enumerate(labels[:3])
+        )
+        return self._fallback_free_shell(colors, font, f"""
+  <text x="96" y="180" font-family="{font}" font-size="46" font-weight="700" fill="{colors['text']}">{title}</text>
+  <text x="100" y="242" font-family="{font}" font-size="22" fill="{colors['muted']}">{objective}</text>
+  <rect x="96" y="330" width="520" height="8" rx="4" fill="{colors['primary']}"/>
+  <rect x="760" y="180" width="390" height="250" rx="32" fill="{colors['panel']}" stroke="{colors['border']}" stroke-width="1"/>
+  {items}
+""")
+
+    def _sanitize_free_design_svg(self, svg: str, *, spec_lock: SpecLock | None) -> str:
+        sanitized = re.sub(r"(<g\b[^>]*?)\s+opacity=\"[^\"]+\"", r"\1", svg)
+        sanitized = re.sub(r"(<g\b[^>]*?)\s+opacity='[^']+'", r"\1", sanitized)
+        sanitized = re.sub(r"<clipPath\b.*?</clipPath>", "", sanitized, flags=re.IGNORECASE | re.DOTALL)
+        sanitized = re.sub(r"\sclip-path=\"[^\"]+\"", "", sanitized, flags=re.IGNORECASE)
+        sanitized = re.sub(r"\sclip-path='[^']+'", "", sanitized, flags=re.IGNORECASE)
+        sanitized = self._remove_emoji_symbols(sanitized)
+        sanitized = self._remove_implementation_labels(sanitized)
+        sanitized = self._remove_placeholder_labels(sanitized)
+        if spec_lock:
+            sanitized = self._repair_low_contrast_text(sanitized, spec_lock)
+        return sanitized
+
+    def _ensure_free_design_image_usage(self, svg: str, plan: DeckPlan, slide: DeckSlide, *, spec_lock: SpecLock | None) -> str:
+        href = self._slide_background_image_href(plan, slide)
+        if not href or "<image" in svg:
+            return svg
+
+        overlay_fill = spec_lock.color("bg", "#F8FAFC") if spec_lock else "#F8FAFC"
+        image_layer = (
+            f'\n  <image href="{escape(href, quote=True)}" x="0" y="0" width="1280" height="720" '
+            'preserveAspectRatio="xMidYMid slice"/>'
+            f'\n  <rect x="0" y="0" width="1280" height="720" fill="{overlay_fill}" fill-opacity="0.74"/>'
+        )
+        full_canvas_rect = re.search(r"<rect\b[^>]*\bwidth=\"1280\"[^>]*\bheight=\"720\"[^>]*/>", svg)
+        if full_canvas_rect:
+            insert_at = full_canvas_rect.end()
+            return svg[:insert_at] + image_layer + svg[insert_at:]
+
+        root_end = svg.find(">")
+        if root_end == -1:
+            return svg
+        return svg[: root_end + 1] + image_layer + svg[root_end + 1 :]
+
+    def _remove_implementation_labels(self, svg: str) -> str:
+        implementation_terms = r"(?:PPT Master|aligned|template|free design|SVG|Executor)"
+        return re.sub(rf"\s*<text\b[^>]*>[^<]*(?:{implementation_terms})[^<]*</text>", "", svg, flags=re.IGNORECASE)
+
+    def _remove_placeholder_labels(self, svg: str) -> str:
+        placeholder_terms = (
+            r"Key point|关键要点|Section Focus|Key Cards|Metrics Dashboard|"
+            r"Process Flow|Capability Matrix|Decision checkpoint|Executive Briefing"
+        )
+        sanitized = re.sub(rf"\s*<!--[^>]*(?:{placeholder_terms})[^>]*-->", "", svg, flags=re.IGNORECASE)
+        return re.sub(rf"\s*<text\b[^>]*>[^<]*(?:{placeholder_terms})[^<]*</text>", "", sanitized, flags=re.IGNORECASE)
+
+    def _remove_emoji_symbols(self, svg: str) -> str:
+        return re.sub(r"[\U0001F300-\U0001FAFF\u2600-\u27BF]", "", svg)
+
+    def _repair_low_contrast_text(self, svg: str, spec_lock: SpecLock) -> str:
+        dark_like = {
+            spec_lock.color("bg", "").upper(),
+            spec_lock.color("panel", "").upper(),
+            spec_lock.color("secondary_accent", "").upper(),
+            spec_lock.color("border", "").upper(),
+        }
+        dark_like.discard("")
+        readable = spec_lock.color("text", "#F8FAFC")
+        if not dark_like:
+            return svg
+
+        def replace(match: re.Match[str]) -> str:
+            tag = match.group(0)
+            y_match = re.search(r"\sy=\"([0-9.]+)\"", tag)
+            fill_match = re.search(r"\sfill=\"(#[0-9a-fA-F]{6})\"", tag)
+            if not y_match or not fill_match:
+                return tag
+            try:
+                y = float(y_match.group(1))
+            except ValueError:
+                return tag
+            if y <= 112:
+                return tag
+            if fill_match.group(1).upper() not in dark_like:
+                return tag
+            return tag[: fill_match.start(1)] + readable + tag[fill_match.end(1) :]
+
+        return re.sub(r"<text\b[^>]*>", replace, svg)
+
+    def _chat_completion(self, prompt: str, *, temperature: float, max_tokens: int) -> str:
+        api_key = self._settings.AIPPT_EFFECTIVE_API_KEY
+        if not api_key:
+            raise RuntimeError("AIPPT API key is not configured.")
+        payload = {
+            "model": self._settings.AIPPT_MODEL,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You create presentation assets and must follow output format exactly.",
+                },
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+        if not self._settings.AIPPT_THINKING_ENABLED:
+            payload["thinking"] = {"type": "disabled"}
+        response = httpx.post(
+            f"{self._settings.AIPPT_API_BASE.rstrip('/')}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=120,
+            trust_env=False,
+        )
+        response.raise_for_status()
+        return str(response.json()["choices"][0]["message"]["content"]).strip()
+
+    def _extract_json(self, content: str) -> dict:
+        stripped = content.strip()
+        if stripped.startswith("```"):
+            stripped = stripped.strip("`")
+            if stripped.startswith("json"):
+                stripped = stripped[4:].strip()
+        start = stripped.find("{")
+        end = stripped.rfind("}")
+        if start == -1 or end == -1 or end <= start:
+            raise ValueError("json not found")
+        return json.loads(stripped[start : end + 1])
+
+    def _is_valid_svg(self, svg: str) -> bool:
+        forbidden = [
+            "<foreignObject",
+            "<script",
+            "<style",
+            " class=",
+            "<textPath",
+            "@font-face",
+            "<animate",
+            "<symbol",
+            "rgba(",
+            "<mask",
+            "<g opacity",
+            'href="http://',
+            "href='http://",
+            'href="https://',
+            "href='https://",
+            "<iframe",
+        ]
+        return (
+            "<svg" in svg
+            and "</svg>" in svg
+            and 'viewBox="0 0 1280 720"' in svg
+            and not any(item in svg for item in forbidden)
+            and not re.search(r"<g\b[^>]*\sopacity=", svg)
+        )
+
+    def _extract_svg(self, content: str) -> str:
+        stripped = content.strip()
+        if stripped.startswith("```"):
+            stripped = stripped.strip("`")
+            if stripped.startswith("xml") or stripped.startswith("svg"):
+                stripped = stripped.split("\n", 1)[-1].strip()
+        start = stripped.find("<svg")
+        end = stripped.rfind("</svg>")
+        if start == -1 or end == -1:
+            return stripped
+        return stripped[start : end + len("</svg>")].strip()
+
+    def _normalize_design_mode(self, design_mode: str) -> str:
+        normalized = str(design_mode or "template").strip().lower().replace("-", "_").replace(" ", "_")
+        if normalized in {"free", "freeform", "free_design", "creative_freeform", "ppt_master_free_design"}:
+            return "free_design"
+        return "template"
+
+    def _is_free_design_plan(self, plan: DeckPlan) -> bool:
+        return getattr(plan, "execution_mode", "") == "free_design"
+
+    def _normalize_page_rhythm(self, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized in {"anchor", "breathing", "dense"}:
+            return normalized
+        return "dense"
+
+    def _normalize_free_design_template(self, value: str, *, index: int, page_count: int) -> str:
+        normalized = value.strip().lower().replace("-", "_").replace(" ", "_")
+        if index == 0:
+            return "cover"
+        if index == page_count - 1 and page_count >= 4:
+            return "closing"
+        if normalized in {"toc", "agenda", "chapter", "section", "divider", "cover", "closing"}:
+            return self._normalize_template(normalized)
+        if any(token in normalized for token in ["matrix", "quadrant", "map"]):
+            return "matrix"
+        if any(token in normalized for token in ["timeline", "roadmap", "journey"]):
+            return "timeline"
+        if any(token in normalized for token in ["metric", "dashboard", "data_hero", "number"]):
+            return "metrics"
+        if any(token in normalized for token in ["process", "step", "pipeline"]):
+            return "process"
+        if any(token in normalized for token in ["comparison", "compare", "before", "after", "versus"]):
+            return "comparison"
+        if any(token in normalized for token in ["architecture", "system", "stack", "module"]):
+            return "architecture"
+        if any(token in normalized for token in ["swimlane", "handoff", "lane"]):
+            return "swimlane"
+        if any(token in normalized for token in ["statement", "editorial", "hero", "magazine", "poster", "keynote"]):
+            return "freeform"
+        return "freeform"
+
+    def _apply_free_design_page_roles(self, slides: list[DeckSlide]) -> None:
+        if not slides:
+            return
+        slides[0].template = "cover"
+        slides[0].page_rhythm = "anchor"
+        if len(slides) >= 8 and len(slides) > 2 and slides[1].template not in {"toc", "chapter"}:
+            slides[1].template = "toc"
+            slides[1].page_rhythm = "anchor"
+            slides[1].layout_intent = slides[1].layout_intent or "editorial agenda with chapter signals"
+        if len(slides) >= 10:
+            chapter_indexes = [2, max(4, len(slides) // 2), max(6, len(slides) - 4)]
+            for index in sorted(set(chapter_indexes)):
+                if 0 < index < len(slides) - 1:
+                    slides[index].template = "chapter"
+                    slides[index].page_rhythm = "anchor"
+                    slides[index].layout_intent = slides[index].layout_intent or "cinematic section divider"
+        if len(slides) >= 4:
+            slides[-1].template = "closing"
+            slides[-1].page_rhythm = "anchor"
+        for slide in slides:
+            if not slide.page_rhythm:
+                slide.page_rhythm = self._infer_page_rhythm_for_slide(slide)
+
+    def _infer_page_rhythm_for_slide(self, slide: DeckSlide) -> str:
+        if slide.page_rhythm in {"anchor", "breathing", "dense"}:
+            return slide.page_rhythm
+        normalized = self._normalize_template(slide.template)
+        if normalized in {"cover", "toc", "chapter", "closing"}:
+            return "anchor"
+        if normalized in {"timeline", "metrics", "comparison", "process", "architecture", "matrix", "swimlane"}:
+            return "dense"
+        content_count = len(slide.text_box or slide.bullets or [])
+        right_count = len(slide.cards or [])
+        if content_count <= 2 and right_count <= 1:
+            return "breathing"
+        return "dense"
+
+    def _normalize_template(self, template: str) -> str:
+        lowered = template.strip().lower().replace("-", "_").replace(" ", "_")
+        allowed = {"cover", "toc", "chapter", "closing", "three_cards", "timeline", "metrics", "comparison", "process", "architecture", "matrix", "swimlane"}
+        if lowered in allowed:
+            return lowered
+        if lowered in {"title", "opening", "opener"}:
+            return "cover"
+        if lowered in {"toc", "agenda", "table_of_contents", "contents"}:
+            return "toc"
+        if lowered in {"chapter", "section", "divider", "section_divider"}:
+            return "chapter"
+        if lowered in {"ending", "end", "summary", "next_steps", "nextstep", "thanks", "closing_slide"}:
+            return "closing"
+        if lowered in {"cards", "card", "key_cards", "overview"}:
+            return "three_cards"
+        if any(token in lowered for token in ["comparison", "compare", "versus", "vs", "before_after"]):
+            return "comparison"
+        if any(token in lowered for token in ["architecture", "module_composition", "layered_architecture", "system_stack"]):
+            return "architecture"
+        if any(token in lowered for token in ["process", "steps", "numbered_steps", "pipeline"]):
+            return "process"
+        if any(token in lowered for token in ["matrix", "capability_map", "quadrant", "map"]):
+            return "matrix"
+        if any(token in lowered for token in ["swimlane", "lane", "handoff", "cross_team"]):
+            return "swimlane"
+        if "timeline" in lowered or "flow" in lowered or "phase" in lowered:
+            return "timeline"
+        if "metric" in lowered or "dashboard" in lowered or "chart" in lowered:
+            return "metrics"
+        return "three_cards"
+
+    def _normalize_string_list(self, value: object, *, limit: int) -> list[str] | None:
+        if not isinstance(value, list):
+            return None
+        items = [str(item).strip() for item in value if str(item).strip()]
+        return items[:limit] or None
+
+    def _body_density_from_payload(self, value: object, *, source_text: str, style: str) -> str:
+        normalized = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+        if normalized in {"sparse", "standard", "detailed", "dense"}:
+            return normalized
+        text = f"{style} {source_text[:4000]}".lower()
+        if any(token in text for token in ["少字", "少文字", "极简", "精简", "老板", "高管", "董事会", "路演", "pitch", "executive", "board"]):
+            return "sparse"
+        if any(token in text for token in ["培训", "教学", "工作坊", "讲清楚", "详细", "解释", "review", "training", "workshop"]):
+            return "detailed"
+        if any(token in text for token in ["留存", "会后阅读", "手册", "实施包", "操作指南", "详细方案", "leave-behind", "handbook", "implementation pack"]):
+            return "dense"
+        return "standard"
+
+    def _body_text_limit(self, body_density: str) -> int:
+        if body_density == "sparse":
+            return 2
+        if body_density == "detailed":
+            return 4
+        if body_density == "dense":
+            return 6
+        return 3
+
+    def _template_for_position(self, slide_number: int) -> str:
+        templates = ["three_cards", "timeline", "metrics"]
+        return templates[(slide_number - 1) % len(templates)]
+
+    def _template_for_content(
+        self,
+        *,
+        requested_template: str,
+        cards: list[str] | None,
+        timeline_items: list[str] | None,
+        metrics: list[str] | None,
+        comparison_items: list[str] | None,
+        process_items: list[str] | None,
+        architecture_items: list[str] | None,
+        bullets: list[str],
+    ) -> str:
+        normalized = self._normalize_template(requested_template) if requested_template else ""
+        if normalized in {"timeline", "metrics", "three_cards", "comparison", "process", "architecture", "matrix", "swimlane"} and self._has_enough_items_for_template(
+            normalized,
+            cards=cards,
+            timeline_items=timeline_items,
+            metrics=metrics,
+            comparison_items=comparison_items,
+            process_items=process_items,
+            architecture_items=architecture_items,
+            bullets=bullets,
+        ):
+            return normalized
+        if architecture_items and len(architecture_items) >= 3:
+            return "architecture"
+        if comparison_items and len(comparison_items) >= 3:
+            return "comparison"
+        if process_items and len(process_items) >= 3:
+            return "process"
+        if metrics and len(metrics) >= 3:
+            return "metrics"
+        if timeline_items and len(timeline_items) >= 3:
+            return "timeline"
+        if len(bullets) >= 3:
+            return "swimlane"
+        return "three_cards"
+
+    def _has_enough_items_for_template(
+        self,
+        template: str,
+        *,
+        cards: list[str] | None,
+        timeline_items: list[str] | None,
+        metrics: list[str] | None,
+        comparison_items: list[str] | None,
+        process_items: list[str] | None,
+        architecture_items: list[str] | None,
+        bullets: list[str],
+    ) -> bool:
+        if template in {"cover", "toc", "chapter", "closing"}:
+            return len(cards or bullets) >= 1
+        if template in {"matrix", "swimlane"}:
+            return len(cards or bullets) >= 3
+        if template == "architecture":
+            return len(architecture_items or bullets) >= 3
+        if template == "comparison":
+            return len(comparison_items or bullets) >= 3
+        if template == "process":
+            return len(process_items or timeline_items or bullets) >= 3
+        if template == "metrics":
+            return len(metrics or bullets) >= 3
+        if template == "timeline":
+            return len(timeline_items or bullets) >= 3
+        return len(cards or bullets) >= 1
+
+    def _theme_from_payload(self, value: object, *, source_text: str, style: str, title: str) -> dict[str, str]:
+        inferred = self._theme_for_context(source_text=source_text, style=style, title=title)
+        if not isinstance(value, dict):
+            return inferred
+        theme = inferred.copy()
+        for key in ["bg", "panel", "primary", "accent", "secondary_accent", "text", "text_secondary", "border"]:
+            color = str(value.get(key, "")).strip()
+            if self._is_hex_color(color):
+                theme[key] = color.upper()
+        return theme
+
+    def _theme_for_context(self, *, source_text: str, style: str, title: str) -> dict[str, str]:
+        text = f"{style} {title} {source_text[:3000]}".lower()
+        themes = {
+            "government_red": {
+                "bg": "#FFF7F7",
+                "panel": "#FFFFFF",
+                "primary": "#B91C1C",
+                "accent": "#FCA5A5",
+                "secondary_accent": "#FEE2E2",
+                "text": "#1F2937",
+                "text_secondary": "#6B7280",
+                "border": "#FECACA",
+            },
+            "finance": {
+                "bg": "#F7FAF8",
+                "panel": "#FFFFFF",
+                "primary": "#166534",
+                "accent": "#D4AF37",
+                "secondary_accent": "#DCFCE7",
+                "text": "#102A1F",
+                "text_secondary": "#52645A",
+                "border": "#BBF7D0",
+            },
+            "healthcare": {
+                "bg": "#F0FDFA",
+                "panel": "#FFFFFF",
+                "primary": "#0F766E",
+                "accent": "#99F6E4",
+                "secondary_accent": "#CCFBF1",
+                "text": "#134E4A",
+                "text_secondary": "#4B635F",
+                "border": "#99F6E4",
+            },
+            "education": {
+                "bg": "#F8FAFC",
+                "panel": "#FFFFFF",
+                "primary": "#1E3A8A",
+                "accent": "#DC2626",
+                "secondary_accent": "#DBEAFE",
+                "text": "#111827",
+                "text_secondary": "#4B5563",
+                "border": "#BFDBFE",
+            },
+            "technology": {
+                "bg": "#F8FAFC",
+                "panel": "#FFFFFF",
+                "primary": "#0F4C81",
+                "accent": "#22D3EE",
+                "secondary_accent": "#E0F2FE",
+                "text": "#0F172A",
+                "text_secondary": "#475569",
+                "border": "#BAE6FD",
+            },
+            "growth": {
+                "bg": "#FFFBEB",
+                "panel": "#FFFFFF",
+                "primary": "#C2410C",
+                "accent": "#FDBA74",
+                "secondary_accent": "#FED7AA",
+                "text": "#292524",
+                "text_secondary": "#78716C",
+                "border": "#FDBA74",
+            },
+            "coffee_local": {
+                "bg": "#F7F1E8",
+                "panel": "#FFFDF8",
+                "primary": "#4B2E24",
+                "accent": "#B7794A",
+                "secondary_accent": "#D9E7C6",
+                "text": "#2D211B",
+                "text_secondary": "#716259",
+                "border": "#E3D4C5",
+            },
+            "hospitality_editorial": {
+                "bg": "#F9F5F0",
+                "panel": "#F0EBE3",
+                "primary": "#C85A48",
+                "accent": "#8B7E74",
+                "secondary_accent": "#6B8E6B",
+                "text": "#3D2C2A",
+                "text_secondary": "#7A6B65",
+                "border": "#D6C9B8",
+            },
+        }
+        if any(token in text for token in ["咖啡", "coffee", "门店", "店长", "新品", "拿铁", "冷萃", "dirty", "外卖", "早餐"]):
+            return themes["coffee_local"]
+        if any(token in text for token in ["民宿", "酒店", "湖边", "湖畔", "端午", "旅行", "旅游", "亲子", "hospitality", "travel"]):
+            return themes["hospitality_editorial"]
+        if any(token in text for token in ["政务", "政府", "党建", "党政", "公务", "监管"]):
+            return themes["government_red"]
+        if any(token in text for token in ["金融", "银行", "证券", "基金", "保险", "财务", "投资"]):
+            return themes["finance"]
+        if any(token in text for token in ["医疗", "医院", "医生", "护理", "药品", "患者", "门诊", "分诊", "随访", "护士"]):
+            return themes["healthcare"]
+        if any(token in text for token in ["教育", "高校", "大学", "校园", "课程", "学生", "答辩"]):
+            return themes["education"]
+        if any(token in text for token in ["增长", "营销", "销售", "消费", "品牌", "活动", "运营"]):
+            return themes["growth"]
+        if any(token in text for token in ["warm", "温暖", "橙", "活力"]):
+            return themes["growth"]
+        return themes["technology"]
+
+    def _palette_from_theme(self, theme: dict[str, str]) -> list[str]:
+        return [theme["primary"], theme["accent"], theme["secondary_accent"]]
+
+    def _theme_color(self, plan: DeckPlan, key: str, fallback: str) -> str:
+        if plan.theme_colors and plan.theme_colors.get(key):
+            return plan.theme_colors[key]
+        return fallback
+
+    def _is_hex_color(self, value: str) -> bool:
+        if len(value) != 7 or not value.startswith("#"):
+            return False
+        return all(char in "0123456789abcdefABCDEF" for char in value[1:])
+
+    def _template_items(self, slide: DeckSlide, template: str) -> list[str]:
+        if template in {"cover", "toc", "chapter", "matrix", "swimlane", "closing"}:
+            return slide.cards or slide.bullets or [slide.objective]
+        if template == "architecture":
+            modules = slide.architecture_items or slide.cards or slide.bullets or [slide.objective]
+            if slide.architecture_parent:
+                return [slide.architecture_parent, *modules[:3], *(slide.architecture_flow or [])]
+            return modules
+        if template == "comparison":
+            return slide.comparison_items or slide.cards or slide.bullets or [slide.objective]
+        if template == "process":
+            return slide.process_items or slide.timeline_items or slide.bullets or [slide.objective]
+        if template == "timeline":
+            return slide.timeline_items or slide.cards or slide.bullets or [slide.objective]
+        if template == "metrics":
+            return slide.metrics or slide.cards or slide.bullets or [slide.objective]
+        return slide.cards or slide.bullets or [slide.objective]
+
+    def _complete_items(
+        self,
+        primary: list[str] | None,
+        fallback: list[str],
+        objective: object,
+        *,
+        limit: int,
+    ) -> list[str]:
+        candidates = [*(primary or []), *fallback, str(objective)]
+        completed: list[str] = []
+        seen: set[str] = set()
+        for item in candidates:
+            normalized = " ".join(str(item).split())
+            if not normalized or normalized in seen:
+                continue
+            completed.append(normalized)
+            seen.add(normalized)
+            if len(completed) == limit:
+                return completed
+        while len(completed) < limit:
+            completed.append(f"关键要点 {len(completed) + 1}")
+        return completed
+
+    def _palette_item(self, palette: list[str], index: int, fallback: str) -> str:
+        if len(palette) > index and palette[index]:
+            return palette[index]
+        return fallback
+
+    def _default_image_resources(self, title: str, style: str, *, allow_generated: bool = False) -> list[dict[str, str]]:
+        if not allow_generated:
+            return []
+        if not self._settings.AIPPT_IMAGE_GENERATION_ENABLED and not any(token in style for token in ["ai_image", "image_generation", "with_images", "visual_assets"]):
+            return []
+        if "no_image" in style or "text_only" in style:
+            return []
+        text = f"{title} {style}".lower()
+        if any(token in text for token in ["咖啡", "coffee", "门店", "店长", "拿铁", "冷萃", "dirty"]):
+            description = f"{title}，社区咖啡店运营会背景，菜单板、小票、咖啡豆、浅木纹与植物点缀，留白充足，适合文字叠加"
+        elif any(token in text for token in ["民宿", "酒店", "旅行", "hospitality", "travel", "nature", "editorial"]):
+            description = f"{title}，温暖自然的精品旅行杂志感背景，亚麻、木质、湖畔日光、留白充足，适合文字叠加"
+        elif any(token in text for token in ["warm_daily_operations", "温暖", "清爽", "生活"]):
+            description = f"{title}，日常运营沟通材料背景，真实办公与门店物料质感，干净留白，适合文字叠加"
+        elif any(token in text for token in ["奢华", "luxury", "premium", "brand"]):
+            description = f"{title}，高级品牌画册感背景，克制留白，精致材质，适合文字叠加"
+        else:
+            description = f"{title}，符合主题与行业气质的演示背景，干净留白，适合文字叠加"
+        return [
+            {
+                "filename": "cover_bg.png",
+                "dimensions": "1920x1080",
+                "purpose": "Cover background",
+                "type": "Background",
+                "status": "Pending",
+                "generation_description": description,
+            }
+        ]
+
+    def _image_resource_rows(self, plan: DeckPlan) -> str:
+        resources = plan.image_resources or []
+        if not resources:
+            return "| — | — | No external images required | — | Not-Required | Backend SVG templates only |"
+        rows = []
+        for item in resources:
+            rows.append(
+                "| {filename} | {dimensions} | {purpose} | {type} | {status} | {description} |".format(
+                    filename=item.get("filename", ""),
+                    dimensions=item.get("dimensions", ""),
+                    purpose=item.get("purpose", ""),
+                    type=item.get("type", ""),
+                    status=item.get("status", "Pending"),
+                    description=item.get("generation_description", ""),
+                )
+            )
+        return "\n".join(rows)
+
+    def _visualization_rows(self, slides: list[DeckSlide]) -> str:
+        rows = []
+        for slide in slides:
+            normalized_template = self._normalize_template(slide.template)
+            label_limit = 4 if normalized_template == "matrix" else 3
+            labels = self._template_items(slide, normalized_template)[:label_limit]
+            if normalized_template == "architecture":
+                parent = slide.architecture_parent or slide.title
+                modules = "; ".join((slide.architecture_items or slide.bullets)[:3])
+                flow = " -> ".join((slide.architecture_flow or [])[:3])
+                labels = [f"parent: {parent}", f"modules[3]: {modules}", f"flow: {flow}"]
+            rows.append(
+                f"| P{slide.slide_number:02d} | {self._visualization_name(slide.template)} | {slide.template} | {'; '.join(labels)} |"
+            )
+        return "\n".join(rows)
+
+    def _visualization_name(self, template: str) -> str:
+        normalized = self._normalize_template(template)
+        if normalized == "cover":
+            return "Cover / Executive Framing"
+        if normalized == "toc":
+            return "TOC / Agenda"
+        if normalized == "chapter":
+            return "Chapter / Section Divider"
+        if normalized == "closing":
+            return "Closing / Next Steps"
+        if normalized == "architecture":
+            return "Architecture / Module Composition"
+        if normalized == "comparison":
+            return "Comparison / Alternatives"
+        if normalized == "process":
+            return "Process / Numbered Steps"
+        if normalized == "timeline":
+            return "Process / Timeline"
+        if normalized == "metrics":
+            return "KPI / Metrics"
+        if normalized == "matrix":
+            return "Matrix / Capability Map"
+        if normalized == "swimlane":
+            return "Swimlane / Operating Model"
+        return "Card overview"
+
+    def _content_outline(self, slides: list[DeckSlide]) -> str:
+        blocks = []
+        for slide in slides:
+            normalized_template = self._normalize_template(slide.template)
+            label_limit = 4 if normalized_template == "matrix" else 3
+            right_items = self._template_items(slide, normalized_template)[:label_limit]
+            blocks.append(
+                "\n".join(
+                    [
+                        f"### P{slide.slide_number:02d}. {slide.title}",
+                        f"- **Objective**: {slide.objective}",
+                        f"- **Template**: {slide.template}",
+                        f"- **Left content**: {'; '.join((slide.text_box or slide.bullets)[:4])}",
+                        f"- **Right content**: {'; '.join(right_items)}",
+                    ]
+                )
+            )
+        return "\n\n".join(blocks)
+
+    def _free_design_content_outline(self, slides: list[DeckSlide]) -> str:
+        blocks = []
+        for slide in slides:
+            normalized_template = self._normalize_template(slide.template)
+            label_limit = 4 if normalized_template == "matrix" else 6
+            right_items = self._template_items(slide, normalized_template)[:label_limit]
+            blocks.append(
+                "\n".join(
+                    [
+                        f"### P{slide.slide_number:02d}. {slide.title}",
+                        f"- **Objective**: {slide.objective}",
+                        f"- **Page Rhythm**: {slide.page_rhythm or self._infer_page_rhythm_for_slide(slide)}",
+                        f"- **Layout Intent**: {slide.layout_intent or slide.visual or slide.template}",
+                        f"- **Reference Type**: {slide.template}",
+                        f"- **Body content**: {'; '.join((slide.text_box or slide.bullets)[:6])}",
+                        f"- **Visual labels**: {'; '.join(right_items)}",
+                    ]
+                )
+            )
+        return "\n\n".join(blocks)
+
+    def _fallback_plan(
+        self,
+        source_text: str,
+        page_count: int,
+        style: str,
+        *,
+        fallback_reason: str | None = None,
+        raw_plan_excerpt: str | None = None,
+        allow_image_resources: bool = False,
+    ) -> DeckPlan:
+        topic = source_text.strip().splitlines()[0][:60] or "AI PPT"
+        fallback_pages = self._fallback_pages(topic)
+        while len(fallback_pages) < page_count:
+            number = len(fallback_pages) + 1
+            fallback_pages.append(
+                (
+                    f"补充分析 {number}",
+                    "补充说明推进过程中需要持续跟踪的业务问题。",
+                    ["关键假设", "执行依赖", "跟踪指标"],
+                    "three_cards",
+                )
+            )
+
+        slides = [
+            DeckSlide(
+                slide_number=index,
+                title=title,
+                objective=objective,
+                bullets=bullets,
+                visual="",
+                template=self._template_for_position(index),
+                text_box=bullets,
+                cards=bullets[:3],
+                timeline_items=bullets[:3],
+                metrics=bullets[:3],
+                comparison_items=bullets[:3],
+                process_items=bullets[:3],
+                architecture_parent=title,
+                architecture_items=bullets[:3],
+                architecture_flow=bullets[:3],
+            )
+            for index, (title, objective, bullets, visual) in enumerate(
+                fallback_pages[:page_count],
+                start=1,
+            )
+        ]
+        self._apply_page_roles(slides)
+        return DeckPlan(
+            title=topic,
+            subtitle="业务方案汇报",
+            visual_style=style,
+            palette=self._palette_from_theme(self._theme_for_context(source_text=source_text, style=style, title=topic)),
+            slides=slides,
+            body_density=self._body_density_from_payload(None, source_text=source_text, style=style),
+            theme_colors=self._theme_for_context(source_text=source_text, style=style, title=topic),
+            image_resources=self._default_image_resources(topic, style, allow_generated=allow_image_resources),
+            generation_mode="fallback",
+            execution_mode="renderer",
+            fallback_reason=fallback_reason or "LLM deck plan was unavailable or invalid.",
+            raw_plan_excerpt=raw_plan_excerpt,
+        )
+
+    def _fallback_pages(self, topic: str) -> list[tuple[str, str, list[str], str]]:
+        return [
+            ("业务背景与目标", "说明当前业务为什么需要推进这项方案。", [topic, "当前协作链路需要统一", "目标是减少遗漏并提升交付效率"], "three_cards"),
+            ("需求来源与工作负载", "梳理输入渠道和团队日常处理压力。", ["多源输入", "人工判断优先级", "周会前集中整理"], "timeline"),
+            ("当前问题与影响", "明确现有方式带来的主要成本和风险。", ["入口分散", "人工整理成本高", "状态口径不一致"], "comparison"),
+            ("目标工作方式", "展示统一工作台希望形成的新协作模式。", ["统一接入", "智能编排", "结果可追踪"], "metrics"),
+            ("系统模块组成", "拆解平台需要承载的核心能力模块。", ["输入接入", "任务编排", "风险看板"], "architecture"),
+            ("多源输入接入", "说明不同来源如何进入统一任务池。", ["飞书群", "表格邮件", "会议纪要"], "three_cards"),
+            ("需求识别与分类", "说明系统如何识别任务要素和风险信号。", ["客户名称", "需求类型", "风险等级"], "process"),
+            ("任务编排与分配", "说明从需求到责任人的任务生成机制。", ["生成任务", "匹配责任人", "设置 SLA"], "process"),
+            ("协同同步机制", "说明状态如何回写到团队协作场景。", ["飞书提醒", "状态同步", "升级通知"], "timeline"),
+            ("风险看板视角", "说明管理层如何看到关键客户和阻塞问题。", ["重点客户", "逾期任务", "阻塞原因"], "metrics"),
+            ("知识库沉淀", "说明问题处理结果如何转化为可复用资产。", ["相似问题", "方案推荐", "复盘沉淀"], "three_cards"),
+            ("数据权限与治理", "说明上线前需要控制的数据和权限边界。", ["权限分层", "信息脱敏", "人工确认"], "comparison"),
+            ("试点推进计划", "拆解试点阶段和关键交付物。", ["规则梳理", "输入接入", "看板上线"], "timeline"),
+            ("成功指标", "用可观测指标衡量试点效果。", ["漏跟率下降", "周报时间下降", "复用率提升"], "metrics"),
+            ("下一步决策", "明确需要管理层确认的事项。", ["试点范围", "资源投入", "验收口径"], "three_cards"),
+        ]
+
+    def _apply_page_roles(self, slides: list[DeckSlide]) -> None:
+        if not slides:
+            return
+        slides[0].template = "cover"
+        if len(slides) >= 8 and len(slides) > 2:
+            slides[1].template = "toc"
+        if len(slides) >= 10:
+            chapter_indexes = [2, max(4, len(slides) // 2), max(6, len(slides) - 4)]
+            for index in sorted(set(chapter_indexes)):
+                if 0 < index < len(slides) - 1:
+                    slides[index].template = "chapter"
+        self._diversify_content_templates(slides)
+        if len(slides) >= 4:
+            slides[-1].template = "closing"
+
+    def _diversify_content_templates(self, slides: list[DeckSlide]) -> None:
+        replacements = ["matrix", "swimlane", "timeline", "metrics", "comparison", "process", "architecture"]
+        card_seen = 0
+        replacement_index = 0
+        fixed_roles = {"cover", "toc", "chapter", "closing"}
+        for slide in slides:
+            normalized = self._normalize_template(slide.template)
+            if normalized in fixed_roles:
+                continue
+            if normalized == "three_cards":
+                card_seen += 1
+                if card_seen > 2:
+                    slide.template = replacements[replacement_index % len(replacements)]
+                    replacement_index += 1
+
+    def _fallback_svg(self, plan: DeckPlan, slide: DeckSlide, spec_lock: SpecLock | None = None) -> str:
+        return self._renderer.render(
+            deck_title=plan.title,
+            slide_number=slide.slide_number,
+            template_name=self._normalize_template(slide.template),
+            page_title=slide.title,
+            objective=slide.objective,
+            text_box=slide.text_box or slide.bullets or [slide.objective],
+            right_items=self._template_items(slide, self._normalize_template(slide.template)),
+            accent=plan.palette[0] if plan.palette else "#2563EB",
+            accent_soft=plan.palette[1] if len(plan.palette) > 1 else "#DBEAFE",
+            accent_pale=plan.palette[2] if len(plan.palette) > 2 else "#EFF6FF",
+            spec_lock=spec_lock,
+            background_image_href=self._slide_background_image_href(plan, slide),
+            body_density=plan.body_density,
+        )
+
+    def _slide_background_image_href(self, plan: DeckPlan, slide: DeckSlide) -> str | None:
+        if slide.slide_number != 1:
+            return None
+        for item in plan.image_resources or []:
+            if item.get("status") in {"Existing", "Generated"} and item.get("filename"):
+                return f"../images/{item['filename']}"
+        return None
+
+    def _fallback_notes(self, plan: DeckPlan) -> str:
+        return "\n\n".join(
+            f"# slide_{slide.slide_number:02d}\n\n这一页重点说明{slide.title}。讲解时优先展开：{'；'.join(slide.bullets[:3])}。"
+            for slide in plan.slides
+        )
+
+    def _slides_summary(self, plan: DeckPlan) -> str:
+        return "\n".join(
+            f"{slide.slide_number}. {slide.title}: {slide.objective} | bullets={'; '.join(slide.bullets)}"
+            for slide in plan.slides
+        )

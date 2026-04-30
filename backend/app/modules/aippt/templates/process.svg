@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#F8FAFC"/>
+  <rect x="0" y="0" width="1280" height="104" fill="{{ACCENT}}"/>
+  <rect x="0" y="104" width="1280" height="8" fill="{{ACCENT}}"/>
+  <text x="84" y="66" font-family="Microsoft YaHei, Arial, sans-serif" font-size="38" font-weight="700" fill="#FFFFFF">{{DECK_TITLE}}</text>
+  <text x="84" y="148" font-family="Microsoft YaHei, Arial, sans-serif" font-size="18" font-weight="700" fill="{{ACCENT}}">SLIDE {{SLIDE_NUM}}</text>
+  <text x="84" y="184" font-family="Microsoft YaHei, Arial, sans-serif" font-size="34" font-weight="700" fill="#0F172A">{{PAGE_TITLE}}</text>
+  {{OBJECTIVE_LINES}}
+  <rect x="84" y="318" width="1096" height="264" rx="32" fill="{{ACCENT_PALE}}" stroke="#E2E8F0" stroke-width="1"/>
+  <text x="112" y="362" font-family="Microsoft YaHei, Arial, sans-serif" font-size="20" font-weight="700" fill="{{ACCENT}}">Process Flow</text>
+  {{RIGHT_CONTENT}}
+</svg>
