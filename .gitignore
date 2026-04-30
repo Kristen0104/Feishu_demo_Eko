@@ -44,9 +44,14 @@ node_modules/
 .npm
 .yarn
 *.log
+<<<<<<< HEAD
 frontend/.vite/
 frontend/dist/
 **/.vite/
+=======
+frontend/.next/
+frontend/tsconfig.tsbuildinfo
+>>>>>>> 71c7330 (add frontend Next.js demo app and root dev scripts)
 
 # Test
 .coverage
