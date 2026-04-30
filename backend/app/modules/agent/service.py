@@ -1,30 +1,38 @@
 """
 Agent Service - Agent 核心业务逻辑，Subagent 架构
 """
+import asyncio
 import json
 import logging
-import asyncio
-from typing import AsyncIterator, Optional, Any
+from typing import Any, AsyncIterator, Optional
 
 from app.config import settings
 from app.core.llm_client import LLMClient
 from app.core.redis_client import redis_client
-from app.modules.feishu.client import FeishuClient
-from app.modules.feishu.service import FeishuService
-from app.modules.document.schemas import DocumentGenerationRequest
 from app.modules.agent.schemas import (
+    AgentChatArtifact,
+    AgentChatRequest,
+    AgentChatResponse,
+    AgentContext,
     AgentIntent,
-    SubagentType,
-    AgentStatus,
     AgentRequest,
     AgentResponse,
-    AgentContext,
+    AgentStatus,
+    BitableRecord,
     ChatMessage,
     KnowledgeDoc,
-    BitableRecord,
+    SubagentType,
     SyncDocumentRequest,
     SyncDocumentResponse,
 )
+from app.modules.canvas.schemas import CanvasBoardTaskCreateRequest
+from app.modules.canvas.service import CanvasService
+from app.modules.document.schemas import DocumentGenerationRequest
+from app.modules.document.service import DocumentService
+from app.modules.feishu.client import FeishuClient
+from app.modules.feishu.service import FeishuService
+from app.modules.ppt.schemas import PptDeckCreateRequest, PptPreferencesSchema
+from app.modules.ppt.service import PptService
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +77,44 @@ class RouterAgent:
         except Exception as e:
             logger.warning(f"Intent classification failed: {e}, fallback to chat")
             return AgentIntent.CHAT
+
+    async def classify_chat_intent(self, message: str) -> AgentIntent:
+        """识别 Agent chat 路由意图"""
+        system_prompt = """You are Eko's intent router for agent chat requests.
+
+Classify the user's message into exactly one of these intents:
+- chat
+- docx
+- ppt
+- board
+
+Return only the intent label."""
+
+        user_prompt = f"User message: {message}\n\nIntent:"
+
+        try:
+            result = (await self._llm.generate(system_prompt, user_prompt, temperature=0.0)).strip().lower()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Agent chat intent classification failed: %s", exc)
+            result = ""
+
+        if "board" in result:
+            return AgentIntent.BOARD
+        if result == "docx" or "docx" in result:
+            return AgentIntent.DOCX
+        if result == "ppt" or "presentation" in result:
+            return AgentIntent.PPT
+        if result == "chat":
+            return AgentIntent.CHAT
+
+        lowered = message.lower()
+        if any(keyword in message for keyword in ["画板", "白板", "流程图", "架构图", "架构"]) or "board" in lowered:
+            return AgentIntent.BOARD
+        if any(keyword in message for keyword in ["ppt", "PPT", "演示", "幻灯片", "汇报"]):
+            return AgentIntent.PPT
+        if any(keyword in message for keyword in ["文档", "方案", "报告", "纪要", "总结", "写一份"]):
+            return AgentIntent.DOCX
+        return AgentIntent.CHAT
 
 
 class CollectorSubagent:
@@ -286,6 +332,9 @@ class AgentService:
         self,
         llm_client: LLMClient,
         feishu_service: FeishuService,
+        document_service: DocumentService,
+        ppt_service: PptService,
+        canvas_service: CanvasService,
     ) -> None:
         self._router = RouterAgent(llm_client)
         self._collector = CollectorSubagent(feishu_service._client)
@@ -293,6 +342,115 @@ class AgentService:
         self._sync = SyncSubagent(feishu_service)
         self._llm = llm_client
         self._feishu = feishu_service
+        self._document_service = document_service
+        self._ppt_service = ppt_service
+        self._canvas_service = canvas_service
+
+    async def chat(self, request: AgentChatRequest) -> AgentChatResponse:
+        """Handle direct agent chat requests with intent-based routing."""
+        intent = AgentIntent.CHAT
+        try:
+            intent = await self._router.classify_chat_intent(request.message)
+
+            if intent == AgentIntent.DOCX:
+                content = await self._document_service.generate_document(
+                    DocumentGenerationRequest(
+                        session_id=request.session_id,
+                        topic=request.message,
+                        requirement=request.message,
+                    )
+                )
+                return AgentChatResponse(
+                    session_id=request.session_id,
+                    intent=AgentIntent.DOCX.value,
+                    status="completed",
+                    message="文档生成完成。",
+                    artifact=AgentChatArtifact(
+                        kind="docx",
+                        content=content,
+                    ),
+                )
+
+            if intent == AgentIntent.PPT:
+                deck = self._ppt_service.create_deck(
+                    PptDeckCreateRequest(
+                        type="chat",
+                        content=request.message,
+                        preferences=PptPreferencesSchema(),
+                    )
+                )
+                return AgentChatResponse(
+                    session_id=request.session_id,
+                    intent=AgentIntent.PPT.value,
+                    status="completed",
+                    message="PPT 已生成。",
+                    artifact=AgentChatArtifact(
+                        kind="ppt",
+                        deck_id=deck.deck_id,
+                    ),
+                )
+
+            if intent == AgentIntent.BOARD:
+                if not request.sharing_url:
+                    return AgentChatResponse(
+                        session_id=request.session_id,
+                        intent=AgentIntent.BOARD.value,
+                        status="failed",
+                        message="生成飞书画板需要 sharing_url。",
+                        artifact=None,
+                        error="missing sharing_url",
+                    )
+
+                board_task = self._canvas_service.create_board_task(
+                    CanvasBoardTaskCreateRequest(
+                        message=request.message,
+                        sharing_url=request.sharing_url,
+                    )
+                )
+                completed_task = self._canvas_service.run_board_task(board_task.task_id)
+                is_failed = completed_task.status == "failed"
+                return AgentChatResponse(
+                    session_id=request.session_id,
+                    intent=AgentIntent.BOARD.value,
+                    status="failed" if is_failed else "completed",
+                    message=completed_task.error_message if is_failed else "飞书画板任务已完成。",
+                    artifact=AgentChatArtifact(
+                        kind="board",
+                        task_id=completed_task.task_id,
+                        status=completed_task.status,
+                        whiteboard_id=completed_task.whiteboard_id,
+                        sharing_url=completed_task.sharing_url,
+                        result_summary=completed_task.result_summary,
+                        error_message=completed_task.error_message,
+                    ),
+                    error=completed_task.error_message if is_failed else None,
+                )
+
+            reply = await self._llm.generate(
+                "你是 Eko 智能办公助手。请直接、友好地回答用户问题。",
+                request.message,
+            )
+            return AgentChatResponse(
+                session_id=request.session_id,
+                intent=AgentIntent.CHAT.value,
+                status="completed",
+                message=reply,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Agent chat failed session=%s, error=%s", request.session_id, exc)
+            response_intent = intent if intent in {
+                AgentIntent.CHAT,
+                AgentIntent.DOCX,
+                AgentIntent.PPT,
+                AgentIntent.BOARD,
+            } else AgentIntent.CHAT
+            return AgentChatResponse(
+                session_id=request.session_id,
+                intent=response_intent.value,
+                status="failed",
+                message="处理失败，请稍后重试",
+                error=str(exc),
+            )
 
     async def process_request(self, request: AgentRequest) -> AgentResponse:
         """处理用户请求（完整流程）"""

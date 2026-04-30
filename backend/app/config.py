@@ -8,6 +8,10 @@ from pathlib import Path
 from pydantic import ConfigDict
 from pydantic_settings import BaseSettings
 
+APP_DIR = Path(__file__).resolve().parent
+BACKEND_DIR = APP_DIR.parent
+REPO_ROOT = BACKEND_DIR.parent
+
 
 class Settings(BaseSettings):
     # App
@@ -43,6 +47,11 @@ class Settings(BaseSettings):
             return f"redis://:{self.REDIS_PASSWORD}@{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
         return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
 
+    # Celery
+    CELERY_BROKER_URL: str | None = None
+    CELERY_RESULT_BACKEND: str | None = None
+    CELERY_TASK_QUEUE: str = "aippt"
+
     # JWT
     SECRET_KEY: str = "your-secret-key-change-in-production"
     ALGORITHM: str = "HS256"
@@ -50,7 +59,14 @@ class Settings(BaseSettings):
     JWT_ISSUER: str = "eko-auth"
 
     # CORS
-    CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:1420"]
+    CORS_ORIGINS: list[str] = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:1420",
+        "http://127.0.0.1:1420",
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+    ]
     FRONTEND_STATIC_DIR: str | None = str(Path(__file__).resolve().parents[2] / "frontend")
 
     # Feishu
@@ -88,6 +104,75 @@ class Settings(BaseSettings):
     PPT_EXPORT_VIEWPORT_WIDTH: int = 1600
     PPT_EXPORT_VIEWPORT_HEIGHT: int = 900
     PPT_EXPORT_DEVICE_SCALE_FACTOR: int = 2
+
+    # AI PPT
+    AIPPT_MODEL: str = "deepseek-v4-flash"
+    AIPPT_API_BASE: str = "https://api.deepseek.com"
+    AIPPT_API_KEY: str = ""
+    AIPPT_STORAGE_DIR: str = "storage/aippt"
+    AIPPT_VENDOR_DIR: str = "vendor/ppt-master"
+    AIPPT_REDIS_QUEUE_ENABLED: bool = True
+    AIPPT_UPLOADS_DIR: str = "storage/aippt/uploads"
+    AIPPT_PROJECTS_DIR: str = "storage/aippt/projects"
+    AIPPT_EXPORTS_DIR: str = "storage/aippt/exports"
+    AIPPT_MAX_UPLOAD_MB: int = 25
+    AIPPT_SLIDE_CONCURRENCY: int = 2
+    AIPPT_THINKING_ENABLED: bool = False
+    AIPPT_IMAGE_GENERATION_ENABLED: bool = False
+    AIPPT_IMAGE_API_BASE: str = "https://www.packyapi.com"
+    AIPPT_IMAGE_API_KEY: str = ""
+    AIPPT_IMAGE_MODEL: str = "gpt-image-2"
+    AIPPT_IMAGE_SIZE: str = "3840x2160"
+    AIPPT_IMAGE_QUALITY: str = "high"
+    AIPPT_IMAGE_OUTPUT_FORMAT: str = "png"
+    AIPPT_IMAGE_TIMEOUT_SECONDS: int = 180
+
+    @property
+    def AIPPT_EFFECTIVE_API_KEY(self) -> str:
+        return self.AIPPT_API_KEY or self.AGENT_API_KEY
+
+    @property
+    def AIPPT_STORAGE_PATH(self) -> Path:
+        path = Path(self.AIPPT_STORAGE_DIR)
+        if path.is_absolute():
+            return path
+        return BACKEND_DIR / path
+
+    @property
+    def AIPPT_UPLOADS_PATH(self) -> Path:
+        path = Path(self.AIPPT_UPLOADS_DIR)
+        if path.is_absolute():
+            return path
+        return BACKEND_DIR / path
+
+    @property
+    def AIPPT_PROJECTS_PATH(self) -> Path:
+        path = Path(self.AIPPT_PROJECTS_DIR)
+        if path.is_absolute():
+            return path
+        return BACKEND_DIR / path
+
+    @property
+    def AIPPT_EXPORTS_PATH(self) -> Path:
+        path = Path(self.AIPPT_EXPORTS_DIR)
+        if path.is_absolute():
+            return path
+        return BACKEND_DIR / path
+
+    @property
+    def AIPPT_VENDOR_PATH(self) -> Path:
+        path = Path(self.AIPPT_VENDOR_DIR)
+        if path.is_absolute():
+            return path
+        return REPO_ROOT / path
+
+    @property
+    def CELERY_EFFECTIVE_BROKER_URL(self) -> str:
+        return self.CELERY_BROKER_URL or self.REDIS_URL
+
+    @property
+    def CELERY_EFFECTIVE_RESULT_BACKEND(self) -> str:
+        return self.CELERY_RESULT_BACKEND or self.REDIS_URL
 
     model_config = ConfigDict(env_file=".env", extra="allow")
 

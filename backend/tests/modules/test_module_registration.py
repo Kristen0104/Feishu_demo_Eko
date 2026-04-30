@@ -7,11 +7,56 @@ from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
 from app.core import container
+from app.modules.aippt.dependencies import get_aippt_service
+from app.modules.aippt.schemas import PPTGenerationRequest, PPTJobSchema
+
+
+class FakeAIPPTService:
+    def __init__(self) -> None:
+        self._job = PPTJobSchema(
+            job_id="stub-ppt-job",
+            status="queued",
+            progress=0,
+            current_step="任务已入队",
+            source_type="topic",
+            source_name="AI PPT",
+            page_count=3,
+            style="clean_business",
+            download_url=None,
+            error=None,
+            created_at="2026-04-29T00:00:00+00:00",
+            updated_at="2026-04-29T00:00:00+00:00",
+        )
+
+    def create_job_from_request(
+        self,
+        payload: PPTGenerationRequest,
+        *,
+        upload_filename: str | None = None,
+        upload_bytes: bytes | None = None,
+    ) -> PPTJobSchema:
+        _ = (upload_filename, upload_bytes)
+        self._job = self._job.model_copy(
+            update={
+                "source_name": payload.topic or payload.source_url,
+                "page_count": payload.page_count,
+                "style": payload.style,
+            }
+        )
+        return self._job
+
+    def enqueue_job(self, job_id: str) -> None:
+        _ = job_id
+
+    def get_job(self, job_id: str) -> PPTJobSchema:
+        _ = job_id
+        return self._job
 
 
 def _build_client() -> TestClient:
     app = FastAPI()
     container.register_routers(app)
+    app.dependency_overrides[get_aippt_service] = lambda: FakeAIPPTService()
     return TestClient(app)
 
 
@@ -51,10 +96,10 @@ def test_register_routers_mounts_expected_paths() -> None:
         "/api/v1/feishu/board/delete": {"POST"},
         "/api/v1/feishu/sync/publish": {"POST"},
         "/api/v1/feishu/sync/status/{ticket}": {"GET"},
-        "/api/v1/ppt/decks": {"POST"},
-        "/api/v1/ppt/decks/{deck_id}/modify": {"POST"},
-        "/api/v1/ppt/decks/{deck_id}/export": {"POST"},
-        "/api/v1/ppt/themes": {"GET"},
+        "/api/v1/ppt/generate": {"POST"},
+        "/api/v1/ppt/design-modes": {"GET"},
+        "/api/v1/ppt/jobs/{job_id}": {"GET"},
+        "/api/v1/ppt/files/{job_id}": {"GET"},
         "/api/v1/workspace/{workspace_id}": {"GET"},
         "/api/v1/sync/ws/{session_id}": {"GET"},
     }
@@ -151,21 +196,17 @@ def test_stub_module_endpoints_return_expected_contracts() -> None:
             None,
         ),
         (
-            "get",
-            "/api/v1/ppt/themes",
+            "post",
+            "/api/v1/ppt/generate",
             lambda payload: (
                 payload["code"] == 0
                 and payload["message"] == "success"
-                and payload["data"]
-                == [
-                    {"theme_id": "business", "label": "business 商务风"},
-                    {"theme_id": "academic", "label": "academic 学术风"},
-                    {"theme_id": "apple_black", "label": "apple_black 苹果黑风"},
-                    {"theme_id": "apple_white", "label": "apple_white 苹果白风"},
-                    {"theme_id": "eco", "label": "eco 绿色环保风"},
-                ]
+                and payload["data"]["source_name"] == "AI PPT"
+                and payload["data"]["page_count"] == 3
+                and payload["data"]["status"] == "queued"
+                and payload["data"]["job_id"]
             ),
-            None,
+            {"topic": "AI PPT", "page_count": 3, "style": "clean_business"},
         ),
         (
             "get",

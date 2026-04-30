@@ -9,6 +9,9 @@ from pydantic import BaseModel, Field
 class AgentIntent(str, Enum):
     UNKNOWN = "unknown"
     CHAT = "chat"
+    DOCX = "docx"
+    PPT = "ppt"
+    BOARD = "board"
     DOCUMENT = "document"
     PRESENTATION = "presentation"
 
@@ -88,3 +91,30 @@ class SyncDocumentResponse(BaseModel):
 class AgentTaskSchema(BaseModel):
     task_id: str
     status: Literal["accepted"] = "accepted"
+
+
+class AgentChatRequest(BaseModel):
+    session_id: str
+    message: str = Field(min_length=1)
+    sharing_url: str | None = None
+
+
+class AgentChatArtifact(BaseModel):
+    kind: Literal["docx", "ppt", "board"]
+    content: str | None = None
+    deck_id: str | None = None
+    task_id: str | None = None
+    status: str | None = None
+    whiteboard_id: str | None = None
+    sharing_url: str | None = None
+    result_summary: str | None = None
+    error_message: str | None = None
+
+
+class AgentChatResponse(BaseModel):
+    session_id: str
+    intent: Literal["chat", "docx", "ppt", "board"]
+    status: Literal["completed", "failed"]
+    message: str
+    artifact: AgentChatArtifact | None = None
+    error: str | None = None

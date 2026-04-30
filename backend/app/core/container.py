@@ -15,6 +15,7 @@ ROUTER_REGISTRY: Final[tuple[tuple[str, str], ...]] = (
     ("app.modules.rag.router", "/api/v1/rag"),
     ("app.modules.feishu.router", "/api/v1/feishu"),
     ("app.modules.ppt.router", "/api/v1/ppt"),
+    ("app.modules.aippt.router", "/api/v1/ppt"),
     ("app.modules.workspace.router", "/api/v1/workspace"),
     ("app.modules.sync.router", "/api/v1/sync"),
 )

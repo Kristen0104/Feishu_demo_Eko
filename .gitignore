@@ -4,6 +4,8 @@
 .env.*.local
 *.pem
 *.key
+!.env.example
+!**/.env.example
 
 # Python
 __pycache__/
@@ -37,11 +39,14 @@ env/
 logs/
 tmp/
 
-# Node (frontend)
+# Node / frontend
 node_modules/
 .npm
 .yarn
 *.log
+frontend/.vite/
+frontend/dist/
+**/.vite/
 
 # Test
 .coverage
@@ -51,6 +56,18 @@ htmlcov/
 
 # Docker
 *.dockerignore
+
+# Runtime data and generated artifacts
+backend/dump.rdb
+backend/runtime/
+backend/generated/
+backend/storage/
+generated/
+storage/
+
+# Generated PPT/media artifacts
+*.pptx
+*.ppt
 
 # Misc
 *.bak

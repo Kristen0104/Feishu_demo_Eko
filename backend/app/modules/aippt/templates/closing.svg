@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" width="1280" height="720">
+  <rect width="1280" height="720" fill="#F8FAFC"/>
+  <rect x="0" y="0" width="1280" height="104" fill="{{ACCENT}}"/>
+  <text x="84" y="66" font-family="Microsoft YaHei, Arial, sans-serif" font-size="20" font-weight="700" fill="#FFFFFF">{{DECK_TITLE}}</text>
+  <text x="84" y="184" font-family="Microsoft YaHei, Arial, sans-serif" font-size="34" font-weight="800" fill="#0F172A">{{PAGE_TITLE}}</text>
+  {{OBJECTIVE_LINES}}
+  <rect x="84" y="358" width="470" height="118" rx="26" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="1"/>
+  <text x="118" y="410" font-family="Microsoft YaHei, Arial, sans-serif" font-size="20" font-weight="700" fill="#0F172A">Decision checkpoint</text>
+  <text x="118" y="452" font-family="Microsoft YaHei, Arial, sans-serif" font-size="16" font-weight="500" fill="#475569">确认优先级、责任人和下一轮验收口径</text>
+  <rect x="700" y="144" width="500" height="456" rx="32" fill="{{ACCENT_PALE}}" stroke="#E2E8F0" stroke-width="1"/>
+  {{RIGHT_CONTENT}}
+</svg>

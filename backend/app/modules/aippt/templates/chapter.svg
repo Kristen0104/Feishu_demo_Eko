@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" width="1280" height="720">
+  <rect width="1280" height="720" fill="#F8FAFC"/>
+  <rect x="0" y="0" width="520" height="720" fill="{{ACCENT}}"/>
+  <rect x="80" y="118" width="88" height="8" rx="4" fill="{{ACCENT_SOFT}}"/>
+  {{PAGE_TITLE_LINES}}
+  <text x="80" y="348" font-family="Microsoft YaHei, Arial, sans-serif" font-size="20" font-weight="500" fill="#FFFFFF">{{DECK_TITLE}}</text>
+  <rect x="650" y="118" width="530" height="476" rx="34" fill="{{ACCENT_PALE}}" stroke="#E2E8F0" stroke-width="1"/>
+  {{RIGHT_CONTENT}}
+</svg>

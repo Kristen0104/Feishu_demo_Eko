@@ -1,0 +1,668 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Agent Chat 测试页</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f5f7fb;
+        --panel: #ffffff;
+        --panel-2: #f8fafc;
+        --line: #d8e0ea;
+        --text: #162033;
+        --muted: #64748b;
+        --brand: #2563eb;
+        --brand-2: #0f766e;
+        --warn: #b45309;
+        --danger: #dc2626;
+        --ok: #15803d;
+        --shadow: 0 10px 30px rgba(18, 30, 56, 0.08);
+        --radius: 10px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        height: 100%;
+      }
+
+      body {
+        margin: 0;
+        font: 14px/1.5 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+        color: var(--text);
+        background: linear-gradient(180deg, #ffffff 0%, #f6f8fc 100%);
+      }
+
+      .app {
+        min-height: 100%;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .topbar {
+        padding: 16px 20px 12px;
+        border-bottom: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.84);
+        backdrop-filter: blur(10px);
+        position: sticky;
+        top: 0;
+        z-index: 1;
+      }
+
+      .title-row {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 18px;
+        font-weight: 700;
+      }
+
+      .subtitle {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .shell {
+        padding: 16px;
+        display: grid;
+        grid-template-columns: 360px minmax(0, 1fr);
+        gap: 16px;
+        align-items: start;
+        flex: 1;
+      }
+
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+        overflow: hidden;
+      }
+
+      .panel-head {
+        padding: 12px 14px;
+        background: var(--panel-2);
+        border-bottom: 1px solid var(--line);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .panel-head h2 {
+        margin: 0;
+        font-size: 13px;
+      }
+
+      .panel-body {
+        padding: 14px;
+      }
+
+      .field {
+        display: grid;
+        gap: 6px;
+        margin-bottom: 12px;
+      }
+
+      label {
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      input,
+      textarea,
+      button {
+        font: inherit;
+      }
+
+      input,
+      textarea {
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #fff;
+        color: var(--text);
+        padding: 10px 12px;
+        outline: none;
+      }
+
+      textarea {
+        min-height: 140px;
+        resize: vertical;
+      }
+
+      input:focus,
+      textarea:focus {
+        border-color: rgba(37, 99, 235, 0.55);
+        box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+      }
+
+      .button-row {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      .button {
+        border: 1px solid transparent;
+        border-radius: 8px;
+        padding: 10px 12px;
+        cursor: pointer;
+        transition: transform 0.08s ease, opacity 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        min-height: 40px;
+      }
+
+      .button:active {
+        transform: translateY(1px);
+      }
+
+      .button:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+
+      .primary {
+        background: var(--brand);
+        color: #fff;
+      }
+
+      .secondary {
+        background: #fff;
+        border-color: var(--line);
+        color: var(--text);
+      }
+
+      .ghost {
+        background: #eef4ff;
+        color: var(--brand);
+      }
+
+      .preset-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+      }
+
+      .preset {
+        text-align: left;
+        flex-direction: column;
+        align-items: flex-start;
+      }
+
+      .preset strong {
+        font-size: 13px;
+      }
+
+      .preset span {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .note {
+        border: 1px solid #f7d7a8;
+        background: #fff8eb;
+        color: #8a4b08;
+        border-radius: 8px;
+        padding: 10px 12px;
+        font-size: 12px;
+      }
+
+      .status-card {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .metric {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 12px;
+        background: #fff;
+      }
+
+      .metric-label {
+        font-size: 12px;
+        color: var(--muted);
+        margin-bottom: 4px;
+      }
+
+      .metric-value {
+        font-size: 16px;
+        font-weight: 700;
+        word-break: break-word;
+      }
+
+      .metric-value.ok {
+        color: var(--ok);
+      }
+
+      .metric-value.warn {
+        color: var(--warn);
+      }
+
+      .metric-value.err {
+        color: var(--danger);
+      }
+
+      .result-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 16px;
+      }
+
+      .kv {
+        display: grid;
+        gap: 10px;
+      }
+
+      .kv-row {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 10px 12px;
+        background: #fff;
+      }
+
+      .kv-key {
+        font-size: 12px;
+        color: var(--muted);
+        margin-bottom: 4px;
+      }
+
+      .kv-value {
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+
+      pre {
+        margin: 0;
+        padding: 12px;
+        min-height: 120px;
+        max-height: 420px;
+        overflow: auto;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #0b1220;
+        color: #d9e6ff;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      }
+
+      .muted {
+        color: var(--muted);
+      }
+
+      @media (max-width: 980px) {
+        .shell,
+        .result-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .status-card {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      @media (max-width: 520px) {
+        .preset-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <div class="topbar">
+        <div class="title-row">
+          <div>
+            <h1>Agent Endpoint 测试页</h1>
+            <div class="subtitle">面向开发联调的静态页面，直接调用 `POST /agent/chat` 并查看标准化返回。</div>
+          </div>
+          <div class="subtitle" id="lastRunHint">尚未发起请求</div>
+        </div>
+      </div>
+
+      <div class="shell">
+        <section class="panel">
+          <div class="panel-head">
+            <h2>请求配置</h2>
+            <span class="subtitle">纯静态 HTML / CSS / JS</span>
+          </div>
+          <div class="panel-body">
+            <div class="field">
+              <label for="apiBase">API Base</label>
+              <input id="apiBase" type="text" value="http://127.0.0.1:8000/api/v1" />
+            </div>
+
+            <div class="field">
+              <label for="sessionId">session_id</label>
+              <input id="sessionId" type="text" value="agent-test-session" />
+            </div>
+
+            <div class="field">
+              <label for="message">message</label>
+              <textarea id="message" placeholder="输入要发给 Agent 的消息"></textarea>
+            </div>
+
+            <div class="field">
+              <label for="sharingUrl">sharing_url（可选）</label>
+              <input id="sharingUrl" type="text" placeholder="仅 board 场景需要真实的 Feishu 分享链接" />
+            </div>
+
+            <div class="field">
+              <label>运行预设测试</label>
+              <div class="preset-grid">
+                <button class="button secondary preset" type="button" data-preset="chat">
+                  <strong>Chat</strong>
+                  <span>普通问答</span>
+                </button>
+                <button class="button secondary preset" type="button" data-preset="docx">
+                  <strong>Docx</strong>
+                  <span>文档生成路由</span>
+                </button>
+                <button class="button secondary preset" type="button" data-preset="ppt">
+                  <strong>PPT</strong>
+                  <span>演示稿生成路由</span>
+                </button>
+                <button class="button secondary preset" type="button" data-preset="board">
+                  <strong>Board</strong>
+                  <span>飞书白板路由</span>
+                </button>
+              </div>
+            </div>
+
+            <div class="note">
+              `board` 预设需要真实可访问的 Feishu board sharing_url，且可能调用现有的 Feishu-first board pipeline。没有真实链接时，接口大概率会返回失败或校验错误。
+            </div>
+
+            <div class="field" style="margin-top: 12px; margin-bottom: 0;">
+              <label>操作</label>
+              <div class="button-row">
+                <button class="button primary" id="runButton" type="button">发送当前请求</button>
+                <button class="button ghost" id="fillBoardExample" type="button">填入 Board 示例</button>
+                <button class="button ghost" id="clearButton" type="button">清空结果</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2>响应结果</h2>
+            <span class="subtitle" id="requestPathLabel">POST /agent/chat</span>
+          </div>
+          <div class="panel-body">
+            <div class="status-card">
+              <div class="metric">
+                <div class="metric-label">HTTP Status</div>
+                <div class="metric-value muted" id="httpStatus">-</div>
+              </div>
+              <div class="metric">
+                <div class="metric-label">ApiResponse code</div>
+                <div class="metric-value muted" id="apiCode">-</div>
+              </div>
+              <div class="metric">
+                <div class="metric-label">ApiResponse message</div>
+                <div class="metric-value muted" id="apiMessage">-</div>
+              </div>
+            </div>
+
+            <div class="result-grid" style="margin-top: 16px;">
+              <div class="kv">
+                <div class="kv-row">
+                  <div class="kv-key">data.intent</div>
+                  <div class="kv-value" id="agentIntent">-</div>
+                </div>
+                <div class="kv-row">
+                  <div class="kv-key">data.status</div>
+                  <div class="kv-value" id="agentStatus">-</div>
+                </div>
+                <div class="kv-row">
+                  <div class="kv-key">data.message</div>
+                  <div class="kv-value" id="agentMessage">-</div>
+                </div>
+                <div class="kv-row">
+                  <div class="kv-key">data.error</div>
+                  <div class="kv-value" id="agentError">-</div>
+                </div>
+              </div>
+
+              <div class="kv">
+                <div class="kv-key">artifact JSON</div>
+                <pre id="artifactJson">null</pre>
+              </div>
+            </div>
+
+            <div class="kv" style="margin-top: 16px;">
+              <div class="kv-key">raw JSON</div>
+              <pre id="rawJson">等待请求...</pre>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <script>
+      const presets = {
+        chat: {
+          message: "请用一句话介绍这个 Agent endpoint 的用途。",
+        },
+        docx: {
+          message: "请帮我生成一份项目周报文档，包含本周进展、风险和下周计划。",
+        },
+        ppt: {
+          message: "请生成一份产品发布会 PPT，重点突出目标用户、核心能力和上线计划。",
+        },
+        board: {
+          message: "请基于这个主题生成一个飞书白板脑图，梳理项目目标、关键里程碑和风险。",
+        },
+      };
+
+      const els = {
+        apiBase: document.getElementById("apiBase"),
+        sessionId: document.getElementById("sessionId"),
+        message: document.getElementById("message"),
+        sharingUrl: document.getElementById("sharingUrl"),
+        httpStatus: document.getElementById("httpStatus"),
+        apiCode: document.getElementById("apiCode"),
+        apiMessage: document.getElementById("apiMessage"),
+        agentIntent: document.getElementById("agentIntent"),
+        agentStatus: document.getElementById("agentStatus"),
+        agentMessage: document.getElementById("agentMessage"),
+        agentError: document.getElementById("agentError"),
+        artifactJson: document.getElementById("artifactJson"),
+        rawJson: document.getElementById("rawJson"),
+        runButton: document.getElementById("runButton"),
+        clearButton: document.getElementById("clearButton"),
+        fillBoardExample: document.getElementById("fillBoardExample"),
+        lastRunHint: document.getElementById("lastRunHint"),
+        requestPathLabel: document.getElementById("requestPathLabel"),
+      };
+
+      function prettyJson(value) {
+        return JSON.stringify(value, null, 2);
+      }
+
+      function setMetric(element, value, tone) {
+        element.textContent = value == null || value === "" ? "-" : String(value);
+        element.className = "metric-value";
+        if (!tone) {
+          element.classList.add("muted");
+          return;
+        }
+        element.classList.add(tone);
+      }
+
+      function setText(element, value) {
+        element.textContent = value == null || value === "" ? "-" : String(value);
+      }
+
+      function buildUrl() {
+        const base = els.apiBase.value.trim().replace(/\/+$/, "");
+        return `${base}/agent/chat`;
+      }
+
+      function buildPayload() {
+        const payload = {
+          session_id: els.sessionId.value.trim(),
+          message: els.message.value.trim(),
+        };
+
+        const sharingUrl = els.sharingUrl.value.trim();
+        if (sharingUrl) {
+          payload.sharing_url = sharingUrl;
+        }
+
+        return payload;
+      }
+
+      function renderResponse(httpStatus, payload) {
+        const data = payload && typeof payload === "object" ? payload.data || null : null;
+        const isHttpOk = typeof httpStatus === "number" && httpStatus >= 200 && httpStatus < 300;
+        const isApiOk = payload && typeof payload.code === "number" ? payload.code === 0 : false;
+        const statusTone = isHttpOk && isApiOk ? "ok" : "err";
+
+        setMetric(els.httpStatus, httpStatus, isHttpOk ? "ok" : "err");
+        setMetric(els.apiCode, payload && payload.code != null ? payload.code : "-", statusTone);
+        setMetric(els.apiMessage, payload && payload.message ? payload.message : "-", statusTone);
+
+        setText(els.agentIntent, data ? data.intent : null);
+        setText(els.agentStatus, data ? data.status : null);
+        setText(els.agentMessage, data ? data.message : null);
+        setText(els.agentError, data ? data.error : null);
+        els.artifactJson.textContent = prettyJson(data ? data.artifact ?? null : null);
+        els.rawJson.textContent = prettyJson(payload);
+      }
+
+      function renderTransportError(error) {
+        setMetric(els.httpStatus, "request_failed", "err");
+        setMetric(els.apiCode, "-", "err");
+        setMetric(els.apiMessage, error.message || "Request failed", "err");
+        setText(els.agentIntent, null);
+        setText(els.agentStatus, null);
+        setText(els.agentMessage, null);
+        setText(els.agentError, error.message || "Request failed");
+        els.artifactJson.textContent = "null";
+        els.rawJson.textContent = prettyJson({
+          error: error.message || "Request failed",
+        });
+      }
+
+      async function runRequest(sourceLabel) {
+        const payload = buildPayload();
+        const url = buildUrl();
+
+        if (!payload.session_id) {
+          window.alert("session_id 不能为空");
+          return;
+        }
+
+        if (!payload.message) {
+          window.alert("message 不能为空");
+          return;
+        }
+
+        els.runButton.disabled = true;
+        els.lastRunHint.textContent = `请求中：${sourceLabel}`;
+        els.requestPathLabel.textContent = `POST ${url.replace(/^https?:\/\/[^/]+/, "")}`;
+        els.rawJson.textContent = prettyJson({
+          request: payload,
+          info: "正在请求中...",
+        });
+        els.artifactJson.textContent = "null";
+
+        try {
+          const response = await fetch(url, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(payload),
+          });
+
+          let body;
+          const contentType = response.headers.get("content-type") || "";
+          if (contentType.includes("application/json")) {
+            body = await response.json();
+          } else {
+            body = {
+              code: -1,
+              message: "Non-JSON response",
+              data: null,
+              raw_text: await response.text(),
+            };
+          }
+
+          renderResponse(response.status, body);
+          els.lastRunHint.textContent = `上次运行：${sourceLabel} · HTTP ${response.status}`;
+        } catch (error) {
+          renderTransportError(error);
+          els.lastRunHint.textContent = `上次运行失败：${sourceLabel}`;
+        } finally {
+          els.runButton.disabled = false;
+        }
+      }
+
+      function applyPreset(name) {
+        const preset = presets[name];
+        if (!preset) {
+          return;
+        }
+
+        els.message.value = preset.message;
+        if (name !== "board" && !els.sessionId.value.trim()) {
+          els.sessionId.value = `agent-${name}-session`;
+        }
+        if (name === "board" && !els.sharingUrl.value.trim()) {
+          els.sharingUrl.placeholder = "请填入真实 Feishu board/doc 分享链接再运行 board";
+        }
+      }
+
+      document.querySelectorAll("[data-preset]").forEach((button) => {
+        button.addEventListener("click", async () => {
+          const presetName = button.getAttribute("data-preset");
+          applyPreset(presetName);
+          await runRequest(`preset:${presetName}`);
+        });
+      });
+
+      els.runButton.addEventListener("click", async () => {
+        await runRequest("manual");
+      });
+
+      els.fillBoardExample.addEventListener("click", () => {
+        applyPreset("board");
+      });
+
+      els.clearButton.addEventListener("click", () => {
+        setMetric(els.httpStatus, "-", null);
+        setMetric(els.apiCode, "-", null);
+        setMetric(els.apiMessage, "-", null);
+        setText(els.agentIntent, null);
+        setText(els.agentStatus, null);
+        setText(els.agentMessage, null);
+        setText(els.agentError, null);
+        els.artifactJson.textContent = "null";
+        els.rawJson.textContent = "等待请求...";
+        els.lastRunHint.textContent = "结果已清空";
+      });
+
+      applyPreset("chat");
+    </script>
+  </body>
+</html>

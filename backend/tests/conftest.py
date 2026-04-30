@@ -14,10 +14,16 @@ def isolate_external_api_settings(monkeypatch):
     monkeypatch.setenv("FEISHU_APP_SECRET", "")
 
     from app.config import get_settings
+    from app.modules.canvas import dependencies as canvas_dependencies
+    from app.modules.feishu import dependencies as feishu_dependencies
     from app.modules.ppt import dependencies as ppt_dependencies
 
     get_settings.cache_clear()
+    canvas_dependencies.reset_canvas_dependencies()
+    feishu_dependencies.reset_feishu_dependencies()
     ppt_dependencies._ppt_service = None
     yield
     get_settings.cache_clear()
+    canvas_dependencies.reset_canvas_dependencies()
+    feishu_dependencies.reset_feishu_dependencies()
     ppt_dependencies._ppt_service = None

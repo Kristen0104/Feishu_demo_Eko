@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from app.config import Settings
@@ -8,6 +9,8 @@ from app.services.llm_client import LlmClient
 
 
 class DummyResponse:
+    is_error = False
+
     def raise_for_status(self) -> None:
         return None
 
@@ -101,3 +104,33 @@ def test_document_llm_client_keeps_explicit_chat_completions_endpoint() -> None:
     )
 
     assert client._endpoint == "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
+
+
+def test_document_llm_client_disables_env_proxy_lookup(monkeypatch) -> None:
+    captured: list[dict[str, Any]] = []
+
+    class DummyAsyncClient:
+        def __init__(self, *args, **kwargs) -> None:
+            captured.append(kwargs)
+
+        async def __aenter__(self) -> "DummyAsyncClient":
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        async def post(self, *args, **kwargs) -> DummyResponse:
+            return DummyResponse()
+
+    monkeypatch.setattr("app.core.llm_client.httpx.AsyncClient", DummyAsyncClient)
+
+    client = LLMClient(
+        settings_override=Settings(
+            VOLCENGINE_ENDPOINT="https://ark.cn-beijing.volces.com/api/v3",
+        )
+    )
+
+    asyncio.run(client.generate("sys", "user"))
+
+    assert captured
+    assert captured[0]["trust_env"] is False

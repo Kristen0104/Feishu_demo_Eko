@@ -81,7 +81,7 @@ class LLMClient:
             "stream": False,
         }
 
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
+        async with httpx.AsyncClient(timeout=self._timeout, trust_env=False) as client:
             response = await client.post(
                 self._endpoint,
                 headers=headers,
@@ -116,7 +116,7 @@ class LLMClient:
             "stream": True,
         }
 
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
+        async with httpx.AsyncClient(timeout=self._timeout, trust_env=False) as client:
             async with client.stream(
                 "POST",
                 self._endpoint,
