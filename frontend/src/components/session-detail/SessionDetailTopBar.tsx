@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { SessionDetailData } from "@/types/session-detail";
 
 function SearchIcon() {
@@ -21,6 +22,13 @@ export function SessionDetailTopBar({ data }: { data: SessionDetailData }) {
         <div className="hidden min-w-0 items-center gap-3 text-[14px] text-slate-500 xl:flex">
           {data.breadcrumb.map((item, index) => <div key={item} className="flex items-center gap-3"><span className={index === data.breadcrumb.length - 1 ? "font-semibold text-slate-800" : ""}>{item}</span>{index < data.breadcrumb.length - 1 && <span className="text-slate-300">/</span>}</div>)}
         </div>
+        <Link
+          href="/sessions"
+          className="inline-flex h-9 items-center gap-1.5 rounded-[12px] border border-slate-200 bg-white px-3 text-[13px] font-medium text-slate-600 shadow-[0_4px_12px_rgba(15,23,42,0.03)] transition hover:bg-slate-50"
+        >
+          <span className="text-[15px] leading-none">←</span>
+          返回会话页
+        </Link>
       </div>
       <div className="flex items-center gap-3">
         <div className="hidden h-10 min-w-[332px] items-center gap-3 rounded-[15px] border border-slate-200 bg-white px-4 shadow-[0_4px_12px_rgba(15,23,42,0.03)] lg:flex"><SearchIcon /><span className="flex-1 text-[14px] text-slate-400">搜索（⌘K）</span></div>

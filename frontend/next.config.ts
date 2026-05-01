@@ -1,16 +1,10 @@
-// @ts-nocheck
 import path from "path";
+import type { NextConfig } from "next";
 
-const projectRoot = path.resolve(process.cwd());
-
-/** @type {import('next').NextConfig} */
-const nextConfig = {
+const nextConfig: NextConfig = {
   reactStrictMode: true,
-  // Fix workspace-root inference when multiple lockfiles exist on this machine.
-  outputFileTracingRoot: projectRoot,
-  turbopack: {
-    root: projectRoot,
-  },
+  // 避免与家目录中其他 package-lock.json 冲突，消除多 lockfile 警告
+  outputFileTracingRoot: path.join(__dirname),
 };
 
 export default nextConfig;

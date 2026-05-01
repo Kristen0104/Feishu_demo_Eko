@@ -1,5 +1,5 @@
+import { SessionDetailShell } from "@/components/session-detail/SessionDetailShell";
 import { getSessionDetailData } from "@/lib/mock/session-detail-data";
-import { SessionWorkspace } from "./SessionWorkspace";
 
 export default async function SessionDetailPage({
   params,
@@ -7,5 +7,5 @@ export default async function SessionDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  return <SessionWorkspace data={getSessionDetailData(id)} />;
+  return <SessionDetailShell data={getSessionDetailData(id)} />;
 }

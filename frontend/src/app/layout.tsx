@@ -10,7 +10,7 @@ export default function RootLayout(props: { children: React.ReactNode }) {
   const { children } = props;
   return (
     <html lang="zh-CN">
-      <body className="min-h-screen bg-[#E8EDF6] antialiased text-slate-900">
+      <body className="min-h-screen bg-slate-950 antialiased text-slate-100">
         {children}
       </body>
     </html>

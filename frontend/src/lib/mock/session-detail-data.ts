@@ -130,6 +130,26 @@ export const sessionDetailDataMap: Record<string, SessionDetailData> = {
     statusBadges: topBadges,
     systemNote: "当前使用 mock 数据支持演示，后续可接飞书 API、Bitable API 与 WebSocket 状态流。",
     actionButtons: ["分享", "导出"],
+    relatedFiles: [
+      { id: "mrf1", title: "会议提醒模板", updatedAt: "更新于 5 月 12 日", tone: "doc" },
+      { id: "mrf2", title: "演示设备检查清单", updatedAt: "更新于 5 月 12 日", tone: "sheet" },
+      { id: "mrf3", title: "路演流程确认纪要", updatedAt: "更新于 5 月 12 日", tone: "deck" },
+    ],
+    memoryNote: {
+      title: "AI 记忆与上下文",
+      body: "Eko 会记住团队常用的会议提醒节奏、演示准备习惯和消息语气，让即时回复更符合当前协作场景。",
+      action: "查看记忆",
+    },
+    syncOverview: {
+      statusLabel: "进行中",
+      items: ["最近同步：刚刚", "已回传到：产品组飞书群（提醒消息）"],
+    },
+    activities: [
+      { id: "ma1", title: "提醒消息已生成", time: "刚刚", tone: "doc" },
+      { id: "ma2", title: "路由为聊天模式", time: "1 分钟前", tone: "route" },
+      { id: "ma3", title: "消息上下文读取完成", time: "1 分钟前", tone: "data" },
+      { id: "ma4", title: "会话已开始", time: "2 分钟前", tone: "session" },
+    ],
   },
   "weekly-marketing-summary": {
     id: "weekly-marketing-summary",
@@ -183,9 +203,8 @@ export const sessionDetailDataMap: Record<string, SessionDetailData> = {
       },
     ],
     missionTitle: "每周营销总结",
-    missionBadges: ["飞书", "文稿", "进行中"],
-    missionSubtitle:
-      "将飞书群聊与 Bitable 渠道数据沉淀为周报文稿，支持一键同步营销群与多维表格，便于团队复盘与迭代。",
+    missionBadges: ["飞书", "文稿", "已同步"],
+    missionSubtitle: "将聊天内容转为结构化文稿，并回写飞书与多维表格，方便团队继续协作。",
     confidence: "91%",
     contextQuality: "高",
     workflow: [
@@ -205,8 +224,7 @@ export const sessionDetailDataMap: Record<string, SessionDetailData> = {
     defaultTab: "doc",
     chatReply: {
       title: "聊天回复",
-      body:
-        "我已根据本周各渠道投放与线索转化数据整理出《每周营销总结》草案：含摘要、关键亮点、活动表现表与 ROI 对比，可在「文稿」页继续精修并同步到飞书营销群。",
+      body: "我已根据本周营销数据整理出文稿草案，包含摘要、关键亮点和活动表现，可继续切换到文稿模式查看完整内容。",
       source: "来源：飞书营销群上下文 · 09:04",
     },
     document: {
@@ -271,14 +289,14 @@ export const sessionDetailDataMap: Record<string, SessionDetailData> = {
       ],
     },
     canvas: {
-      title: "营销画布预览（可选故事线）",
+      title: "画布预览",
       nodes: [
-        { id: "cn1", index: 1, title: "复盘范围", bullets: ["本周投放周期", "渠道覆盖", "预算口径"], icon: "trend" },
-        { id: "cn2", index: 2, title: "渠道表现", bullets: ["信息流 / 搜索", "直播短视频", "私域转化"], icon: "rocket" },
-        { id: "cn3", index: 3, title: "ROI 对比", bullets: ["同比上周", "Top 渠道", "低效关停"], icon: "calendar" },
-        { id: "cn4", index: 4, title: "线索与漏斗", bullets: ["MQL→SQL", "表单质量", "销售跟进 SLA"], icon: "spark" },
-        { id: "cn5", index: 5, title: "风险与阻塞", bullets: ["素材枯竭", "账户波动", "落地页跳转"], icon: "alert" },
-        { id: "cn6", index: 6, title: "下周动作", bullets: ["预算倾斜", "A/B 文案", "复盘会议"], icon: "check" },
+        { id: "cn1", index: 1, title: "本周目标", bullets: ["线索增长", "预算优化", "渠道协同"], icon: "trend" },
+        { id: "cn2", index: 2, title: "渠道表现", bullets: ["直播", "信息流", "内容运营"], icon: "rocket" },
+        { id: "cn3", index: 3, title: "ROI 对比", bullets: ["高 ROI 渠道", "预算回收", "转化效率"], icon: "calendar" },
+        { id: "cn4", index: 4, title: "线索质量", bullets: ["高质量线索", "表单完整度", "销售跟进"], icon: "spark" },
+        { id: "cn5", index: 5, title: "风险与问题", bullets: ["预算波动", "素材消耗", "节奏不均"], icon: "alert" },
+        { id: "cn6", index: 6, title: "下周重点", bullets: ["优化投放结构", "补齐素材", "提升转化"], icon: "check" },
       ],
     },
     disabledCards: [
@@ -340,7 +358,7 @@ export const sessionDetailDataMap: Record<string, SessionDetailData> = {
         author: "Leo",
         role: "member",
         time: "11:06",
-        body: "Q2 投放要汇报，帮我把各渠道消耗、转化和 ROI 拉成一条能讲清楚的故事线。",
+        body: "我们这周要做汇报，把校园项目梳理成更适合展示的故事线吧。",
         avatar: "L",
       },
       {
@@ -349,7 +367,7 @@ export const sessionDetailDataMap: Record<string, SessionDetailData> = {
         role: "member",
         time: "11:07",
         mention: "@Eko",
-        body: "按「为什么做—我们怎么投—结果与风险—下一步」来排画布，每块能对应到 Bitable 里的分渠道行。",
+        body: "能不能把方案整理成汇报结构，最好分模块展示，一页一页更清楚。",
         avatar: "L",
       },
       {
@@ -357,7 +375,7 @@ export const sessionDetailDataMap: Record<string, SessionDetailData> = {
         author: "Eko",
         role: "eko",
         time: "11:08",
-        body: "已切到画布模式：我会把 Q2 群聊与投放表里的信息，整理成可汇报的 Canvas 分镜，并标出需你拍板的关键数字。",
+        body: "已进入演示文稿模式，我会把讨论转换为可汇报的 Canvas 结构，提炼关键模块、流程与后续动作。",
         avatar: "E",
         actionCard: {
           title: "已进入工作台处理",
@@ -378,10 +396,9 @@ export const sessionDetailDataMap: Record<string, SessionDetailData> = {
         avatar: "M",
       },
     ],
-    missionTitle: "Q2 投放汇报画布",
+    missionTitle: "项目汇报画布生成",
     missionBadges: ["飞书", "画布", "进行中"],
-    missionSubtitle:
-      "将 Q2 各渠道投放、成本与转化从群聊 + 多维表格 + 知识库合成为可汇报的视觉故事线，支持确认后回写 Bitable。",
+    missionSubtitle: "将群聊中的讨论转换为可汇报的视觉故事线，突出关键模块、流程与后续行动。",
     confidence: "88%",
     contextQuality: "中等",
     workflow: [
@@ -405,29 +422,28 @@ export const sessionDetailDataMap: Record<string, SessionDetailData> = {
     defaultTab: "canvas",
     chatReply: {
       title: "聊天回复",
-      body: "当前为 Q2 投放复盘画布：侧栏可看到三源同步状态，主区可切换「聊天 / 文稿 / 画布」；确认结构后点操作卡中的「确认保存」可模拟归档。",
-      source: "来源：飞书群聊 + 投放 Bitable 表 · 11:08",
+      body: "我已把当前讨论切换到画布模式，接下来会根据现有文稿抽出汇报主线、关键模块和后续动作。",
+      source: "来源：飞书聊天记录 · 11:08",
     },
     document: {
       title: "Q2 广告投放复盘",
-      date: "2025 年 Q2 · 草稿输入",
+      date: "2024 年 5 月 6 日 - 5 月 12 日",
       sections: [
         {
           title: "摘要",
-          body:
-            "画布模式下，本节文稿作为结构化输入：汇总搜索/信息流/直播等分渠道花费、转化与 ROI，对齐 Bitable 行项目，便于生成画布分镜。",
+          body: "该会话当前处于画布模式，文稿内容已作为结构化输入，用于生成汇报主线与故事板模块。",
         },
       ],
     },
     canvas: {
-      title: "Q2 投放汇报画布",
+      title: "项目汇报画布",
       nodes: [
-        { id: "can1", index: 1, title: "复盘背景与目标", bullets: ["Q2 预算口径", "核心 KPI", "对齐业务目标"], icon: "trend" },
-        { id: "can2", index: 2, title: "分渠道拆解", bullets: ["搜索 vs 信息流", "直播短视频", "私域与裂变"], icon: "rocket" },
-        { id: "can3", index: 3, title: "花费与 ROI", bullets: ["CAC / CPA", "环比变化", "异常账户"], icon: "calendar" },
-        { id: "can4", index: 4, title: "素材与承接", bullets: ["创意衰减", "落地页转化", "质检结论"], icon: "spark" },
-        { id: "can5", index: 5, title: "风险与对策", bullets: ["预算漂移", "账户关停", "备用素材池"], icon: "alert" },
-        { id: "can6", index: 6, title: "Q3 动作与同步", bullets: ["预算迁移", "飞书归档", "Bitable 更新"], icon: "check" },
+        { id: "can1", index: 1, title: "为什么要做", bullets: ["市场场景", "用户需求上升", "活动场景需要关键提炼"], icon: "trend" },
+        { id: "can2", index: 2, title: "我们的方案", bullets: ["梳理节点", "内容规划", "趁这节奏演练"], icon: "rocket" },
+        { id: "can3", index: 3, title: "执行计划", bullets: ["时间线", "负责人分工", "关键里程碑"], icon: "calendar" },
+        { id: "can4", index: 4, title: "复盘收益", bullets: ["到场率提升", "经验沉淀", "协作提效"], icon: "spark" },
+        { id: "can5", index: 5, title: "风险与对策", bullets: ["时间冲突", "素材准备不足", "预留替代方案"], icon: "alert" },
+        { id: "can6", index: 6, title: "下一步行动", bullets: ["确认时间", "同步群聊", "回写到 Bitable"], icon: "check" },
       ],
     },
     disabledCards: [

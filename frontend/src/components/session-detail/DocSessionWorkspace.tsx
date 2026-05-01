@@ -1,32 +1,23 @@
 "use client";
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
+import { AnimatePresence, motion } from "@/components/MotionShim";
 import { MessageInput } from "@/components/MessageInput";
 import { MoreIcon } from "@/components/Icons";
 import { EvidencePill, HeaderBadge, StatusPill } from "@/components/UiPrimitives";
+import { useMockWebSocket } from "@/hooks/useMockWebSocket";
+import { useAppStore } from "@/store/app-store";
 import { Stepper } from "@/components/Stepper";
-import {
-  DetailActivity,
-  DetailCanvasNode,
-  DetailRelatedFile,
-  DetailSyncAction,
-  DetailTabKey,
-  SessionDetailData,
-} from "@/types/session-detail";
+import { DetailActivity, DetailCanvasNode, DetailRelatedFile, DetailSyncAction, DetailTabKey, SessionDetailData } from "@/types/session-detail";
+import type { WorkflowStatus } from "@/types/workspace";
 
 import { DetailConversationMessage } from "./DetailConversationMessage";
 import { detailDesignTokens } from "./designTokens";
 import { DetailSidebar } from "./DetailSidebar";
 import { SessionDetailTopBar } from "./SessionDetailTopBar";
-import type { AccentTone, HeaderBadgeTone } from "@/types/workspace";
-
-/** 与 mock 里 missionBadges 文案对齐，避免聊天会话误显示「文稿」 */
-function toneForMissionBadge(label: string): HeaderBadgeTone {
-  if (label.includes("飞书")) return "neutral";
-  if (label.includes("聊天") || label.includes("已同步")) return "success";
-  return "info";
-}
 
 function SmallIcon({
   type,
@@ -356,8 +347,10 @@ function CanvasNodeCard({
 }
 
 export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
+  const setRuntimeSessionPatch = useAppStore((state) => state.setRuntimeSessionPatch);
   const [conversationOpen, setConversationOpen] = useState(true);
   const [activeTab, setActiveTab] = useState<DetailTabKey>(data.defaultTab);
+  const [messages, setMessages] = useState(data.messages);
   const isCanvasMode = data.layoutVariant === "canvas";
   const [canvasNodes, setCanvasNodes] = useState<DetailCanvasNode[]>(() => (isCanvasMode ? data.canvas.nodes : []));
   const [canvasActivities, setCanvasActivities] = useState<DetailActivity[]>(() =>
@@ -370,7 +363,7 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
         ]
       : []
   );
-  const [bitableStatus, setBitableStatus] = useState(isCanvasMode ? "warning" : "pending");
+  const [bitableStatus, setBitableStatus] = useState<WorkflowStatus>(isCanvasMode ? "warning" : "pending");
   const [archiveStatus, setArchiveStatus] = useState(isCanvasMode ? "草稿待确认" : "待同步");
   const [permissionStatus, setPermissionStatus] = useState(isCanvasMode ? "可同步" : "已验证");
   const [canvasNotice, setCanvasNotice] = useState<string | null>(null);
@@ -382,7 +375,7 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
             {
               id: "ca1",
               title: "同步到 Bitable",
-              status: bitableStatus === "completed" ? "completed" : (bitableStatus as DetailSyncAction["status"]),
+              status: bitableStatus === "completed" ? "completed" : bitableStatus,
             },
             {
               id: "ca2",
@@ -404,21 +397,43 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
       : currentTab.accent === "doc"
         ? "border-blue-300 bg-blue-50 text-blue-600 shadow-[0_8px_18px_rgba(59,130,246,0.08)]"
         : "border-violet-200 bg-violet-50 text-violet-600";
-  const dropdownLabel = isCanvasMode
-    ? "画布 / Canvas"
-    : data.layoutVariant === "chat"
-      ? "即时回复 / Chat"
-      : "文稿 / Markdown";
-  const conversationTone: AccentTone =
-    isCanvasMode ? "canvas" : data.layoutVariant === "chat" ? "chat" : "doc";
+  const dropdownLabel = isCanvasMode ? "画布 / Canvas" : "文稿 / Markdown";
+  const conversationTone = isCanvasMode ? "canvas" : "doc";
   const topRowNodes = canvasNodes.slice(0, 3);
   const bottomRowNodes = canvasNodes.slice(3, 6);
+
+  useEffect(() => {
+    setMessages(data.messages);
+  }, [data.messages, data.id]);
 
   useEffect(() => {
     if (!canvasNotice) return;
     const timer = window.setTimeout(() => setCanvasNotice(null), 2400);
     return () => window.clearTimeout(timer);
   }, [canvasNotice]);
+
+  useMockWebSocket({
+    enabled: true,
+    intervalMs: 14000,
+    onTick: () => {
+      const now = new Date();
+      const hh = now.getHours().toString().padStart(2, "0");
+      const mm = now.getMinutes().toString().padStart(2, "0");
+      setMessages((prev) => {
+        const liveMessage = {
+          id: `live-${Date.now()}`,
+          author: "Eko",
+          role: "eko" as const,
+          time: `${hh}:${mm}`,
+          body: "实时更新：已同步最新上下文，正在刷新会话状态与输出建议。",
+          avatar: "E",
+          sent: true,
+        };
+        return [...prev.slice(-14), liveMessage];
+      });
+      setRuntimeSessionPatch(data.id, { status: "进行中", updatedAt: `刚刚 ${hh}:${mm}` });
+    },
+  });
 
   function prependCanvasActivity(title: string, tone: DetailActivity["tone"]) {
     setCanvasActivities((prev) => [
@@ -508,7 +523,7 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                   <div className="mt-4 min-h-0 flex-1 border-t border-slate-100 pt-4">
                     <div className="flex h-full min-h-0 flex-col">
                       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
-                        {data.messages.map((message) => (
+                        {messages.map((message) => (
                           <DetailConversationMessage key={message.id} message={message} tone={conversationTone} onActionButtonClick={isCanvasMode ? handleConversationAction : undefined} />
                         ))}
                       </div>
@@ -529,11 +544,9 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                           <div className="flex min-w-0 items-center gap-2">
                             <h1 className={`truncate text-slate-950 ${detailDesignTokens.typography.sectionTitle}`}>{data.title}</h1>
                             <div className="flex shrink-0 flex-wrap gap-1.5">
-                              {data.missionBadges.map((badge) => (
-                                <HeaderBadge key={badge} tone={toneForMissionBadge(badge)}>
-                                  {badge}
-                                </HeaderBadge>
-                              ))}
+                              <HeaderBadge tone="neutral">飞书</HeaderBadge>
+                              <HeaderBadge tone={isCanvasMode ? "neutral" : "info"}>{isCanvasMode ? "画布" : "文稿"}</HeaderBadge>
+                              <HeaderBadge tone={isCanvasMode ? "info" : "success"}>{isCanvasMode ? "进行中" : "已同步"}</HeaderBadge>
                             </div>
                           </div>
                         </div>
@@ -546,7 +559,7 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                             <SmallIcon type="download" tone="slate" />
                             导出
                           </button>
-                          {!isCanvasMode && data.layoutVariant === "doc" ? (
+                          {!isCanvasMode ? (
                             <button className={detailDesignTokens.button.primary}>
                               <SmallIcon type="sync" tone="blue" />
                               同步
@@ -638,8 +651,9 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                       </div>
 
                       <div className="mt-2.5 min-h-0 flex-1 overflow-hidden rounded-[22px] border border-slate-200 bg-white shadow-[0_8px_24px_rgba(15,23,42,0.03)]">
-                        {activeTab === "doc" ? (
-                          <div className="flex h-full min-h-0 flex-col">
+                        <AnimatePresence mode="wait">
+                          {activeTab === "doc" ? (
+                            <motion.div key="doc-tab" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.2 }} className="flex h-full min-h-0 flex-col">
                             <div className="shrink-0 border-b border-slate-100 px-5 py-3">
                               <h3 className="truncate text-[16px] font-semibold text-slate-950">{data.document.title}</h3>
                               <p className="mt-1 text-[12px] text-slate-500">{data.document.date}</p>
@@ -649,15 +663,17 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                                 {data.document.sections.map((section) => (
                                   <section key={section.title}>
                                     <h4 className="text-[14px] font-semibold text-slate-950">{section.title}</h4>
-                                    {section.body ? <p className="mt-2 text-[13px] leading-[26px] text-slate-700">{section.body}</p> : null}
+                                    {section.body ? (
+                                      <div className="prose prose-sm mt-2 max-w-none text-slate-700 prose-headings:my-2 prose-p:my-1.5 prose-ul:my-1.5 prose-li:my-0.5">
+                                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{section.body}</ReactMarkdown>
+                                      </div>
+                                    ) : null}
                                     {section.bullets ? (
-                                      <ul className="mt-2 space-y-1.5 pl-5 text-[13px] leading-[26px] text-slate-700">
-                                        {section.bullets.map((item) => (
-                                          <li key={item} className="list-disc">
-                                            {item}
-                                          </li>
-                                        ))}
-                                      </ul>
+                                      <div className="prose prose-sm mt-2 max-w-none text-slate-700 prose-ul:my-1.5 prose-li:my-0.5">
+                                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                          {section.bullets.map((item) => `- ${item}`).join("\n")}
+                                        </ReactMarkdown>
+                                      </div>
                                     ) : null}
                                     {section.title === "活动表现" && data.document.tableRows ? (
                                       <div className="mt-3 min-w-0 overflow-x-auto rounded-[16px] border border-slate-200">
@@ -693,15 +709,15 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                                 ))}
                               </div>
                             </div>
-                          </div>
-                        ) : activeTab === "chat" ? (
-                          <div className="rounded-[22px] border border-slate-200 bg-white p-5 shadow-[0_8px_24px_rgba(15,23,42,0.03)]">
+                            </motion.div>
+                          ) : activeTab === "chat" ? (
+                            <motion.div key="chat-tab" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.2 }} className="rounded-[22px] border border-slate-200 bg-white p-5 shadow-[0_8px_24px_rgba(15,23,42,0.03)]">
                             <h4 className="text-[17px] font-semibold text-slate-950">{data.chatReply.title}</h4>
                             <p className="mt-3 text-[15px] leading-8 text-slate-700">{data.chatReply.body}</p>
                             <p className="mt-5 text-[13px] text-slate-400">{data.chatReply.source}</p>
-                          </div>
-                        ) : (
-                          <div className="min-h-0 h-full overflow-y-auto px-3 py-3">
+                            </motion.div>
+                          ) : (
+                            <motion.div key="canvas-tab" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.2 }} className="min-h-0 h-full overflow-y-auto px-3 py-3">
                             <div className="flex items-start justify-between gap-4">
                               <div>
                                 <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-400">Output Surface</p>
@@ -719,11 +735,18 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                               </div>
                             </div>
 
-                            {canvasNotice ? (
-                              <div className="mt-2.5 rounded-[14px] border border-violet-200 bg-violet-50 px-3.5 py-2.5 text-[12px] font-medium text-violet-700 shadow-[0_6px_16px_rgba(139,92,246,0.08)]">
-                                {canvasNotice}
-                              </div>
-                            ) : null}
+                            <AnimatePresence>
+                              {canvasNotice ? (
+                                <motion.div
+                                  initial={{ opacity: 0, y: -6 }}
+                                  animate={{ opacity: 1, y: 0 }}
+                                  exit={{ opacity: 0, y: -8 }}
+                                  className="mt-2.5 rounded-[14px] border border-violet-200 bg-violet-50 px-3.5 py-2.5 text-[12px] font-medium text-violet-700 shadow-[0_6px_16px_rgba(139,92,246,0.08)]"
+                                >
+                                  {canvasNotice}
+                                </motion.div>
+                              ) : null}
+                            </AnimatePresence>
 
                             <div className="mt-2 rounded-[16px] border border-violet-100 bg-[radial-gradient(circle_at_top,#FBF9FF_0%,#F8FAFF_45%,#FFFFFF_100%)] px-2 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)]">
                               <div className="grid grid-cols-[minmax(0,1fr)_12px_minmax(0,1fr)_12px_minmax(0,1fr)] items-start gap-y-1.5">
@@ -805,8 +828,9 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                                 <p className="mt-1 text-[11px] text-slate-700">Canvas preview + synced project record</p>
                               </div>
                             </div>
-                          </div>
-                        )}
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
                       </div>
                     </section>
                   </div>
