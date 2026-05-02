@@ -1,23 +1,25 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import Link from "next/link";
+import { AnimatePresence, motion } from "framer-motion";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-import { AnimatePresence, motion } from "@/components/MotionShim";
 import { MessageInput } from "@/components/MessageInput";
 import { MoreIcon } from "@/components/Icons";
 import { EvidencePill, HeaderBadge, StatusPill } from "@/components/UiPrimitives";
-import { useMockWebSocket } from "@/hooks/useMockWebSocket";
+import { useEkoSessionRealtime } from "@/hooks/useEkoSessionRealtime";
+import { streamAgentExecute, streamDocumentGeneration } from "@/lib/agent/sse-stream";
 import { useAppStore } from "@/store/app-store";
+import { useAgentRuntimeStore, type PlanningStepWire } from "@/store/agent-runtime-store";
 import { Stepper } from "@/components/Stepper";
 import { DetailActivity, DetailCanvasNode, DetailRelatedFile, DetailSyncAction, DetailTabKey, SessionDetailData } from "@/types/session-detail";
-import type { WorkflowStatus } from "@/types/workspace";
+import type { WorkflowStatus, WorkflowStep } from "@/types/workspace";
 
+import { useSessionWorkspaceSearch } from "@/components/workspace/session-workspace-search";
 import { DetailConversationMessage } from "./DetailConversationMessage";
 import { detailDesignTokens } from "./designTokens";
-import { DetailSidebar } from "./DetailSidebar";
-import { SessionDetailTopBar } from "./SessionDetailTopBar";
 
 function SmallIcon({
   type,
@@ -266,12 +268,12 @@ function ActivityRow({ item }: { item: DetailActivity }) {
 
 function SectionCard({ title, children, action }: { title: string; children: ReactNode; action?: ReactNode }) {
   return (
-    <section className="overflow-hidden rounded-[22px] border border-slate-200/90 bg-white px-4 py-3.5 shadow-[0_12px_24px_rgba(148,163,184,0.06)]">
+    <section className="min-w-0 rounded-[22px] border border-slate-200/90 bg-white px-4 py-3.5 shadow-[0_12px_24px_rgba(148,163,184,0.06)]">
       <div className="flex min-w-0 items-center justify-between gap-3">
         <h3 className="truncate text-[15px] font-semibold text-slate-950">{title}</h3>
         <div className="shrink-0">{action}</div>
       </div>
-      <div className="mt-3.5">{children}</div>
+      <div className="mt-3.5 min-w-0">{children}</div>
     </section>
   );
 }
@@ -319,7 +321,7 @@ function CanvasNodeCard({
   return (
     <div
       className={[
-        "relative min-h-[88px] overflow-hidden rounded-[15px] border bg-white px-2 py-2 shadow-[0_8px_18px_rgba(15,23,42,0.05)]",
+        "relative flex min-h-[92px] min-w-0 flex-col overflow-hidden rounded-[15px] border bg-white px-2 py-2 shadow-[0_8px_18px_rgba(15,23,42,0.05)]",
         status === "draft" ? "border-dashed border-violet-300 bg-violet-50/60" : cardBorderMap[icon],
       ].join(" ")}
     >
@@ -328,29 +330,100 @@ function CanvasNodeCard({
           待补充
         </div>
       ) : null}
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <span className={`flex h-[22px] w-[22px] items-center justify-center rounded-full border text-[11px] font-semibold ${ringMap[icon]}`}>{index}</span>
-          <h4 className="text-[12px] font-semibold text-slate-950">{title}</h4>
+      <div className="flex min-w-0 items-start justify-between gap-2">
+        <div className="flex min-w-0 flex-1 items-start gap-2">
+          <span className={`mt-0.5 flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full border text-[11px] font-semibold ${ringMap[icon]}`}>{index}</span>
+          <h4 className="min-w-0 break-words text-[12px] font-semibold leading-snug text-slate-950 line-clamp-2">{title}</h4>
         </div>
-        <div className="mt-1 shrink-0">
+        <div className="mt-0.5 shrink-0">
           <SmallIcon type={icon} tone={toneMap[icon]} />
         </div>
       </div>
-      <ul className="mt-1.5 space-y-0.5 text-[10px] leading-4 text-slate-600">
-        {bullets.map((bullet) => (
-          <li key={bullet}>• {bullet}</li>
+      <ul className="mt-1.5 min-h-0 flex-1 space-y-0.5 overflow-hidden text-[10px] leading-snug text-slate-600">
+        {bullets.map((bullet, bulletIndex) => (
+          <li key={`${index}-${bulletIndex}-${bullet.slice(0, 48)}`} className="break-words line-clamp-2">
+            • {bullet}
+          </li>
         ))}
       </ul>
     </div>
   );
 }
 
+function StepperStatusLegend() {
+  return (
+    <div
+      role="presentation"
+      className="mt-2 flex shrink-0 flex-wrap gap-x-3 gap-y-1 border-t border-slate-100 pt-2 text-[10px] leading-tight text-slate-500"
+    >
+      <span className="inline-flex items-center gap-1">
+        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" aria-hidden />
+        已完成
+      </span>
+      <span className="inline-flex items-center gap-1">
+        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-blue-500" aria-hidden />
+        进行中
+      </span>
+      <span className="inline-flex items-center gap-1">
+        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-slate-300" aria-hidden />
+        待处理
+      </span>
+      <span className="inline-flex items-center gap-1">
+        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" aria-hidden />
+        预警
+      </span>
+    </div>
+  );
+}
+
+function mergeWorkflowSteps(base: WorkflowStep[], live: PlanningStepWire[]): WorkflowStep[] {
+  if (!live.length) return base;
+  return live.map((s) => ({
+    id: s.id,
+    title: s.title,
+    status: s.status,
+  }));
+}
+
+function AgentRealtimeRibbon({
+  phase,
+  wsStatus,
+  useMockFallback,
+}: {
+  phase: string;
+  wsStatus: string;
+  useMockFallback: boolean;
+}) {
+  const busy = phase === "ANALYZING" || phase === "RETRIEVING" || phase === "GENERATING" || phase === "SYNCING";
+  return (
+    <motion.div
+      initial={false}
+      animate={{ opacity: busy ? 1 : 0.72 }}
+      className="mb-1 flex flex-wrap items-center gap-1.5 text-[10px] text-slate-600"
+    >
+      <span className="rounded-full bg-slate-900 px-2 py-0.5 font-semibold tracking-tight text-white">{phase}</span>
+      <span className="text-slate-500">
+        实时链路 {wsStatus}
+        {useMockFallback ? " · 协议 mock" : ""}
+      </span>
+      {busy ? (
+        <motion.span
+          className="inline-flex h-2 w-2 rounded-full bg-blue-500"
+          animate={{ scale: [1, 1.35, 1], opacity: [1, 0.55, 1] }}
+          transition={{ repeat: Infinity, duration: 1.15, ease: "easeInOut" }}
+        />
+      ) : null}
+    </motion.div>
+  );
+}
+
 export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
+  const { query: workspaceSearchQuery } = useSessionWorkspaceSearch();
   const setRuntimeSessionPatch = useAppStore((state) => state.setRuntimeSessionPatch);
-  const [conversationOpen, setConversationOpen] = useState(true);
+  const conversationOpen = useAppStore((s) => s.sessionDetailChatOpen);
   const [activeTab, setActiveTab] = useState<DetailTabKey>(data.defaultTab);
   const [messages, setMessages] = useState(data.messages);
+  const [sending, setSending] = useState(false);
   const isCanvasMode = data.layoutVariant === "canvas";
   const [canvasNodes, setCanvasNodes] = useState<DetailCanvasNode[]>(() => (isCanvasMode ? data.canvas.nodes : []));
   const [canvasActivities, setCanvasActivities] = useState<DetailActivity[]>(() =>
@@ -399,12 +472,23 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
         : "border-violet-200 bg-violet-50 text-violet-600";
   const dropdownLabel = isCanvasMode ? "画布 / Canvas" : "文稿 / Markdown";
   const conversationTone = isCanvasMode ? "canvas" : "doc";
+  const searchNeedle = workspaceSearchQuery.trim().toLowerCase();
+  const filteredMessages = useMemo(() => {
+    if (!searchNeedle) return messages;
+    return messages.filter((m) => {
+      const blob = [m.author, m.body, m.time, m.helperText].filter(Boolean).join(" ").toLowerCase();
+      return blob.includes(searchNeedle);
+    });
+  }, [messages, searchNeedle]);
+  const filteredContextSources = useMemo(() => {
+    if (!searchNeedle) return data.contextSources;
+    return data.contextSources.filter((item) => {
+      const blob = [item.title, item.description].join(" ").toLowerCase();
+      return blob.includes(searchNeedle);
+    });
+  }, [data.contextSources, searchNeedle]);
   const topRowNodes = canvasNodes.slice(0, 3);
   const bottomRowNodes = canvasNodes.slice(3, 6);
-
-  useEffect(() => {
-    setMessages(data.messages);
-  }, [data.messages, data.id]);
 
   useEffect(() => {
     if (!canvasNotice) return;
@@ -412,28 +496,115 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
     return () => window.clearTimeout(timer);
   }, [canvasNotice]);
 
-  useMockWebSocket({
-    enabled: true,
-    intervalMs: 14000,
-    onTick: () => {
+  useEkoSessionRealtime({ sessionId: data.id });
+
+  const agentSlice = useAgentRuntimeStore((s) => s.sessions[data.id]);
+  const phase = agentSlice?.phase ?? "IDLE";
+  const wsStatus = agentSlice?.wsStatus ?? "idle";
+  const useMockFb = agentSlice?.useMockFallback ?? false;
+  const docStream = agentSlice?.docMarkdownStream ?? "";
+  const docConflict = agentSlice?.documentConflict ?? false;
+  const lastErr = agentSlice?.lastError ?? null;
+
+  const mergedWorkflow = useMemo(
+    () => mergeWorkflowSteps(data.workflow, agentSlice?.planningSteps ?? []),
+    [data.workflow, agentSlice?.planningSteps],
+  );
+
+  const prevPhaseRef = useRef(phase);
+  useEffect(() => {
+    if (phase === "COMPLETED" && prevPhaseRef.current !== "COMPLETED") {
       const now = new Date();
       const hh = now.getHours().toString().padStart(2, "0");
       const mm = now.getMinutes().toString().padStart(2, "0");
-      setMessages((prev) => {
-        const liveMessage = {
-          id: `live-${Date.now()}`,
-          author: "Eko",
-          role: "eko" as const,
-          time: `${hh}:${mm}`,
-          body: "实时更新：已同步最新上下文，正在刷新会话状态与输出建议。",
-          avatar: "E",
+      setRuntimeSessionPatch(data.id, { status: "已同步", updatedAt: `刚刚 ${hh}:${mm}` });
+    }
+    prevPhaseRef.current = phase;
+  }, [phase, data.id, setRuntimeSessionPatch]);
+
+  const handleChatSend = useCallback(
+    async (text: string) => {
+      const now = new Date();
+      const hh = now.getHours().toString().padStart(2, "0");
+      const mm = now.getMinutes().toString().padStart(2, "0");
+      const time = `${hh}:${mm}`;
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `user-${Date.now()}`,
+          author: "我",
+          role: "member" as const,
+          time,
+          body: text,
+          avatar: "我",
           sent: true,
-        };
-        return [...prev.slice(-14), liveMessage];
-      });
-      setRuntimeSessionPatch(data.id, { status: "进行中", updatedAt: `刚刚 ${hh}:${mm}` });
+        },
+      ]);
+
+      const store = useAgentRuntimeStore.getState();
+      store.patchSession(data.id, { phase: "ANALYZING", lastError: null });
+
+      setSending(true);
+      let firstChunk = true;
+      const append = (chunk: string) => {
+        if (firstChunk) {
+          firstChunk = false;
+          setActiveTab("doc");
+        }
+        store.appendDocMarkdown(data.id, chunk);
+      };
+
+      try {
+        const tried = await streamAgentExecute(
+          { session_id: data.id, query: text, stream: true },
+          {
+            onChunk: append,
+            onDone: () => store.ingestEnvelope(data.id, { type: "TASK_COMPLETED", session_id: data.id, payload: {} }),
+            onError: () => {},
+          },
+        );
+
+        if (!tried) {
+          await streamDocumentGeneration(
+            {
+              session_id: data.id,
+              topic: data.title,
+              requirement: text,
+              document_type: "general",
+              tone: "formal",
+              chat_history: [],
+              knowledge_docs: [],
+              bitable_records: [],
+            },
+            {
+              onChunk: append,
+              onDone: () => store.ingestEnvelope(data.id, { type: "TASK_COMPLETED", session_id: data.id, payload: {} }),
+              onError: (msg) => store.patchSession(data.id, { phase: "ERROR", lastError: msg }),
+            },
+          );
+        }
+
+        const doneNow = new Date();
+        const dhh = doneNow.getHours().toString().padStart(2, "0");
+        const dmm = doneNow.getMinutes().toString().padStart(2, "0");
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `eko-${Date.now()}`,
+            author: "Eko",
+            role: "eko" as const,
+            time: `${dhh}:${dmm}`,
+            body: "已收到指令并完成一轮生成；请在「文稿」查看 Markdown 流式输出（若后端未启用 Agent 路由则走文档生成 SSE）。",
+            avatar: "E",
+            sent: true,
+          },
+        ]);
+      } finally {
+        setSending(false);
+      }
     },
-  });
+    [data.id, data.title],
+  );
 
   function prependCanvasActivity(title: string, tone: DetailActivity["tone"]) {
     setCanvasActivities((prev) => [
@@ -491,31 +662,24 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
   }
 
   return (
-    <main className="h-screen overflow-hidden overflow-x-hidden bg-[radial-gradient(circle_at_top,#EDF4FF_0%,#F5F8FD_45%,#EEF3FF_100%)] p-5 text-slate-900">
-      <div className="mx-auto flex h-[calc(100vh-40px)] min-w-0 max-w-[1680px] flex-col overflow-hidden rounded-[32px] border border-white/70 bg-white/70 shadow-[0_28px_72px_rgba(148,163,184,0.18)] backdrop-blur-sm">
-        <SessionDetailTopBar data={data} />
-        <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
-          <DetailSidebar
-            data={data}
-            conversationOpen={conversationOpen}
-            onToggleConversation={() => setConversationOpen((open) => !open)}
-          />
-          <section className="min-w-0 flex-1 overflow-hidden px-4 py-4">
-            <div className="flex h-full min-w-0 gap-4 overflow-hidden">
+    <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden overflow-x-hidden bg-[#FAFBFC] text-slate-900">
+      <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
+        <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-5 pb-5 pt-2 sm:px-6 sm:pb-6 sm:pt-3">
+            <div className="flex h-full min-h-0 min-w-0 gap-4 overflow-hidden lg:gap-5">
               <div
                 className={[
                   "min-h-0 overflow-hidden transition-[width,opacity,transform] duration-300 ease-out",
-                  conversationOpen ? "w-[272px] opacity-100" : "pointer-events-none w-0 -translate-x-4 opacity-0",
+                  conversationOpen ? "w-[280px] opacity-100" : "pointer-events-none w-0 -translate-x-4 opacity-0",
                 ].join(" ")}
               >
                 <section className="flex h-full min-h-0 flex-col overflow-hidden rounded-[28px] border border-slate-200/90 bg-white px-5 py-4 shadow-[0_14px_32px_rgba(148,163,184,0.08)]">
                   <div className="flex items-center justify-between">
                     <h2 className="text-[17px] font-semibold text-slate-950">{data.conversationTitle}</h2>
                     <div className="flex items-center gap-1.5">
-                      <button className="rounded-full border border-transparent p-1.5 hover:bg-slate-50">
+                      <button type="button" className="rounded-full border border-transparent p-1.5 hover:bg-slate-50">
                         <SmallIcon type="filter" tone="slate" />
                       </button>
-                      <button className="rounded-full border border-transparent p-1.5 hover:bg-slate-50">
+                      <button type="button" className="rounded-full border border-transparent p-1.5 hover:bg-slate-50">
                         <MoreIcon />
                       </button>
                     </div>
@@ -523,98 +687,121 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                   <div className="mt-4 min-h-0 flex-1 border-t border-slate-100 pt-4">
                     <div className="flex h-full min-h-0 flex-col">
                       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
-                        {messages.map((message) => (
-                          <DetailConversationMessage key={message.id} message={message} tone={conversationTone} onActionButtonClick={isCanvasMode ? handleConversationAction : undefined} />
+                        {filteredMessages.length === 0 && searchNeedle ? (
+                          <p className="text-center text-[13px] text-slate-400">没有匹配的对话内容</p>
+                        ) : null}
+                        {filteredMessages.map((message, msgIdx) => (
+                          <DetailConversationMessage
+                            key={message.id ?? `msg-${msgIdx}`}
+                            message={message}
+                            tone={conversationTone}
+                            onActionButtonClick={isCanvasMode ? handleConversationAction : undefined}
+                          />
                         ))}
                       </div>
                       <div className="mt-4 shrink-0">
-                        <MessageInput tone={conversationTone} placeholder="继续让 Eko 处理…" />
+                        <MessageInput
+                          sessionId={data.id}
+                          tone={conversationTone}
+                          placeholder="继续让 Eko 处理…"
+                          onSend={handleChatSend}
+                          disabled={sending}
+                        />
                       </div>
                     </div>
                   </div>
                 </section>
               </div>
 
-              <div className="min-w-0 flex-1 overflow-hidden">
-                <div className={`grid h-full min-h-0 min-w-0 grid-cols-[minmax(0,1fr)_286px] ${detailDesignTokens.spacing.compactGap} overflow-hidden`}>
-                  <div className="flex min-h-0 min-w-0 flex-col gap-3 overflow-hidden">
-                    <section className={`shrink-0 flex h-[258px] min-w-0 flex-col overflow-visible ${detailDesignTokens.card.pageFrame} ${detailDesignTokens.spacing.sectionPadding}`}>
-                      <div className="flex min-w-0 items-start justify-between gap-3 overflow-hidden">
-                        <div className="min-w-0">
-                          <div className="flex min-w-0 items-center gap-2">
-                            <h1 className={`truncate text-slate-950 ${detailDesignTokens.typography.sectionTitle}`}>{data.title}</h1>
-                            <div className="flex shrink-0 flex-wrap gap-1.5">
-                              <HeaderBadge tone="neutral">飞书</HeaderBadge>
-                              <HeaderBadge tone={isCanvasMode ? "neutral" : "info"}>{isCanvasMode ? "画布" : "文稿"}</HeaderBadge>
-                              <HeaderBadge tone={isCanvasMode ? "info" : "success"}>{isCanvasMode ? "进行中" : "已同步"}</HeaderBadge>
-                            </div>
+              <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2.5 overflow-hidden sm:gap-3">
+                    <section
+                      className={`flex min-h-[220px] max-h-[min(42vh,320px)] min-w-0 shrink-0 flex-col overflow-hidden ${detailDesignTokens.card.pageFrame} px-4 py-3`}
+                    >
+                      <div className="flex min-w-0 flex-col gap-2.5 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
+                        <div className="min-w-0 flex-1">
+                          <h1 className="text-[17px] font-semibold leading-snug tracking-tight text-slate-950 break-words">{data.title}</h1>
+                          <div className="mt-1.5 flex flex-wrap gap-1.5">
+                            <HeaderBadge tone="neutral">飞书</HeaderBadge>
+                            <HeaderBadge tone={isCanvasMode ? "neutral" : "info"}>{isCanvasMode ? "画布" : "文稿"}</HeaderBadge>
+                            <HeaderBadge tone={isCanvasMode ? "info" : "success"}>{isCanvasMode ? "进行中" : "已同步"}</HeaderBadge>
                           </div>
                         </div>
-                        <div className="flex shrink-0 items-center gap-2">
-                          <button className={detailDesignTokens.button.control}>
+                        <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+                          <button
+                            type="button"
+                            className="inline-flex h-9 items-center gap-1.5 rounded-[12px] border border-slate-200 bg-white px-3 text-[13px] font-semibold text-slate-700 shadow-[0_4px_12px_rgba(15,23,42,0.04)]"
+                          >
                             <SmallIcon type="share" tone="slate" />
                             分享
                           </button>
-                          <button className={detailDesignTokens.button.control}>
+                          <button
+                            type="button"
+                            className="inline-flex h-9 items-center gap-1.5 rounded-[12px] border border-slate-200 bg-white px-3 text-[13px] font-semibold text-slate-700 shadow-[0_4px_12px_rgba(15,23,42,0.04)]"
+                          >
                             <SmallIcon type="download" tone="slate" />
                             导出
                           </button>
                           {!isCanvasMode ? (
-                            <button className={detailDesignTokens.button.primary}>
+                            <button
+                              type="button"
+                              className="inline-flex h-9 items-center gap-1.5 rounded-[12px] bg-blue-600 px-3 text-[13px] font-semibold text-white shadow-[0_10px_20px_rgba(37,99,235,0.2)]"
+                            >
                               <SmallIcon type="sync" tone="blue" />
                               同步
                             </button>
                           ) : null}
-                          <button className={detailDesignTokens.button.iconOnly}>
+                          <button
+                            type="button"
+                            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[12px] border border-slate-200 bg-white shadow-[0_4px_12px_rgba(15,23,42,0.04)]"
+                          >
                             <MoreIcon />
                           </button>
                         </div>
                       </div>
 
                       {!isCanvasMode ? (
-                        <div className={`mt-2 flex min-h-0 flex-1 flex-col ${detailDesignTokens.card.content} ${detailDesignTokens.spacing.sectionPadding}`}>
-                          <h3 className={`text-slate-950 ${detailDesignTokens.typography.sectionTitle}`}>Agent Mission Control</h3>
-                          <div className="mt-3">
-                            <Stepper steps={data.workflow} />
+                        <div
+                          className={`mt-2 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden ${detailDesignTokens.card.content} px-3 py-2`}
+                        >
+                          <h3 className="shrink-0 text-[13px] font-semibold text-slate-950">Agent Mission Control</h3>
+                          <AgentRealtimeRibbon phase={phase} wsStatus={wsStatus} useMockFallback={useMockFb} />
+                          {lastErr ? (
+                            <p className="mb-1 shrink-0 text-[11px] font-medium text-rose-600">生成失败：{lastErr}</p>
+                          ) : null}
+                          <div className="mt-1 min-h-0 flex-1 overflow-x-auto overflow-y-hidden pb-0.5">
+                            <Stepper steps={mergedWorkflow} className="mt-0" />
                           </div>
-                          <div className="mt-3 flex flex-wrap gap-5 text-[12px] text-slate-500">
-                            <div className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />已完成</div>
-                            <div className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-blue-500" />进行中</div>
-                            <div className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-slate-300" />待处理</div>
-                            <div className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-amber-400" />预警</div>
-                          </div>
+                          <StepperStatusLegend />
                         </div>
                       ) : (
-                        <div className="mt-2 min-h-0 flex-1 rounded-[20px] border border-slate-200 bg-white px-3.5 py-2.5 shadow-[0_8px_20px_rgba(15,23,42,0.04)]">
-                          <div className="flex items-start justify-between gap-5">
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-2">
-                                <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">智能体任务控制</p>
-                                <span className="inline-flex rounded-full border border-violet-200 bg-violet-50 px-2.5 py-0.5 text-[11px] font-semibold text-violet-600">画布</span>
+                        <div className="mt-2 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-[18px] border border-slate-200 bg-white px-3 py-2 shadow-[0_8px_20px_rgba(15,23,42,0.04)]">
+                          <div className="flex items-start justify-between gap-4">
+                            <div className="min-w-0 flex-1">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">智能体任务控制</p>
+                                <span className="inline-flex rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] font-semibold text-violet-600">
+                                  画布
+                                </span>
                               </div>
-                              <h2 className="mt-1.5 text-[15px] font-semibold tracking-[-0.02em] text-slate-950">{data.missionTitle}</h2>
-                              <p className="mt-1 max-w-[520px] text-[11px] leading-5 text-slate-500">{data.missionSubtitle}</p>
+                              <h2 className="mt-1 text-[14px] font-semibold leading-snug tracking-tight text-slate-950 break-words">{data.missionTitle}</h2>
+                              <p className="mt-1 max-w-[520px] text-[10px] leading-relaxed text-slate-500">{data.missionSubtitle}</p>
                             </div>
                             <div className="flex shrink-0 items-end gap-1.5">
-                              <div className="flex h-[62px] w-[76px] flex-col justify-between overflow-hidden rounded-[10px] border border-slate-200 bg-white px-2 py-1.5 shadow-[0_4px_12px_rgba(15,23,42,0.03)]">
+                              <div className="flex h-[56px] w-[72px] flex-col justify-between overflow-hidden rounded-[10px] border border-slate-200 bg-white px-2 py-1.5 shadow-[0_4px_12px_rgba(15,23,42,0.03)]">
                                 <p className="truncate text-[10px] leading-4 text-slate-400">置信度</p>
-                                <p className="truncate text-[18px] leading-none font-semibold tracking-[-0.02em] tabular-nums text-violet-600">{data.confidence}</p>
+                                <p className="truncate text-[16px] leading-none font-semibold tracking-tight tabular-nums text-violet-600">{data.confidence}</p>
                               </div>
-                              <div className="flex h-[62px] w-[76px] flex-col justify-between overflow-hidden rounded-[10px] border border-slate-200 bg-white px-2 py-1.5 shadow-[0_4px_12px_rgba(15,23,42,0.03)]">
+                              <div className="flex h-[56px] w-[72px] flex-col justify-between overflow-hidden rounded-[10px] border border-slate-200 bg-white px-2 py-1.5 shadow-[0_4px_12px_rgba(15,23,42,0.03)]">
                                 <p className="truncate text-[10px] leading-4 text-slate-400">上下文质量</p>
-                                <p className="truncate text-[18px] leading-none font-semibold tracking-[-0.02em] tabular-nums text-amber-600">{data.contextQuality}</p>
+                                <p className="truncate text-[16px] leading-none font-semibold tracking-tight tabular-nums text-amber-600">{data.contextQuality}</p>
                               </div>
                             </div>
                           </div>
-                          <div className="mt-1 -translate-y-1 origin-top scale-[0.88]">
-                            <Stepper steps={data.workflow} />
+                          <AgentRealtimeRibbon phase={phase} wsStatus={wsStatus} useMockFallback={useMockFb} />
+                          <div className="mt-1 min-h-0 flex-1 overflow-x-auto overflow-y-hidden pb-0.5">
+                            <Stepper steps={mergedWorkflow} className="mt-0" />
                           </div>
-                          <div className="-mt-0.5 flex flex-wrap gap-4 text-[11px] text-slate-500">
-                            <div className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />已完成</div>
-                            <div className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-blue-500" />进行中</div>
-                            <div className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-slate-300" />待处理</div>
-                            <div className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-amber-400" />预警</div>
-                          </div>
+                          <StepperStatusLegend />
                         </div>
                       )}
                     </section>
@@ -657,11 +844,45 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                             <div className="shrink-0 border-b border-slate-100 px-5 py-3">
                               <h3 className="truncate text-[16px] font-semibold text-slate-950">{data.document.title}</h3>
                               <p className="mt-1 text-[12px] text-slate-500">{data.document.date}</p>
+                              {docConflict ? (
+                                <p className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-900">
+                                  检测到服务端文稿版本与本地草稿可能冲突，请以服务端为准或稍后刷新。
+                                </p>
+                              ) : null}
                             </div>
                             <div className="min-h-0 flex-1 overflow-y-auto px-[18px] py-3 pr-3">
                               <div className="space-y-[14px] pb-8">
-                                {data.document.sections.map((section) => (
-                                  <section key={section.title}>
+                                {docStream ? (
+                                  <motion.section
+                                    layout
+                                    initial={{ opacity: 0 }}
+                                    animate={{ opacity: 1 }}
+                                    className="rounded-[18px] border border-blue-200/80 bg-blue-50/40 px-4 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)]"
+                                  >
+                                    <div className="flex items-center justify-between gap-2">
+                                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-blue-600">
+                                        Word 预览 · 流式 Markdown
+                                      </p>
+                                      {agentSlice?.isDocStreaming ? (
+                                        <span className="inline-flex items-center gap-1 text-[11px] font-medium text-blue-600">
+                                          <motion.span
+                                            className="inline-block h-1.5 w-1.5 rounded-full bg-blue-500"
+                                            animate={{ opacity: [0.4, 1, 0.4] }}
+                                            transition={{ repeat: Infinity, duration: 1 }}
+                                          />
+                                          写入中
+                                        </span>
+                                      ) : (
+                                        <span className="text-[11px] text-slate-500">已完成本段</span>
+                                      )}
+                                    </div>
+                                    <div className="prose prose-sm mt-3 max-w-none text-slate-800 prose-headings:my-2 prose-p:my-1.5 prose-ul:my-1.5 prose-li:my-0.5">
+                                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{docStream}</ReactMarkdown>
+                                    </div>
+                                  </motion.section>
+                                ) : null}
+                                {data.document.sections.map((section, secIdx) => (
+                                  <section key={`doc-${secIdx}-${section.title}`}>
                                     <h4 className="text-[14px] font-semibold text-slate-950">{section.title}</h4>
                                     {section.body ? (
                                       <div className="prose prose-sm mt-2 max-w-none text-slate-700 prose-headings:my-2 prose-p:my-1.5 prose-ul:my-1.5 prose-li:my-0.5">
@@ -690,8 +911,8 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                                             </tr>
                                           </thead>
                                           <tbody>
-                                            {data.document.tableRows.map((row) => (
-                                              <tr key={row.campaign} className="border-t border-slate-100 text-slate-700">
+                                            {data.document.tableRows.map((row, ri) => (
+                                              <tr key={`${row.campaign}-${ri}`} className="border-t border-slate-100 text-slate-700">
                                                 <td className="px-[14px] py-2">{row.campaign}</td>
                                                 <td className="px-[14px] py-2">{row.channel}</td>
                                                 <td className="px-[14px] py-2">{row.visits}</td>
@@ -717,23 +938,31 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                             <p className="mt-5 text-[13px] text-slate-400">{data.chatReply.source}</p>
                             </motion.div>
                           ) : (
-                            <motion.div key="canvas-tab" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.2 }} className="min-h-0 h-full overflow-y-auto px-3 py-3">
-                            <div className="flex items-start justify-between gap-4">
-                              <div>
+                            <motion.div key="canvas-tab" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.2 }} className="min-h-0 h-full overflow-y-auto px-3 pb-3 pt-1">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
                                 <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-400">Output Surface</p>
-                                <h3 className="mt-1 text-[15px] font-semibold text-slate-950">Canvas Preview</h3>
-                                <p className="mt-1 text-[11px] text-slate-500">A PPT-like visual surface for storyline arrangement, ready to evolve.</p>
+                                <h3 className="mt-0.5 text-[15px] font-semibold text-slate-950">Canvas Preview</h3>
+                                <p className="mt-0.5 line-clamp-1 text-[11px] text-slate-500">A PPT-like visual surface for storyline arrangement, ready to evolve.</p>
                               </div>
-                              <div className="flex items-center gap-2">
-                                <button className="inline-flex h-8 items-center gap-1.5 rounded-[10px] border border-violet-200 bg-violet-50 px-2.5 text-[12px] font-semibold text-violet-600 shadow-[0_6px_16px_rgba(139,92,246,0.08)]">
-                                Open in Canvas
-                                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                                  <path d="M6 4H12V10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                                  <path d="M11.5 4.5L4 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-                                </svg>
-                                </button>
+                              <div className="flex shrink-0 items-center gap-2">
+                                <Link
+                                  href={`/canvas?session=${encodeURIComponent(data.id)}`}
+                                  prefetch={false}
+                                  className="inline-flex h-8 items-center gap-1.5 rounded-[10px] border border-violet-200 bg-violet-50 px-2.5 text-[12px] font-semibold text-violet-600 shadow-[0_6px_16px_rgba(139,92,246,0.08)] transition hover:bg-violet-100"
+                                >
+                                  打开 Tldraw 画布
+                                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                                    <path d="M6 4H12V10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                                    <path d="M11.5 4.5L4 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                                  </svg>
+                                </Link>
                               </div>
                             </div>
+                            <p className="mt-1.5 line-clamp-2 text-[11px] leading-snug text-slate-500">
+                              进入全屏画布后，在浏览器视口<strong className="font-semibold text-slate-700">最顶端深色导航栏右侧</strong>
+                              点击紫色「Agent 生长演示」，将按本会话的 mock 画布节点模拟远端推送并逐笔绘制。
+                            </p>
 
                             <AnimatePresence>
                               {canvasNotice ? (
@@ -741,15 +970,15 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                                   initial={{ opacity: 0, y: -6 }}
                                   animate={{ opacity: 1, y: 0 }}
                                   exit={{ opacity: 0, y: -8 }}
-                                  className="mt-2.5 rounded-[14px] border border-violet-200 bg-violet-50 px-3.5 py-2.5 text-[12px] font-medium text-violet-700 shadow-[0_6px_16px_rgba(139,92,246,0.08)]"
+                                  className="mt-1.5 rounded-[14px] border border-violet-200 bg-violet-50 px-3 py-2 text-[12px] font-medium leading-snug text-violet-700 shadow-[0_6px_16px_rgba(139,92,246,0.08)]"
                                 >
                                   {canvasNotice}
                                 </motion.div>
                               ) : null}
                             </AnimatePresence>
 
-                            <div className="mt-2 rounded-[16px] border border-violet-100 bg-[radial-gradient(circle_at_top,#FBF9FF_0%,#F8FAFF_45%,#FFFFFF_100%)] px-2 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)]">
-                              <div className="grid grid-cols-[minmax(0,1fr)_12px_minmax(0,1fr)_12px_minmax(0,1fr)] items-start gap-y-1.5">
+                            <div className="mt-1.5 rounded-[16px] border border-violet-100 bg-[radial-gradient(circle_at_top,#FBF9FF_0%,#F8FAFF_45%,#FFFFFF_100%)] px-2 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)]">
+                              <div className="grid grid-cols-[minmax(0,1fr)_12px_minmax(0,1fr)_12px_minmax(0,1fr)] items-stretch gap-y-1.5">
                                 {topRowNodes.map((node, idx) => (
                                   <div key={`top-${node.id}`} className="contents">
                                     <CanvasNodeCard
@@ -833,9 +1062,9 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                         </AnimatePresence>
                       </div>
                     </section>
-                  </div>
+              </div>
 
-                  <aside className="min-h-0 min-w-0 space-y-3 overflow-y-auto pr-1">
+              <aside className="min-h-0 w-[300px] shrink-0 space-y-3 overflow-y-auto pr-1 lg:w-[320px]">
                     {isCanvasMode ? (
                       <>
                         <SectionCard title="上下文与同步" action={<MoreIcon />}>
@@ -843,20 +1072,29 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                             <div>
                               <h4 className="text-[14px] font-semibold text-slate-950">上下文来源</h4>
                               <div className="mt-3 space-y-3">
-                                {data.contextSources.map((item, index) => (
+                                {filteredContextSources.length === 0 && searchNeedle ? (
+                                  <p className="text-[12px] text-slate-400">没有匹配的上下文来源</p>
+                                ) : null}
+                                {filteredContextSources.map((item, index) => {
+                                  const srcIndex = data.contextSources.findIndex((s) => s.id === item.id);
+                                  const iconIdx = srcIndex >= 0 ? srcIndex : index;
+                                  return (
                                   <div key={item.id} className={`flex min-w-0 items-start justify-between gap-3 rounded-[18px] border border-slate-200 bg-white px-3 py-2.5 ${index > 0 ? "" : ""}`}>
-                                    <div className="flex min-w-0 items-start gap-3">
+                                    <div className="flex min-w-0 flex-1 items-start gap-3">
                                       <div className="mt-[2px] flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-[9px] border border-slate-200 bg-white">
-                                        <SmallIcon type={index === 0 ? "chat" : index === 1 ? "doc" : "sheet"} tone={index === 2 ? "orange" : "blue"} />
+                                        <SmallIcon type={iconIdx === 0 ? "chat" : iconIdx === 1 ? "doc" : "sheet"} tone={iconIdx === 2 ? "orange" : "blue"} />
                                       </div>
-                                      <div className="min-w-0">
+                                      <div className="min-w-0 flex-1">
                                         <p className="truncate text-[13px] font-semibold text-slate-900">{item.title}</p>
                                         <p className="mt-1 break-words text-[12px] leading-[18px] text-slate-500">{item.description}</p>
                                       </div>
                                     </div>
-                                    <div className="mt-[1px] shrink-0 self-start"><StatusPill status={item.status} /></div>
+                                    <div className="mt-[1px] shrink-0 self-start">
+                                      <StatusPill status={item.status} />
+                                    </div>
                                   </div>
-                                ))}
+                                  );
+                                })}
                               </div>
                             </div>
 
@@ -926,8 +1164,10 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                         </SectionCard>
                         <SectionCard title="状态">
                           <div className="flex flex-wrap gap-2">
-                            {data.statusBadges.map((badge) => (
-                              <HeaderBadge key={badge.label} tone={badge.tone}>{badge.label}</HeaderBadge>
+                            {data.statusBadges.map((badge, bi) => (
+                              <HeaderBadge key={`badges-${bi}-${badge.label}`} tone={badge.tone}>
+                                {badge.label}
+                              </HeaderBadge>
                             ))}
                           </div>
                         </SectionCard>
@@ -946,22 +1186,32 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                       <>
                         <SectionCard title="上下文来源">
                           <div className="space-y-3">
-                            {data.contextSources.map((item, index) => (
-                              <div key={item.id} className={`flex items-start justify-between gap-3 ${index > 0 ? "border-t border-slate-100 pt-3" : ""}`}>
-                                <div className="flex items-start gap-3">
+                            {filteredContextSources.length === 0 && searchNeedle ? (
+                              <p className="text-[13px] text-slate-400">没有匹配的上下文来源</p>
+                            ) : null}
+                            {filteredContextSources.map((item, index) => {
+                              const srcIndex = data.contextSources.findIndex((s) => s.id === item.id);
+                              const iconIdx = srcIndex >= 0 ? srcIndex : index;
+                              return (
+                              <div
+                                key={item.id}
+                                className={`flex min-w-0 items-start justify-between gap-3 ${index > 0 ? "border-t border-slate-100 pt-3" : ""}`}
+                              >
+                                <div className="flex min-w-0 flex-1 items-start gap-3">
                                   <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-[11px] border border-slate-200 bg-white">
-                                    <SmallIcon type={index === 0 ? "sheet" : index === 1 ? "doc" : "sheet"} tone={index === 2 ? "green" : "blue"} />
+                                    <SmallIcon type={iconIdx === 0 ? "sheet" : iconIdx === 1 ? "doc" : "sheet"} tone={iconIdx === 2 ? "green" : "blue"} />
                                   </div>
-                                  <div className="min-w-0">
+                                  <div className="min-w-0 flex-1">
                                     <p className="truncate text-[14px] font-semibold text-slate-900">{item.title}</p>
                                     <p className="mt-1 break-words text-[12px] leading-5 text-slate-500">{item.description}</p>
                                   </div>
                                 </div>
-                                <div className="shrink-0 self-center">
+                                <div className="shrink-0 self-start">
                                   <StatusPill status={item.status} />
                                 </div>
                               </div>
-                            ))}
+                              );
+                            })}
                           </div>
                         </SectionCard>
                         <SectionCard title="关联文件" action={<span className="text-[12px] text-slate-400">查看全部（7）</span>}>
@@ -984,8 +1234,8 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                         </SectionCard>
                         <SectionCard title="同步状态" action={<HeaderBadge tone="success">{data.syncOverview?.statusLabel}</HeaderBadge>}>
                           <div className="space-y-2.5">
-                            {data.syncOverview?.items.map((item) => (
-                              <div key={item} className="flex items-center gap-3 text-[13px] text-slate-600">
+                            {data.syncOverview?.items.map((item, syncIdx) => (
+                              <div key={`sync-${syncIdx}-${item.slice(0, 40)}`} className="flex items-center gap-3 text-[13px] text-slate-600">
                                 <SmallIcon type="sync" tone="blue" />
                                 {item}
                               </div>
@@ -1001,13 +1251,10 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                         </SectionCard>
                       </>
                     )}
-                  </aside>
-                </div>
-              </div>
+              </aside>
             </div>
           </section>
         </div>
-      </div>
-    </main>
+    </div>
   );
 }

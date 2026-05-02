@@ -55,7 +55,7 @@ export function DetailConversationMessage({
               <p className="text-[13px] font-semibold text-slate-900">{message.actionCard.title}</p>
               {message.actionCard.description ? <p className="mt-1 text-[12px] leading-5 text-slate-500">{message.actionCard.description}</p> : null}
               <div className="mt-3 flex flex-wrap gap-2">
-                {message.actionCard.buttons.map((button) => {
+                {message.actionCard.buttons.map((button, buttonIndex) => {
                   const buttonClass =
                     button.tone === "primary"
                       ? "border-blue-200 bg-blue-50 text-blue-600"
@@ -65,7 +65,7 @@ export function DetailConversationMessage({
 
                   return (
                     <button
-                      key={button.label}
+                      key={`${message.id}-action-${buttonIndex}-${button.label}`}
                       type="button"
                       onClick={() => onActionButtonClick?.(button.label)}
                       className={`inline-flex h-8 items-center whitespace-nowrap rounded-full border px-3 text-[12px] font-semibold shadow-[0_4px_10px_rgba(15,23,42,0.04)] transition hover:brightness-[0.98] ${buttonClass}`}

@@ -3,57 +3,21 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { FormEvent } from "react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { BrandMark, FeishuLogo, GoogleLogo } from "@/components/login/brand-icons";
+import { apiUrl } from "@/lib/eko-api";
+import { shouldFetchBackendDevToken } from "@/lib/integration-env";
+import { saveAccessToken } from "@/lib/auth-token";
 import { useAppStore } from "@/store/app-store";
 
 const MOCK_EMAIL = "sarah.chen@eko.ai";
-const DEFAULT_PASSWORD = "eko123456";
+const DEFAULT_PASSWORD = "12345678";
 const PASSWORD_KEY = "eko:mock-password";
 const LAST_LOGIN_KEY = "eko:last-login-email";
 
 function getCurrentMockPassword() {
   if (typeof window === "undefined") return DEFAULT_PASSWORD;
   return window.localStorage.getItem(PASSWORD_KEY) ?? DEFAULT_PASSWORD;
-}
-
-function BrandMark({ className = "" }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 44 44" className={className} fill="none" aria-hidden="true">
-      <defs>
-        <linearGradient id="eko-mark" x1="6" y1="5" x2="37" y2="39" gradientUnits="userSpaceOnUse">
-          <stop stopColor="#2084FF" />
-          <stop offset="1" stopColor="#2854FF" />
-        </linearGradient>
-      </defs>
-      <rect x="3.5" y="3.5" width="37" height="37" rx="12" fill="url(#eko-mark)" />
-      <path
-        d="M29.2 14.4c-2.5-2-5.1-3-8-3-4.9 0-8.5 3.6-8.5 8.8s3.6 8.8 8.5 8.8c3 0 5.4-.8 8-2.9l-2.8-3.5c-1.7 1.2-3.2 1.7-5.3 1.7-2 0-3.6-.9-4.2-2.7h11.6c.1-.6.2-1.2.2-1.9 0-1.8-.4-3.5-1.1-5.1H17.2c.6-1.7 2.2-2.8 4-2.8 2 0 3.7.5 5.4 1.8l2.6-3.3Z"
-        fill="white"
-      />
-    </svg>
-  );
-}
-
-function FeishuLogo({ className = "" }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden="true">
-      <path d="M4 7.4c0-1 .8-1.8 1.8-1.8h6.7L8.4 13H5.8A1.8 1.8 0 0 1 4 11.2V7.4Z" fill="#1C8BFF" />
-      <path d="M12.2 5.6h5.6c1 0 1.8.8 1.8 1.8v1.8a4 4 0 0 1-4 4h-5l1.6-7.6Z" fill="#35C59D" />
-      <path d="M8.6 13.8h10.2a1.8 1.8 0 0 1 1.7 2.4l-.5 1.4a3.4 3.4 0 0 1-3.2 2.3H8.6V13.8Z" fill="#3558FF" />
-      <path d="M5 14.2h2.7v5a1.7 1.7 0 0 1-2.7-1.3v-3.7Z" fill="#67D66E" />
-    </svg>
-  );
-}
-
-function GoogleLogo({ className = "" }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden="true">
-      <path d="M21.6 12.2c0-.8-.1-1.4-.2-2H12v3.7h5.5a4.7 4.7 0 0 1-2 3.1v2.6h3.3c2-1.9 2.8-4.5 2.8-7.4Z" fill="#4285F4" />
-      <path d="M12 22c2.7 0 5-.9 6.7-2.5l-3.3-2.6c-.9.6-2 .9-3.4.9-2.6 0-4.8-1.8-5.5-4.2H3.1v2.7A10.1 10.1 0 0 0 12 22Z" fill="#34A853" />
-      <path d="M6.5 13.6a6 6 0 0 1 0-3.2V7.7H3.1a10.1 10.1 0 0 0 0 8.6l3.4-2.7Z" fill="#FBBC05" />
-      <path d="M12 6.2c1.5 0 2.8.5 3.8 1.5l2.8-2.8C17 3.3 14.7 2.4 12 2.4A10.1 10.1 0 0 0 3.1 7.7l3.4 2.7c.7-2.4 2.9-4.2 5.5-4.2Z" fill="#EA4335" />
-    </svg>
-  );
 }
 
 function FeatureIcon({
@@ -100,7 +64,7 @@ function FloatingIcon({
   );
 }
 
-export function LoginPage() {
+export function LoginPage({ justRegistered = false }: { justRegistered?: boolean }) {
   const router = useRouter();
   const setLogin = useAppStore((state) => state.setLogin);
   const [email, setEmail] = useState("");
@@ -111,31 +75,63 @@ export function LoginPage() {
   const [error, setError] = useState("");
   const currentYear = new Date().getFullYear();
 
+  useEffect(() => {
+    const pending = typeof window !== "undefined" ? sessionStorage.getItem("eko:register-pending-email") : null;
+    if (pending) {
+      queueMicrotask(() => {
+        setEmail(pending);
+        sessionStorage.removeItem("eko:register-pending-email");
+      });
+    }
+  }, []);
+
   const loginDisabled = useMemo(() => !email.trim() || !password.trim() || submitting, [email, password, submitting]);
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSubmitting(true);
     setError("");
 
-    window.setTimeout(() => {
-      const currentPassword = getCurrentMockPassword();
-      const validEmail = email.trim().toLowerCase() === MOCK_EMAIL;
-      const validPassword = password === currentPassword;
+    const currentPassword = getCurrentMockPassword();
+    const validEmail = email.trim().toLowerCase() === MOCK_EMAIL;
+    const validPassword = password === currentPassword;
 
-      if (!validEmail || !validPassword) {
+    if (!validEmail || !validPassword) {
+      setSubmitting(false);
+      setError("账号或密码不正确，请重新输入。");
+      return;
+    }
+
+    if (remember && typeof window !== "undefined") {
+      window.localStorage.setItem(LAST_LOGIN_KEY, email.trim().toLowerCase());
+    }
+
+    if (shouldFetchBackendDevToken()) {
+      try {
+        const res = await fetch(apiUrl("/api/v1/auth/dev/token"), { method: "POST" });
+        const json = (await res.json()) as {
+          code?: number;
+          message?: string;
+          data?: { access_token?: string };
+        };
+        if (!res.ok || json.code !== 0 || !json.data?.access_token) {
+          throw new Error(json.message || res.statusText || "无法获取 JWT");
+        }
+        saveAccessToken(json.data.access_token);
+      } catch (e) {
         setSubmitting(false);
-        setError("账号或密码不正确，请重新输入。");
+        setError(
+          e instanceof Error
+            ? `${e.message}（请确认后端已启动、ALLOW_DEV_TOKEN=true，且 Next 或 CORS 已配置，见 .env.example）`
+            : "联调登录失败。",
+        );
         return;
       }
+    }
 
-      if (remember && typeof window !== "undefined") {
-        window.localStorage.setItem(LAST_LOGIN_KEY, email.trim().toLowerCase());
-      }
-
-      setLogin(email.trim().toLowerCase());
-      router.push("/sessions");
-    }, 650);
+    setLogin(email.trim().toLowerCase(), { remember });
+      router.push("/home");
+    setSubmitting(false);
   }
 
   return (
@@ -347,6 +343,12 @@ export function LoginPage() {
                 <p className="mt-1.5 text-[15px] text-slate-500">登录你的 Eko 工作区</p>
               </div>
 
+              {justRegistered ? (
+                <p className="mt-4 rounded-2xl border border-emerald-200/90 bg-emerald-50/90 px-4 py-3 text-center text-[12px] font-medium text-emerald-800">
+                  注册步骤已完成（演示未接后端）。邮箱已填入下方输入框；登录校验仍使用演示账号，请参见页面说明或 README。
+                </p>
+              ) : null}
+
               <form className="mt-6 space-y-4" onSubmit={handleSubmit}>
                 <label className="block">
                   <span className="mb-1.5 block text-[13px] font-medium text-slate-500">邮箱</span>
@@ -393,18 +395,27 @@ export function LoginPage() {
                 </label>
 
                 <div className="flex items-center justify-between pt-1">
-                  <label className="flex items-center gap-3 text-[13px] text-slate-500">
-                    <button
-                      type="button"
-                      onClick={() => setRemember((current) => !current)}
-                      className={`flex h-6 w-6 items-center justify-center rounded-md border transition ${
+                  <label
+                    className="flex cursor-pointer select-none items-center gap-3 text-[13px] text-slate-500"
+                    title="勾选：15 天内同一浏览器可免重复登录；不勾选：仅本次浏览有效，关闭标签后需重新输入"
+                  >
+                    <input
+                      type="checkbox"
+                      name="remember"
+                      checked={remember}
+                      onChange={(event) => setRemember(event.target.checked)}
+                      className="peer sr-only"
+                    />
+                    <span
+                      aria-hidden
+                      className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md border transition peer-focus-visible:ring-2 peer-focus-visible:ring-blue-500 peer-focus-visible:ring-offset-2 ${
                         remember ? "border-blue-500 bg-blue-500 text-white" : "border-slate-300 bg-white text-transparent"
                       }`}
                     >
                       <svg viewBox="0 0 16 16" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
                         <path d="m3.5 8 2.5 2.5L12.5 4" />
                       </svg>
-                    </button>
+                    </span>
                     保持登录状态
                   </label>
                   <Link href="/login/forgot-password" className="text-[13px] font-semibold text-blue-500 hover:text-blue-600">
@@ -445,9 +456,12 @@ export function LoginPage() {
               <div className="mt-5 text-center text-[14px] text-slate-500">
                 还没有账号？
                 {" "}
-                <a href="#" className="font-semibold text-blue-500 hover:text-blue-600">
+                <Link
+                  href="/login/register"
+                  className="rounded-md font-semibold text-blue-500 outline outline-1 outline-blue-500/40 hover:text-blue-600"
+                >
                   立即创建
-                </a>
+                </Link>
               </div>
 
               <div className="mt-5 flex items-center justify-center gap-2.5 text-[12px] text-slate-400">

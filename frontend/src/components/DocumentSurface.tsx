@@ -21,14 +21,14 @@ export function DocumentSurface({ scenario }: { scenario: ScenarioData }) {
         </h4>
 
         <div className="mt-7 space-y-7">
-          {scenario.output.sections.map((section) => (
-            <section key={section.title}>
+          {scenario.output.sections.map((section, si) => (
+            <section key={`sec-${si}-${section.title}`}>
               <h5 className="text-[18px] font-semibold text-slate-950">{section.title}</h5>
               {section.body && <p className="mt-3 text-[15px] leading-8 text-slate-600">{section.body}</p>}
               {section.bullets && (
                 <ul className="mt-4 space-y-3 pl-5 text-[14px] leading-7 text-slate-600">
-                  {section.bullets.map((item) => (
-                    <li key={item} className="list-disc">
+                  {section.bullets.map((item, bi) => (
+                    <li key={`sec-${si}-li-${bi}`} className="list-disc">
                       {item}
                     </li>
                   ))}

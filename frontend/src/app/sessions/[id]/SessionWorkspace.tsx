@@ -349,7 +349,7 @@ function MissionControlStepper({ steps }: { steps: Array<any> }) {
     <div className="mt-3 overflow-hidden rounded-[16px] border border-[#e7edf5] bg-white">
       <div className="grid grid-cols-6 gap-0">
         {steps.slice(0, 6).map((step, idx) => (
-          <div key={step.id} className="relative border-r border-[#eef3f9] px-3 py-3 last:border-r-0">
+          <div key={`${idx}-${step.id}`} className="relative border-r border-[#eef3f9] px-3 py-3 last:border-r-0">
             <div className="flex items-start gap-2">
               <StepStatusIcon status={step.status} />
               <div className="min-w-0">

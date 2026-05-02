@@ -37,8 +37,8 @@ export function CanvasSurface({ scenario }: { scenario: ScenarioData }) {
                 </div>
                 <h4 className="mt-4 text-[17px] font-semibold text-slate-950">{node.title}</h4>
                 <ul className="mt-4 space-y-2 text-[13px] leading-6 text-slate-600">
-                  {node.bullets.map((bullet) => (
-                    <li key={bullet}>• {bullet}</li>
+                  {node.bullets.map((bullet, bi) => (
+                    <li key={`${node.id}-b-${bi}`}>• {bullet}</li>
                   ))}
                 </ul>
               </div>
@@ -65,8 +65,8 @@ export function CanvasSurface({ scenario }: { scenario: ScenarioData }) {
                 </div>
                 <h4 className="mt-4 text-[17px] font-semibold text-slate-950">{node.title}</h4>
                 <ul className="mt-4 space-y-2 text-[13px] leading-6 text-slate-600">
-                  {node.bullets.map((bullet) => (
-                    <li key={bullet}>• {bullet}</li>
+                  {node.bullets.map((bullet, bi) => (
+                    <li key={`${node.id}-b-${bi}`}>• {bullet}</li>
                   ))}
                 </ul>
               </div>

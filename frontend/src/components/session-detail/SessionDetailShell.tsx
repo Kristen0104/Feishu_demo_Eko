@@ -9,5 +9,5 @@ export function SessionDetailShell({
 }: {
   data?: SessionDetailData;
 }) {
-  return <DocSessionWorkspace data={data} />;
+  return <DocSessionWorkspace key={data.id} data={data} />;
 }

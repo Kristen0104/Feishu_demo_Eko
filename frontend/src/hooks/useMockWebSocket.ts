@@ -12,11 +12,20 @@ export function useMockWebSocket({
   onTick: () => void;
 }) {
   const onTickRef = useRef(onTick);
-  onTickRef.current = onTick;
+
+  useEffect(() => {
+    onTickRef.current = onTick;
+  }, [onTick]);
 
   useEffect(() => {
     if (!enabled) return;
-    const timer = window.setInterval(() => onTickRef.current(), intervalMs);
+    const timer = window.setInterval(() => {
+      try {
+        onTickRef.current();
+      } catch {
+        /* 防止 setState 等在定时器里抛错变成 Uncaught (in promise) undefined */
+      }
+    }, intervalMs);
     return () => window.clearInterval(timer);
   }, [enabled, intervalMs]);
 }

@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { FormEvent, useMemo, useState } from "react";
 
 const MOCK_EMAIL = "sarah.chen@eko.ai";
-const DEFAULT_PASSWORD = "eko123456";
+const DEFAULT_PASSWORD = "12345678";
 const PASSWORD_KEY = "eko:mock-password";
 const LAST_LOGIN_KEY = "eko:last-login-email";
 

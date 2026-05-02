@@ -3,8 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --webpack",
-    "build": "next build",
+    "predev": "node scripts/clean-next-cache.mjs && node scripts/free-dev-port.mjs",
+    "dev": "WATCHPACK_POLLING=true next dev --webpack -p 3002",
+    "dev:unlock": "rm -rf .next/dev",
+    "dev:3000": "WATCHPACK_POLLING=true next dev --webpack -p 3000",
+    "build": "rm -f tsconfig.tsbuildinfo && next build",
     "start": "next start",
     "lint": "eslint . --ext .js,.jsx,.ts,.tsx"
   },
@@ -12,11 +15,13 @@
     "browserslist": "^4.28.2",
     "caniuse-lite": "^1.0.30001791",
     "framer-motion": "^12.38.0",
+    "jsx-ast-utils": "^3.3.5",
     "next": "^16.2.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
+    "tldraw": "^4.5.10",
     "zustand": "^5.0.12"
   },
   "devDependencies": {

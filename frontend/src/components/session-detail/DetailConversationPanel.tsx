@@ -26,8 +26,8 @@ export function DetailConversationPanel({ data }: { data: SessionDetailData }) {
       <div className="mt-4 flex min-h-0 flex-1 border-t border-slate-100 pt-4">
         <div className="flex min-h-0 flex-1 flex-col">
           <div className="flex-1 space-y-7 overflow-y-auto pr-1">
-            {data.messages.map((message) => (
-              <DetailConversationMessage key={message.id} message={message} tone={tone} />
+            {data.messages.map((message, mi) => (
+              <DetailConversationMessage key={message.id ?? `m-${mi}`} message={message} tone={tone} />
             ))}
           </div>
 

@@ -124,14 +124,14 @@ export function DetailOutputSurface({
         <div className="rounded-[24px] border border-slate-200 bg-white px-8 py-8 shadow-[0_8px_24px_rgba(15,23,42,0.03)]">
           <h4 className="text-[26px] font-semibold tracking-[-0.04em] text-slate-950">{data.document.title}</h4>
           <div className="mt-7 space-y-7">
-            {data.document.sections.map((section) => (
-              <section key={section.title}>
+            {data.document.sections.map((section, secIdx) => (
+              <section key={`doc-sec-${secIdx}-${section.title}`}>
                 <h5 className="text-[18px] font-semibold text-slate-950">{section.title}</h5>
                 {section.body && <p className="mt-3 text-[15px] leading-8 text-slate-600">{section.body}</p>}
                 {section.bullets && (
                   <ul className="mt-4 space-y-3 pl-5 text-[14px] leading-7 text-slate-600">
-                    {section.bullets.map((item) => (
-                      <li key={item} className="list-disc">
+                    {section.bullets.map((item, bi) => (
+                      <li key={`doc-sec-${secIdx}-b-${bi}`} className="list-disc">
                         {item}
                       </li>
                     ))}
@@ -173,8 +173,8 @@ export function DetailOutputSurface({
                 </div>
                 <h4 className="mt-4 text-[17px] font-semibold text-slate-950">{node.title}</h4>
                 <ul className="mt-4 space-y-2 text-[13px] leading-6 text-slate-600">
-                  {node.bullets.map((bullet) => (
-                    <li key={bullet}>• {bullet}</li>
+                  {node.bullets.map((bullet, bi) => (
+                    <li key={`${node.id}-b-${bi}`}>• {bullet}</li>
                   ))}
                 </ul>
               </div>
