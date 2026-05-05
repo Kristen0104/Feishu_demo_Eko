@@ -88,7 +88,7 @@ def test_delete_board_nodes_removes_all_requested_ids() -> None:
     assert client.extract_board_node_ids("wbcn123") == []
 
 
-def test_create_notes_passes_cli_style_nodes_through_without_sanitizing() -> None:
+def test_create_notes_sanitizes_cli_style_nodes_before_posting() -> None:
     client = FeishuBoardClient()
 
     result = client.create_notes(
@@ -161,12 +161,30 @@ def test_create_notes_passes_cli_style_nodes_through_without_sanitizing() -> Non
     shape = raw[result["node_ids"][0]]
     connector = raw[result["node_ids"][1]]
 
-    assert shape["locked"] is True
-    assert shape["text"]["text_color_type"] == 1
-    assert shape["style"]["fill_color_type"] == 1
-    assert connector["connector"]["start_object"] == {"id": "readonly"}
-    assert connector["connector"]["start"]["attached_object"]["extra"] == "drop"
-    assert connector["style"]["fill_color"] == "#fff"
+    assert "id" in shape
+    assert "locked" not in shape
+    assert "children" not in shape
+    assert "parent_id" not in shape
+    assert shape["composite_shape"] == {"type": "round_rect"}
+    assert shape["text"] == {
+        "text": "A",
+        "font_size": 14,
+    }
+    assert shape["style"] == {
+        "fill_color": "#fff",
+        "border_color": "#000",
+        "border_width": "medium",
+    }
+    assert "start_object" not in connector["connector"]
+    assert connector["connector"]["start"]["attached_object"] == {
+        "id": "n1",
+        "position": {"x": 1, "y": 0.5},
+        "snap_to": "right",
+    }
+    assert connector["style"] == {
+        "border_color": "#BBBFC4",
+        "border_width": "narrow",
+    }
 
 
 def test_import_diagram_file_mode_requires_real_path(tmp_path) -> None:  # type: ignore[no-untyped-def]

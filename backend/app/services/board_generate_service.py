@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -50,6 +51,8 @@ def choose_render_mode(message: str) -> RenderMode:
         "classdiagram",
         "statediagram",
         "erdiagram",
+        "componentdiagram",
+        "activitydiagram",
         "journey",
         "mindmap",
         "pie",
@@ -59,6 +62,10 @@ def choose_render_mode(message: str) -> RenderMode:
         "流程图",
         "时序图",
         "类图",
+        "er 图",
+        "er图",
+        "组件图",
+        "活动图",
         "思维导图",
         "饼图",
         "状态图",
@@ -75,6 +82,9 @@ def choose_render_mode(message: str) -> RenderMode:
         "鱼骨图",
         "柱状图",
         "折线图",
+        "树图",
+        "树状图",
+        "树形图",
         "精排图",
         "自定义图",
     )
@@ -108,6 +118,10 @@ def choose_import_diagram_type(message: str) -> str:
 
 
 class BoardGenerateService:
+    _MIN_CREATE_NOTES_SHAPE_COUNT = 6
+    _VISIBILITY_RETRIES = 6
+    _VISIBILITY_WAIT_SECONDS = 1.5
+
     def __init__(
         self,
         feishu_board_client: FeishuBoardClient,
@@ -118,6 +132,7 @@ class BoardGenerateService:
 
     def generate(self, *, message: str, sharing_url: str) -> BoardGenerateResult:
         execution_logs: list[tuple[str, str]] = []
+        user_message = _strip_rag_context(message)
         target = resolve_board_target_from_sharing_url(sharing_url)
         execution_logs.append(("resolving_target", f"开始解析分享链接: {sharing_url}"))
         whiteboard_id = target.whiteboard_id
@@ -127,90 +142,55 @@ class BoardGenerateService:
         if whiteboard_id is None:
             raise ValueError(f"Unable to resolve whiteboard from sharing url: {sharing_url}")
         execution_logs.append(("resolving_target", f"已解析 whiteboard_id={whiteboard_id}"))
-        render_mode = choose_render_mode(message)
+        render_mode = choose_render_mode(user_message)
         execution_logs.append(("planning", f"已选择渲染模式: {render_mode}"))
 
         if render_mode == "import_diagram":
-            embedded = extract_embedded_diagram_source(message)
+            embedded = extract_embedded_diagram_source(user_message)
             if embedded is not None:
                 syntax, source = embedded
                 execution_logs.append(("planning", f"检测到用户提供的 {syntax} 源码，直接导入"))
             else:
-                syntax = "mermaid" if "graph " in message.lower() or "mermaid" in message.lower() else "plantuml"
+                diagram_type = choose_import_diagram_type(user_message)
+                syntax = _choose_import_syntax(user_message, diagram_type=diagram_type)
                 prompt_bundle = build_import_diagram_prompt(message)
                 source = self._complete_with_fallback(
                     system_prompt=prompt_bundle["system"],
                     user_prompt=prompt_bundle["user"],
-                    fallback=self._build_stub_import_source(message, syntax),
+                    fallback=self._build_stub_import_source(user_message, syntax, diagram_type=diagram_type),
                 )
                 source = _normalize_diagram_source(source, syntax=syntax)
-            diagram_type = choose_import_diagram_type(source if embedded is not None else message)
+            diagram_type = choose_import_diagram_type(source if embedded is not None else user_message)
             execution_logs.append(("planning", f"导入图表语法={syntax} diagram_type={diagram_type}"))
             execution_logs.append(("rendering", "开始执行 board import"))
-            import_result = self._feishu_board_client.import_diagram(
-                whiteboard_id,
-                source=source,
-                source_type="content",
-                syntax=syntax,
-                diagram_type=diagram_type,
-                style="board",
-            )
-            ticket_id = import_result["ticket_id"]
-            node_ids: list[str] = []
-            execution_logs.append(("rendering", f"已提交图表导入，ticket_id={ticket_id}"))
-        else:
-            prompt_bundle = build_create_notes_prompt(message)
-            plan_payload = self._complete_with_fallback(
-                system_prompt=prompt_bundle["system"],
-                user_prompt=prompt_bundle["user"],
-                fallback="",
-            )
-            parsed_plan = parse_create_notes_plan(_extract_json_object(plan_payload))
-            if parsed_plan is None:
-                plan = normalize_create_notes_plan(fallback_plan_from_message(message), message)
-            else:
-                plan = normalize_create_notes_plan(parsed_plan, message)
-                groups = plan.get("groups")
-                if not isinstance(groups, list) or not groups:
-                    plan = normalize_create_notes_plan(fallback_plan_from_message(message), message)
-            shape_entries, connector_entries = build_create_notes_payload(plan)
-            shape_nodes = [entry["node"] for entry in shape_entries]
-            execution_logs.append(("planning", f"已生成 create-notes 计划，shape_count={len(shape_nodes)} connector_count={len(connector_entries)}"))
-            execution_logs.append(("rendering", "开始创建形状节点"))
-            create_result = self._feishu_board_client.create_notes(
-                whiteboard_id,
-                nodes_json_or_nodes=shape_nodes,
-                source_type="content",
-                client_token="",
-                user_id_type="open_id",
-            )
-            ticket_id = None
-            created_node_ids = create_result["node_ids"]
-            execution_logs.append(("rendering", f"已创建 {len(created_node_ids)} 个形状节点"))
-            key_to_node_id = {
-                entry["key"]: created_node_ids[index]
-                for index, entry in enumerate(shape_entries)
-                if index < len(created_node_ids)
-            }
-            connector_nodes = build_connectors_from_mapping(
-                connector_entries,
-                key_to_node_id,
-                palette=str(plan.get("palette") or "classic"),
-            )
-            if connector_nodes:
-                execution_logs.append(("rendering", f"开始创建 {len(connector_nodes)} 条连接线"))
-                connector_result = self._feishu_board_client.create_notes(
+            try:
+                import_result = self._feishu_board_client.import_diagram(
                     whiteboard_id,
-                    nodes_json_or_nodes=connector_nodes,
+                    source=source,
                     source_type="content",
-                    client_token="",
-                    user_id_type="open_id",
+                    syntax=syntax,
+                    diagram_type=diagram_type,
+                    style="board",
                 )
-                node_ids = created_node_ids + connector_result["node_ids"]
-                execution_logs.append(("rendering", f"已创建 {len(connector_result['node_ids'])} 条连接线"))
-            else:
-                node_ids = created_node_ids
+                ticket_id = import_result["ticket_id"]
+                node_ids: list[str] = []
+                execution_logs.append(("rendering", f"已提交图表导入，ticket_id={ticket_id}"))
+            except Exception as exc:  # noqa: BLE001
+                raise RuntimeError(f"标准图导入失败，未降级为 create-notes，避免生成错误图形: {exc}") from exc
+        else:
+            ticket_id, node_ids = self._create_notes_on_board(
+                whiteboard_id=whiteboard_id,
+                message=message,
+                user_message=user_message,
+                execution_logs=execution_logs,
+            )
 
+        if render_mode == "create_notes":
+            self._wait_for_created_nodes_visible(
+                whiteboard_id=whiteboard_id,
+                expected_node_ids=node_ids,
+                execution_logs=execution_logs,
+            )
         execution_logs.append(("exporting_preview", "开始获取画板预览"))
         preview_url = self._feishu_board_client.get_board_image(whiteboard_id)["preview_url"]
         execution_logs.append(("exporting_preview", "画板预览已生成"))
@@ -224,6 +204,118 @@ class BoardGenerateService:
             deleted_count=0,
             execution_logs=execution_logs,
         )
+
+    def _create_notes_on_board(
+        self,
+        *,
+        whiteboard_id: str,
+        message: str,
+        user_message: str,
+        execution_logs: list[tuple[str, str]],
+    ) -> tuple[str | None, list[str]]:
+        prompt_bundle = build_create_notes_prompt(message)
+        plan_payload = self._complete_with_fallback(
+            system_prompt=prompt_bundle["system"],
+            user_prompt=prompt_bundle["user"],
+            fallback="",
+        )
+        parsed_plan = parse_create_notes_plan(_extract_json_object(plan_payload))
+        if parsed_plan is None:
+            plan = normalize_create_notes_plan(fallback_plan_from_message(user_message), user_message)
+        else:
+            plan = normalize_create_notes_plan(parsed_plan, user_message)
+            groups = plan.get("groups")
+            if not isinstance(groups, list) or not groups:
+                plan = normalize_create_notes_plan(fallback_plan_from_message(user_message), user_message)
+        shape_entries, connector_entries = build_create_notes_payload(plan)
+        if self._is_sparse_create_notes_plan(shape_entries, plan):
+            execution_logs.append(("planning", "LLM 画板计划内容过少，已切换为兜底思路图计划"))
+            plan = normalize_create_notes_plan(fallback_plan_from_message(user_message), user_message)
+            shape_entries, connector_entries = build_create_notes_payload(plan)
+        shape_nodes = [entry["node"] for entry in shape_entries]
+        execution_logs.append(("planning", f"已生成 create-notes 计划，shape_count={len(shape_nodes)} connector_count={len(connector_entries)}"))
+        execution_logs.append(("rendering", "开始创建形状节点"))
+        create_result = self._feishu_board_client.create_notes(
+            whiteboard_id,
+            nodes_json_or_nodes=shape_nodes,
+            source_type="content",
+            client_token="",
+            user_id_type="open_id",
+        )
+        created_node_ids = create_result["node_ids"]
+        execution_logs.append(("rendering", f"已创建 {len(created_node_ids)} 个形状节点"))
+        self._wait_for_created_nodes_visible(
+            whiteboard_id=whiteboard_id,
+            expected_node_ids=created_node_ids,
+            execution_logs=execution_logs,
+        )
+        key_to_node_id = {
+            entry["key"]: created_node_ids[index]
+            for index, entry in enumerate(shape_entries)
+            if index < len(created_node_ids)
+        }
+        connector_nodes = build_connectors_from_mapping(
+            connector_entries,
+            key_to_node_id,
+            palette=str(plan.get("palette") or "classic"),
+        )
+        if not connector_nodes:
+            return None, created_node_ids
+
+        execution_logs.append(("rendering", f"开始创建 {len(connector_nodes)} 条连接线"))
+        connector_result = self._feishu_board_client.create_notes(
+            whiteboard_id,
+            nodes_json_or_nodes=connector_nodes,
+            source_type="content",
+            client_token="",
+            user_id_type="open_id",
+        )
+        node_ids = created_node_ids + connector_result["node_ids"]
+        execution_logs.append(("rendering", f"已创建 {len(connector_result['node_ids'])} 条连接线"))
+        return None, node_ids
+
+    def _is_sparse_create_notes_plan(
+        self,
+        shape_entries: list[dict[str, object]],
+        plan: dict[str, object],
+    ) -> bool:
+        if len(shape_entries) < self._MIN_CREATE_NOTES_SHAPE_COUNT:
+            return True
+        text_values = json.dumps(plan, ensure_ascii=False)
+        sparse_markers = ("根节点", "子节点", "中心主题", "中心节点")
+        return any(marker in text_values for marker in sparse_markers) and len(shape_entries) < 8
+
+    def _wait_for_created_nodes_visible(
+        self,
+        *,
+        whiteboard_id: str,
+        expected_node_ids: list[str],
+        execution_logs: list[tuple[str, str]],
+    ) -> None:
+        expected_count = max(len(expected_node_ids), self._MIN_CREATE_NOTES_SHAPE_COUNT)
+        last_count = 0
+        for attempt in range(self._VISIBILITY_RETRIES):
+            try:
+                raw = self._feishu_board_client.get_board_nodes(whiteboard_id)
+            except Exception as exc:  # noqa: BLE001
+                if attempt == self._VISIBILITY_RETRIES - 1:
+                    raise RuntimeError(f"画板节点写入后仍不可读取: {exc}") from exc
+                time.sleep(self._VISIBILITY_WAIT_SECONDS)
+                continue
+            nodes = raw.get("data", {}).get("nodes", [])
+            if isinstance(nodes, dict):
+                visible_ids = list(nodes.keys())
+            elif isinstance(nodes, list):
+                visible_ids = [str(node.get("id")) for node in nodes if isinstance(node, dict) and node.get("id")]
+            else:
+                visible_ids = []
+            last_count = len(visible_ids)
+            if last_count >= expected_count:
+                execution_logs.append(("rendering", f"已确认画板节点可见，visible_count={last_count}"))
+                return
+            if attempt < self._VISIBILITY_RETRIES - 1:
+                time.sleep(self._VISIBILITY_WAIT_SECONDS)
+        raise RuntimeError(f"画板节点写入后数量异常，expected>={expected_count} visible={last_count}")
 
     def _complete_with_fallback(
         self,
@@ -242,15 +334,45 @@ class BoardGenerateService:
         except Exception:
             return fallback
 
-    def _build_stub_import_source(self, message: str, syntax: str) -> str:
+    def _build_stub_import_source(self, message: str, syntax: str, *, diagram_type: str = "auto") -> str:
         if syntax == "mermaid":
+            if diagram_type == "sequence":
+                return "\n".join(
+                    [
+                        "sequenceDiagram",
+                        "participant U as 用户",
+                        "participant F as 前端",
+                        "participant B as 后端",
+                        "participant D as 数据库",
+                        "U->>F: 输入登录信息",
+                        "F->>B: 提交登录请求",
+                        "B->>D: 查询用户凭证",
+                        "D-->>B: 返回验证结果",
+                        "B-->>F: 返回登录结果",
+                        "F-->>U: 展示登录状态",
+                    ]
+                )
+            if diagram_type == "mindmap":
+                return "\n".join(["mindmap", f"  root(({message[:20] or '主题'}))", "    背景", "    要点", "    行动"])
+            if diagram_type == "state":
+                return "\n".join(["stateDiagram-v2", "[*] --> 待处理", "待处理 --> 处理中", "处理中 --> 已完成", "已完成 --> [*]"])
+            if diagram_type == "class":
+                return "\n".join(["classDiagram", "class 用户", "class 前端", "class 后端", "用户 --> 前端", "前端 --> 后端"])
+            if diagram_type == "er":
+                return "\n".join(["erDiagram", "USER ||--o{ ORDER : creates", "USER {", "  string id", "  string name", "}", "ORDER {", "  string id", "  string status", "}"])
+            if "饼图" in message or "pie" in message.lower():
+                return "\n".join(["pie title 数据占比", '  "类别A" : 45', '  "类别B" : 35', '  "类别C" : 20'])
             return "\n".join(
                 [
                     "flowchart TD",
                     "A[User Request] --> B[Analyze]",
                     f"B --> C[{message[:20] or 'Generate'}]",
-                ]
-            )
+            ]
+        )
+        if diagram_type == "component":
+            return "\n".join(["@startuml", "component \"前端应用\" as Frontend", "component \"后端服务\" as Backend", "database \"数据库\" as DB", "Frontend --> Backend", "Backend --> DB", "@enduml"])
+        if diagram_type == "activity":
+            return "\n".join(["@startuml", "start", ":提交申请;", ":系统校验;", "if (通过?) then (是)", "  :进入审批;", "else (否)", "  :返回修改;", "endif", "stop", "@enduml"])
         return "\n".join(
             [
                 "@startuml",
@@ -260,6 +382,15 @@ class BoardGenerateService:
                 "@enduml",
             ]
         )
+
+
+def _choose_import_syntax(message: str, *, diagram_type: str) -> str:
+    lowered = message.lower()
+    if "@startuml" in lowered or "plantuml" in lowered:
+        return "plantuml"
+    if diagram_type in {"component", "activity"}:
+        return "plantuml"
+    return "mermaid"
 
 
 def extract_embedded_diagram_source(message: str) -> tuple[str, str] | None:
@@ -282,6 +413,13 @@ def extract_embedded_diagram_source(message: str) -> tuple[str, str] | None:
         return "mermaid", stripped
 
     return None
+
+
+def _strip_rag_context(message: str) -> str:
+    marker = "\n\n## RAG 知识库资料"
+    if marker in message:
+        return message.split(marker, 1)[0].strip()
+    return message.strip()
 
 
 def _normalize_diagram_source(source: str, *, syntax: str) -> str:

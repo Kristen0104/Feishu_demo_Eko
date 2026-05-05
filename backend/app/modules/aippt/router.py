@@ -4,7 +4,7 @@ import inspect
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from starlette.datastructures import UploadFile
 
 from app.modules.aippt.dependencies import get_aippt_service
@@ -69,6 +69,34 @@ async def get_ppt_job(
     aippt_service: Annotated[AIPPTService, Depends(get_aippt_service)],
 ) -> ApiResponse[PPTJobSchema]:
     return ApiResponse.success(aippt_service.get_job(job_id))
+
+
+@router.get(
+    "/preview/{job_id}",
+    response_model=ApiResponse[dict],
+    summary="获取 PPT 预览结构",
+)
+async def get_ppt_preview(
+    job_id: str,
+    aippt_service: Annotated[AIPPTService, Depends(get_aippt_service)],
+) -> ApiResponse[dict]:
+    return ApiResponse.success(aippt_service.get_preview(job_id))
+
+
+@router.get(
+    "/preview/{job_id}/slides/{slide_number}",
+    summary="获取 PPT 单页 SVG 预览",
+)
+async def get_ppt_slide_preview(
+    job_id: str,
+    slide_number: int,
+    aippt_service: Annotated[AIPPTService, Depends(get_aippt_service)],
+) -> FileResponse:
+    path = aippt_service.get_slide_path(job_id, slide_number)
+    return Response(
+        content=path.read_text(encoding="utf-8"),
+        media_type="image/svg+xml; charset=utf-8",
+    )
 
 
 @router.get(

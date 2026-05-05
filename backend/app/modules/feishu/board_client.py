@@ -209,7 +209,7 @@ class FeishuBoardClient:
         user_id_type: str = "open_id",
         user_access_token: str | None = None,
     ) -> dict[str, Any]:
-        nodes = self._resolve_nodes(nodes_json_or_nodes, source_type)
+        nodes = self._sanitize_nodes(self._resolve_nodes(nodes_json_or_nodes, source_type))
 
         if not self._has_credentials():
             return self._stub_create_notes(
@@ -221,11 +221,13 @@ class FeishuBoardClient:
         if client_token:
             query_parts.append(f"client_token={client_token}")
         path = f"/open-apis/board/v1/whiteboards/{whiteboard_id}/nodes?{'&'.join(query_parts)}"
-        payload = self._request(
-            "POST",
-            path,
-            json_body={"nodes": nodes},
-            user_access_token=user_access_token,
+        payload = self._request_with_board_ready_retry(
+            lambda: self._request(
+                "POST",
+                path,
+                json_body={"nodes": nodes},
+                user_access_token=user_access_token,
+            )
         )
         ids = payload.get("data", {}).get("ids", [])
         return {
@@ -680,7 +682,9 @@ class FeishuBoardClient:
         except Exception as exc:  # noqa: BLE001
             raise RuntimeError(f"Feishu board request failed: {exc}") from exc
         if response.status_code >= 400:
-            error = RuntimeError(f"Feishu board request failed: HTTP {response.status_code}")
+            error = RuntimeError(
+                f"Feishu board request failed: HTTP {response.status_code} body={self._response_text(response)[:500]}"
+            )
             setattr(error, "response_headers", response.headers)
             raise error
         payload = response.json()
@@ -710,7 +714,9 @@ class FeishuBoardClient:
         except Exception as exc:  # noqa: BLE001
             raise RuntimeError(f"Feishu board request failed: {exc}") from exc
         if response.status_code >= 400:
-            error = RuntimeError(f"Feishu board request failed: HTTP {response.status_code}")
+            error = RuntimeError(
+                f"Feishu board request failed: HTTP {response.status_code} body={self._response_text(response)[:500]}"
+            )
             setattr(error, "response_headers", response.headers)
             raise error
         payload = self._try_parse_json_body(response.content)
@@ -807,6 +813,18 @@ class FeishuBoardClient:
         if not isinstance(loaded, dict):
             return None
         return loaded
+
+    def _response_text(self, response: Any) -> str:
+        text = getattr(response, "text", None)
+        if isinstance(text, str):
+            return text
+        content = getattr(response, "content", None)
+        if isinstance(content, bytes):
+            return content.decode("utf-8", errors="replace")
+        try:
+            return json.dumps(response.json(), ensure_ascii=False)
+        except Exception:  # noqa: BLE001
+            return ""
 
     def _is_retryable_error(self, err: Exception) -> bool:
         message = str(err).lower()

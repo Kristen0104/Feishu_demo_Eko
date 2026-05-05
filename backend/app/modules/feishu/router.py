@@ -7,6 +7,10 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from app.config import settings
 from app.modules.feishu.client import FeishuPermissionError
 from app.modules.feishu.dependencies import get_feishu_service
+from app.modules.agent.dependencies import get_agent_service
+from app.modules.agent.service import AgentService
+from app.modules.feishu.events import FeishuEventProcessor
+from app.modules.sync.dependencies import get_sync_service
 from app.modules.feishu.schemas import (
     FeishuBoardCreateNotesRequest,
     FeishuBoardCreateNotesSchema,
@@ -24,6 +28,7 @@ from app.modules.feishu.schemas import (
     PublishToFeishuResponse,
 )
 from app.modules.feishu.service import FeishuService
+from app.modules.sync.service import SyncService
 from app.shared.responses import ApiResponse
 
 router = APIRouter()
@@ -119,3 +124,14 @@ async def get_import_status(
 ) -> ApiResponse[ImportTaskStatus]:
     status = feishu_service.get_import_status(ticket)
     return ApiResponse.success(ImportTaskStatus(**status))
+
+
+@router.post("/events", summary="飞书事件回调")
+async def feishu_events(
+    payload: dict,
+    feishu_service: Annotated[FeishuService, Depends(get_feishu_service)],
+    agent_service: Annotated[AgentService, Depends(get_agent_service)],
+    sync_service: Annotated[SyncService, Depends(get_sync_service)],
+) -> dict[str, str]:
+    processor = FeishuEventProcessor(feishu_service, agent_service, sync_service)
+    return await processor.handle(payload)

@@ -2,8 +2,47 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 
 import { cn } from "@/components/UiPrimitives";
+import { TeamWorkspacePage as LiveTeamWorkspacePage } from "@/components/workspace/team-workspace-page";
 import { WorkspacePageHeader } from "@/components/workspace/workspace-page-framing";
-import type { SessionListPageData } from "@/types/session";
+import type { SessionItem, SessionListPageData, SessionStatus } from "@/types/session";
+
+type DerivedTask = {
+  id: string;
+  title: string;
+  owner: string;
+  due: string;
+  status: "已完成" | "进行中" | "待处理";
+  priority: "高" | "中" | "低";
+  href: string;
+};
+
+function flattenSessions(data: SessionListPageData): SessionItem[] {
+  return data.sections.flatMap((section) => section.items);
+}
+
+function taskStatus(status: SessionStatus): DerivedTask["status"] {
+  if (status === "已同步") return "已完成";
+  if (status === "进行中") return "进行中";
+  return "待处理";
+}
+
+function taskPriority(item: SessionItem): DerivedTask["priority"] {
+  if (item.status === "进行中") return "高";
+  if (item.kind === "canvas") return "中";
+  return "低";
+}
+
+function buildTasks(data: SessionListPageData): DerivedTask[] {
+  return flattenSessions(data).slice(0, 8).map((item) => ({
+    id: item.id,
+    title: `${item.kindLabel}处理：${item.title}`,
+    owner: item.participants[0]?.name ?? data.user.name,
+    due: item.updatedAt,
+    status: taskStatus(item.status),
+    priority: taskPriority(item),
+    href: `/sessions/${encodeURIComponent(item.id)}`,
+  }));
+}
 
 function SectionCard({
   title,
@@ -28,11 +67,24 @@ function SectionCard({
 }
 
 export function ShareCollaborationPage({ data }: { data: SessionListPageData }) {
+  const sessions = flattenSessions(data);
+  const shareableCount = sessions.reduce((count, item) => count + 1 + item.preview.relatedItems.length, 0);
+  const pendingCount = sessions.filter((item) => item.status !== "已同步").length;
+  const collaboratorCount = new Set(sessions.flatMap((item) => item.participants.map((participant) => participant.id))).size;
+  const shareRows = sessions.slice(0, 6).map((item) => ({
+    id: item.id,
+    name: item.title,
+    who: data.teamName,
+    perm: item.status === "已同步" ? "可查看" : "协作中",
+    at: item.updatedAt,
+    href: `/sessions/${encodeURIComponent(item.id)}`,
+  }));
+
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-white">
       <WorkspacePageHeader
         title="分享 / 协作"
-        description="与团队共享链接、管理协作者与对外可见范围；与飞书生态保持一致的可见性模型（演示数据）。"
+        description="从真实同步会话派生可协作对象、待处理状态与近期共享记录。"
         actions={
           <Link href="/sessions" prefetch={false} className="rounded-[12px] bg-blue-600 px-4 py-2 text-[13px] font-semibold text-white shadow-sm transition hover:bg-blue-700">
             从会话继续协作
@@ -43,18 +95,18 @@ export function ShareCollaborationPage({ data }: { data: SessionListPageData }) 
         <div className="grid gap-4 lg:grid-cols-3">
           <div className="rounded-[16px] border border-slate-200/90 bg-gradient-to-br from-white to-slate-50/80 p-5">
             <p className="text-[12px] font-medium uppercase tracking-wide text-slate-400">可分享对象</p>
-            <p className="mt-2 text-[28px] font-semibold tabular-nums text-slate-950">18</p>
+            <p className="mt-2 text-[28px] font-semibold tabular-nums text-slate-950">{shareableCount}</p>
             <p className="mt-1 text-[12px] text-slate-500">包含文档、会话与画布节点</p>
           </div>
           <div className="rounded-[16px] border border-slate-200/90 bg-gradient-to-br from-white to-blue-50/50 p-5">
-            <p className="text-[12px] font-medium uppercase tracking-wide text-slate-400">待处理邀请</p>
-            <p className="mt-2 text-[28px] font-semibold tabular-nums text-blue-600">3</p>
-            <p className="mt-1 text-[12px] text-slate-500">来自组织内成员</p>
+            <p className="text-[12px] font-medium uppercase tracking-wide text-slate-400">待处理会话</p>
+            <p className="mt-2 text-[28px] font-semibold tabular-nums text-blue-600">{pendingCount}</p>
+            <p className="mt-1 text-[12px] text-slate-500">草稿、进行中与待处理项</p>
           </div>
           <div className="rounded-[16px] border border-slate-200/90 bg-gradient-to-br from-white to-emerald-50/40 p-5">
-            <p className="text-[12px] font-medium uppercase tracking-wide text-slate-400">外部访客</p>
-            <p className="mt-2 text-[28px] font-semibold tabular-nums text-emerald-700">5</p>
-            <p className="mt-1 text-[12px] text-slate-500">具备只读或评论权限</p>
+            <p className="text-[12px] font-medium uppercase tracking-wide text-slate-400">协作者</p>
+            <p className="mt-2 text-[28px] font-semibold tabular-nums text-emerald-700">{collaboratorCount}</p>
+            <p className="mt-1 text-[12px] text-slate-500">来自同步会话参与者</p>
           </div>
         </div>
 
@@ -70,13 +122,13 @@ export function ShareCollaborationPage({ data }: { data: SessionListPageData }) 
                 </tr>
               </thead>
               <tbody className="text-slate-700">
-                {[
-                  { name: "Q2 增长复盘", who: data.teamName, perm: "可编辑", at: "今天 09:12" },
-                  { name: "客户提案 · 草稿", who: "外部评审组", perm: "可评论", at: "昨天" },
-                  { name: "画布 · 故事板 v3", who: "设计协作空间", perm: "可查看", at: "周一" },
-                ].map((row, rowIdx) => (
-                  <tr key={`share-row-${rowIdx}-${row.name}`} className="border-t border-slate-100">
-                    <td className="py-3 pr-4 font-medium text-slate-900">{row.name}</td>
+                {shareRows.map((row) => (
+                  <tr key={row.id} className="border-t border-slate-100">
+                    <td className="py-3 pr-4 font-medium text-slate-900">
+                      <Link href={row.href} prefetch={false} className="hover:text-blue-600 hover:underline">
+                        {row.name}
+                      </Link>
+                    </td>
                     <td className="py-3 pr-4">{row.who}</td>
                     <td className="py-3 pr-4">
                       <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] font-semibold text-slate-600">{row.perm}</span>
@@ -84,6 +136,11 @@ export function ShareCollaborationPage({ data }: { data: SessionListPageData }) 
                     <td className="py-3 text-slate-500">{row.at}</td>
                   </tr>
                 ))}
+                {shareRows.length === 0 ? (
+                  <tr className="border-t border-slate-100">
+                    <td colSpan={4} className="py-10 text-center text-[13px] text-slate-400">暂无可协作会话</td>
+                  </tr>
+                ) : null}
               </tbody>
             </table>
           </div>
@@ -94,23 +151,20 @@ export function ShareCollaborationPage({ data }: { data: SessionListPageData }) 
 }
 
 export function TasksWorkspacePage({ data }: { data: SessionListPageData }) {
-  const tasks = [
-    { id: "t1", title: "同步飞书文档目录结构", owner: data.user.name.split(" ")[0] ?? data.user.name, due: "今天", status: "进行中", priority: "高" },
-    { id: "t2", title: "审核画布节点命名规范", owner: "Leo", due: "明天", status: "待处理", priority: "中" },
-    { id: "t3", title: "整理会话路由标签", owner: "Mia", due: "周五", status: "已完成", priority: "低" },
-  ];
+  const tasks = buildTasks(data);
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-white">
       <WorkspacePageHeader
         title="任务"
-        description="跨会话与文档的执行项聚合视图；状态变更将回写到协作动态（演示）。"
+        description="跨会话、文稿与画布的执行项聚合视图；当前从后端同步会话状态实时派生。"
         actions={
-          <button
-            type="button"
+          <Link
+            href="/sessions"
+            prefetch={false}
             className="rounded-[12px] border border-slate-200 bg-white px-4 py-2 text-[13px] font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
           >
-            新建任务
-          </button>
+            查看会话
+          </Link>
         }
       />
       <div className="min-h-0 flex-1 overflow-auto px-7 py-6">
@@ -129,8 +183,10 @@ export function TasksWorkspacePage({ data }: { data: SessionListPageData }) {
         </div>
         <div className="space-y-2">
           {tasks.map((t) => (
-            <div
+            <Link
               key={t.id}
+              href={t.href}
+              prefetch={false}
               className="flex flex-wrap items-center justify-between gap-3 rounded-[16px] border border-slate-200/90 bg-[#fafbfc] px-4 py-3 transition hover:border-slate-300 hover:bg-white"
             >
               <div className="min-w-0 flex-1">
@@ -154,60 +210,22 @@ export function TasksWorkspacePage({ data }: { data: SessionListPageData }) {
                   {t.status}
                 </span>
               </div>
-            </div>
+            </Link>
           ))}
+          {tasks.length === 0 ? (
+            <div className="rounded-[16px] border border-dashed border-slate-200 bg-slate-50/60 px-4 py-10 text-center">
+              <p className="text-[14px] font-semibold text-slate-700">暂无任务</p>
+              <p className="mt-1 text-[12px] text-slate-400">后端同步会话出现后，会自动派生成待办。</p>
+            </div>
+          ) : null}
         </div>
       </div>
     </div>
   );
 }
 
-export function TeamWorkspacePage({ data }: { data: SessionListPageData }) {
-  const members = [
-    { id: "cur", name: data.user.name, role: "负责人", initials: data.user.initials, online: true },
-    { id: "leo", name: "Leo Zhang", role: "研发", initials: "LZ", online: true },
-    { id: "mia", name: "Mia Wu", role: "设计", initials: "MW", online: false },
-    { id: "ella", name: "Ella Wang", role: "增长", initials: "EW", online: false },
-  ];
-  return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-white">
-      <WorkspacePageHeader
-        title="团队"
-        description={`当前空间：${data.teamName} · ${data.teamMembersLabel}`}
-        actions={
-          <button
-            type="button"
-            className="rounded-[12px] bg-blue-600 px-4 py-2 text-[13px] font-semibold text-white shadow-sm transition hover:bg-blue-700"
-          >
-            邀请成员
-          </button>
-        }
-      />
-      <div className="min-h-0 flex-1 overflow-auto px-7 py-6">
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {members.map((m) => (
-            <div
-              key={m.id}
-              className="flex items-center gap-3 rounded-[18px] border border-slate-200/90 bg-white p-4 shadow-[0_4px_18px_rgba(15,23,42,0.04)]"
-            >
-              <div className="relative flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-slate-100 text-[14px] font-semibold text-slate-700">
-                {m.initials}
-                {m.online ? (
-                  <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-white bg-emerald-500" />
-                ) : (
-                  <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-white bg-slate-300" />
-                )}
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-[14px] font-semibold text-slate-950">{m.name}</p>
-                <p className="text-[12px] text-slate-500">{m.role}</p>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
+export function TeamWorkspacePage() {
+  return <LiveTeamWorkspacePage />;
 }
 
 export function AppsWorkspacePage({ data }: { data: SessionListPageData }) {
@@ -253,7 +271,7 @@ export function AppsWorkspacePage({ data }: { data: SessionListPageData }) {
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-white">
       <WorkspacePageHeader
         title="应用"
-        description="在工作台内安装与启用的扩展能力；以下为演示快捷入口。"
+        description={`工作台快捷入口；当前已同步 ${flattenSessions(data).length} 个会话。`}
       />
       <div className="min-h-0 flex-1 overflow-auto px-7 py-6">
         <div className="grid gap-4 sm:grid-cols-2">

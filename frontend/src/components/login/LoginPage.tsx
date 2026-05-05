@@ -3,22 +3,11 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { FormEvent } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { BrandMark, FeishuLogo, GoogleLogo } from "@/components/login/brand-icons";
 import { apiUrl } from "@/lib/eko-api";
-import { shouldFetchBackendDevToken } from "@/lib/integration-env";
 import { saveAccessToken } from "@/lib/auth-token";
 import { useAppStore } from "@/store/app-store";
-
-const MOCK_EMAIL = "sarah.chen@eko.ai";
-const DEFAULT_PASSWORD = "12345678";
-const PASSWORD_KEY = "eko:mock-password";
-const LAST_LOGIN_KEY = "eko:last-login-email";
-
-function getCurrentMockPassword() {
-  if (typeof window === "undefined") return DEFAULT_PASSWORD;
-  return window.localStorage.getItem(PASSWORD_KEY) ?? DEFAULT_PASSWORD;
-}
 
 function FeatureIcon({
   tone,
@@ -75,104 +64,90 @@ export function LoginPage({ justRegistered = false }: { justRegistered?: boolean
   const [error, setError] = useState("");
   const currentYear = new Date().getFullYear();
 
-  useEffect(() => {
-    const pending = typeof window !== "undefined" ? sessionStorage.getItem("eko:register-pending-email") : null;
-    if (pending) {
-      queueMicrotask(() => {
-        setEmail(pending);
-        sessionStorage.removeItem("eko:register-pending-email");
-      });
-    }
-  }, []);
-
-  const loginDisabled = useMemo(() => !email.trim() || !password.trim() || submitting, [email, password, submitting]);
+  const loginDisabled = useMemo(
+    () => !email.trim() || !password.trim() || submitting,
+    [email, password, submitting],
+  );
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSubmitting(true);
     setError("");
 
-    const currentPassword = getCurrentMockPassword();
-    const validEmail = email.trim().toLowerCase() === MOCK_EMAIL;
-    const validPassword = password === currentPassword;
-
-    if (!validEmail || !validPassword) {
+    const trimmedEmail = email.trim().toLowerCase();
+    if (!trimmedEmail || !password.trim()) {
       setSubmitting(false);
-      setError("账号或密码不正确，请重新输入。");
+      setError("请输入邮箱和密码。");
       return;
     }
 
-    if (remember && typeof window !== "undefined") {
-      window.localStorage.setItem(LAST_LOGIN_KEY, email.trim().toLowerCase());
-    }
-
-    if (shouldFetchBackendDevToken()) {
-      try {
-        const res = await fetch(apiUrl("/api/v1/auth/dev/token"), { method: "POST" });
-        const json = (await res.json()) as {
-          code?: number;
-          message?: string;
-          data?: { access_token?: string };
-        };
-        if (!res.ok || json.code !== 0 || !json.data?.access_token) {
-          throw new Error(json.message || res.statusText || "无法获取 JWT");
-        }
-        saveAccessToken(json.data.access_token);
-      } catch (e) {
-        setSubmitting(false);
-        setError(
-          e instanceof Error
-            ? `${e.message}（请确认后端已启动、ALLOW_DEV_TOKEN=true，且 Next 或 CORS 已配置，见 .env.example）`
-            : "联调登录失败。",
-        );
-        return;
+    try {
+      const res = await fetch(apiUrl("/api/v1/auth/login"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: trimmedEmail,
+          password,
+        }),
+      });
+      const json = (await res.json()) as {
+        code?: number;
+        message?: string;
+        detail?: string;
+        data?: { access_token?: string };
+      };
+      if (!res.ok || json.code !== 0 || !json.data?.access_token) {
+        throw new Error(json.message || json.detail || res.statusText || "登录失败");
       }
-    }
-
-    setLogin(email.trim().toLowerCase(), { remember });
+      saveAccessToken(json.data.access_token, remember);
+      setLogin(trimmedEmail, { remember });
       router.push("/home");
-    setSubmitting(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "登录失败。");
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   return (
-    <main className="relative min-h-screen bg-[radial-gradient(circle_at_50%_18%,#f8fbff_0%,#edf4ff_42%,#edf2fb_100%)] px-6 pb-6 pt-5 text-slate-900">
-      <div className="mx-auto flex h-[calc(100vh-8px)] w-full max-w-[1400px] flex-col">
-        <div className="grid min-h-0 flex-1 grid-cols-[minmax(680px,1fr)_500px] items-center gap-x-[72px] px-4 pb-20 pt-3">
-          <section className="relative flex min-h-0 flex-col justify-center pl-2 pr-0">
+    <main className="relative min-h-screen overflow-y-auto bg-[radial-gradient(circle_at_50%_18%,#f8fbff_0%,#edf4ff_42%,#edf2fb_100%)] px-4 pb-6 pt-4 text-slate-900 sm:px-6 lg:px-6">
+      <div className="mx-auto flex min-h-[calc(100vh-6px)] w-full max-w-[1400px] flex-col">
+        <div className="grid flex-1 grid-cols-1 items-start gap-x-[72px] gap-y-10 px-0 pb-16 pt-2 lg:grid-cols-[minmax(0,1fr)_500px] lg:items-center lg:px-4 lg:pb-20 lg:pt-3">
+          <section className="relative flex min-h-0 flex-col justify-center pl-0 pr-0 lg:pl-2">
             <div className="relative z-10 max-w-[760px]">
               <div className="flex items-center gap-4">
                 <div className="flex items-center gap-4">
-                  <BrandMark className="h-[38px] w-[38px]" />
-                  <span className="text-[35px] font-semibold tracking-[-0.08em] text-slate-950">Eko</span>
+                  <BrandMark className="h-[34px] w-[34px] sm:h-[38px] sm:w-[38px]" />
+                  <span className="text-[30px] font-semibold tracking-[-0.08em] text-slate-950 sm:text-[35px]">Eko</span>
                 </div>
                 <div className="h-7 w-px bg-slate-200" />
-                <span className="text-[20px] font-medium tracking-[-0.04em] text-slate-400">AI Workplace</span>
-                <span className="inline-flex h-8 items-center rounded-full border border-blue-100 bg-blue-50/85 px-3.5 text-[13px] font-medium text-blue-500 shadow-[0_8px_20px_rgba(59,130,246,0.10)]">
+                <span className="text-[18px] font-medium tracking-[-0.04em] text-slate-400 sm:text-[20px]">AI Workplace</span>
+                <span className="inline-flex h-8 items-center rounded-full border border-blue-100 bg-blue-50/85 px-3.5 text-[12px] font-medium text-blue-500 shadow-[0_8px_20px_rgba(59,130,246,0.10)] sm:text-[13px]">
                   AI 工作空间
                 </span>
               </div>
 
-              <div className="mt-6">
-                <h1 className="flex max-w-[760px] items-center gap-3 text-[52px] font-semibold leading-[1.12] tracking-[-0.05em] text-slate-950">
-                  <BrandMark className="h-[42px] w-[42px] shrink-0" />
+              <div className="mt-5 sm:mt-6">
+                <h1 className="flex max-w-[760px] items-center gap-3 text-[34px] font-semibold leading-[1.12] tracking-[-0.05em] text-slate-950 sm:text-[44px] xl:text-[52px]">
+                  <BrandMark className="h-[34px] w-[34px] shrink-0 sm:h-[42px] sm:w-[42px]" />
                   <span>AI，让对话快速转化为工作产出</span>
                 </h1>
-                <p className="mt-3 max-w-[620px] text-[15px] leading-[1.7] text-slate-500">
+                <p className="mt-3 max-w-[620px] text-[14px] leading-[1.7] text-slate-500 sm:text-[15px]">
                   将聊天或 IM 输入自动路由为聊天、文稿和画布输出，帮助团队更高效协作。
                 </p>
               </div>
 
-              <div className="mt-6 space-y-3.5">
+              <div className="mt-5 space-y-3 sm:mt-6 sm:space-y-3.5">
                 <div className="flex items-start gap-4">
                   <FeatureIcon tone="green">
-                    <svg viewBox="0 0 24 24" className="h-8 w-8" fill="none" stroke="currentColor" strokeWidth="1.8">
+                    <svg viewBox="0 0 24 24" className="h-7 w-7 sm:h-8 sm:w-8" fill="none" stroke="currentColor" strokeWidth="1.8">
                       <path d="M8 9.5h8" />
                       <path d="M8 13.5h4.2" />
                       <path d="M7.8 20 3.9 22v-5.2A8 8 0 0 1 4 4.8 9.6 9.6 0 0 1 12 2c5.6 0 10 4.1 10 9.2s-4.4 9.3-10 9.3c-1.4 0-2.8-.2-4.2-.6Z" />
                     </svg>
                   </FeatureIcon>
                   <div className="pt-1">
-                    <h2 className="text-[17px] font-semibold tracking-[-0.03em] text-slate-950">把聊天转成可执行结果</h2>
+                    <h2 className="text-[16px] font-semibold tracking-[-0.03em] text-slate-950 sm:text-[17px]">把聊天转成可执行结果</h2>
                     <p className="mt-1 max-w-[420px] text-[12px] leading-[1.6] text-slate-500">
                       将想法、讨论和决策，自动转化为任务、计划、跟进项与落地建议。
                     </p>
@@ -181,7 +156,7 @@ export function LoginPage({ justRegistered = false }: { justRegistered?: boolean
 
                 <div className="flex items-start gap-4">
                   <FeatureIcon tone="blue">
-                    <svg viewBox="0 0 24 24" className="h-8 w-8" fill="none" stroke="currentColor" strokeWidth="1.8">
+                    <svg viewBox="0 0 24 24" className="h-7 w-7 sm:h-8 sm:w-8" fill="none" stroke="currentColor" strokeWidth="1.8">
                       <path d="M8 3.5h6.3L19.5 8v12a1.5 1.5 0 0 1-1.5 1.5h-10A1.5 1.5 0 0 1 6.5 20v-15A1.5 1.5 0 0 1 8 3.5Z" />
                       <path d="M14 3.8V8h4.2" />
                       <path d="M9.2 12.2h5.9" />
@@ -189,7 +164,7 @@ export function LoginPage({ justRegistered = false }: { justRegistered?: boolean
                     </svg>
                   </FeatureIcon>
                   <div className="pt-1">
-                    <h2 className="text-[17px] font-semibold tracking-[-0.03em] text-slate-950">AI 驱动的文稿与画布路由</h2>
+                    <h2 className="text-[16px] font-semibold tracking-[-0.03em] text-slate-950 sm:text-[17px]">AI 驱动的文稿与画布路由</h2>
                     <p className="mt-1 max-w-[420px] text-[12px] leading-[1.6] text-slate-500">
                       自动识别内容类型，智能分发到文稿、画布和回复等合适输出形式。
                     </p>
@@ -198,14 +173,14 @@ export function LoginPage({ justRegistered = false }: { justRegistered?: boolean
 
                 <div className="flex items-start gap-4">
                   <FeatureIcon tone="purple">
-                    <svg viewBox="0 0 24 24" className="h-8 w-8" fill="none" stroke="currentColor" strokeWidth="1.8">
+                    <svg viewBox="0 0 24 24" className="h-7 w-7 sm:h-8 sm:w-8" fill="none" stroke="currentColor" strokeWidth="1.8">
                       <path d="M6.6 19.6c1.4-2.5 2.8-3.8 5.3-3.8s3.9 1.3 5.4 3.8" />
                       <circle cx="8.2" cy="9.2" r="2.9" />
                       <circle cx="15.9" cy="9.2" r="2.9" />
                     </svg>
                   </FeatureIcon>
                   <div className="pt-1">
-                    <h2 className="text-[17px] font-semibold tracking-[-0.03em] text-slate-950">面向团队的上下文同步</h2>
+                    <h2 className="text-[16px] font-semibold tracking-[-0.03em] text-slate-950 sm:text-[17px]">面向团队的上下文同步</h2>
                     <p className="mt-1 max-w-[420px] text-[12px] leading-[1.6] text-slate-500">
                       连接工具与知识库，保持信息一致，让团队协作始终基于正确上下文。
                     </p>
@@ -214,11 +189,11 @@ export function LoginPage({ justRegistered = false }: { justRegistered?: boolean
               </div>
             </div>
 
-            <div className="absolute left-[204px] top-[246px] h-[360px] w-[360px] rounded-full border border-white/40 bg-[radial-gradient(circle_at_center,rgba(191,219,254,0.28)_0%,rgba(191,219,254,0.12)_26%,rgba(255,255,255,0)_72%)] shadow-[0_0_120px_rgba(96,165,250,0.12)]" />
-            <div className="absolute left-[236px] top-[280px] h-[300px] w-[300px] rounded-full border border-white/40 bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.4)_0%,rgba(255,255,255,0.08)_54%,rgba(255,255,255,0)_100%)]" />
-            <div className="absolute left-[266px] top-[310px] h-[246px] w-[246px] rounded-full border border-white/50 bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.28)_0%,rgba(255,255,255,0.02)_70%)]" />
+            <div className="absolute left-[204px] top-[246px] hidden h-[360px] w-[360px] rounded-full border border-white/40 bg-[radial-gradient(circle_at_center,rgba(191,219,254,0.28)_0%,rgba(191,219,254,0.12)_26%,rgba(255,255,255,0)_72%)] shadow-[0_0_120px_rgba(96,165,250,0.12)] xl:block" />
+            <div className="absolute left-[236px] top-[280px] hidden h-[300px] w-[300px] rounded-full border border-white/40 bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.4)_0%,rgba(255,255,255,0.08)_54%,rgba(255,255,255,0)_100%)] xl:block" />
+            <div className="absolute left-[266px] top-[310px] hidden h-[246px] w-[246px] rounded-full border border-white/50 bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.28)_0%,rgba(255,255,255,0.02)_70%)] xl:block" />
 
-            <FloatingIcon className="left-[590px] top-[242px] h-14 w-14 rounded-[22px]" tone="green">
+            <FloatingIcon className="left-[590px] top-[242px] hidden h-14 w-14 rounded-[22px] xl:flex" tone="green">
               <svg viewBox="0 0 24 24" className="h-7 w-7" fill="none" stroke="currentColor" strokeWidth="1.9">
                 <path d="M8 9.5h8" />
                 <path d="M8 13.5h4.2" />
@@ -226,7 +201,7 @@ export function LoginPage({ justRegistered = false }: { justRegistered?: boolean
               </svg>
             </FloatingIcon>
 
-            <FloatingIcon className="left-[518px] top-[458px] h-14 w-14 rounded-[22px]" tone="blue">
+            <FloatingIcon className="left-[518px] top-[458px] hidden h-14 w-14 rounded-[22px] xl:flex" tone="blue">
               <svg viewBox="0 0 24 24" className="h-7 w-7" fill="none" stroke="currentColor" strokeWidth="1.9">
                 <path d="M8 3.5h6.3L19.5 8v12a1.5 1.5 0 0 1-1.5 1.5h-10A1.5 1.5 0 0 1 6.5 20v-15A1.5 1.5 0 0 1 8 3.5Z" />
                 <path d="M14 3.8V8h4.2" />
@@ -235,7 +210,7 @@ export function LoginPage({ justRegistered = false }: { justRegistered?: boolean
               </svg>
             </FloatingIcon>
 
-            <FloatingIcon className="left-[608px] top-[612px] h-14 w-14 rounded-[22px]" tone="purple">
+            <FloatingIcon className="left-[608px] top-[612px] hidden h-14 w-14 rounded-[22px] xl:flex" tone="purple">
               <svg viewBox="0 0 24 24" className="h-7 w-7" fill="none" stroke="currentColor" strokeWidth="1.9">
                 <path d="M6.6 19.6c1.4-2.5 2.8-3.8 5.3-3.8s3.9 1.3 5.4 3.8" />
                 <circle cx="8.2" cy="9.2" r="2.9" />
@@ -243,7 +218,7 @@ export function LoginPage({ justRegistered = false }: { justRegistered?: boolean
               </svg>
             </FloatingIcon>
 
-            <div className="relative z-10 mt-6 w-[540px] rounded-[24px] border border-white/85 bg-white/88 shadow-[0_24px_64px_rgba(15,23,42,0.09)] backdrop-blur-md scale-[0.86] origin-top-left">
+            <div className="relative z-10 mt-6 w-full max-w-[540px] rounded-[24px] border border-white/85 bg-white/88 shadow-[0_24px_64px_rgba(15,23,42,0.09)] backdrop-blur-md lg:scale-[0.9] lg:origin-top-left xl:scale-[0.86]">
               <div className="grid grid-cols-[154px_1fr]">
                 <aside className="border-r border-slate-100 px-4.5 py-5">
                   <div className="flex items-center gap-3">
@@ -331,25 +306,25 @@ export function LoginPage({ justRegistered = false }: { justRegistered?: boolean
             </div>
           </section>
 
-          <section className="flex min-h-0 items-center justify-center pl-3 pr-1">
-            <div className="w-full max-w-[500px] rounded-[28px] border border-white/85 bg-white/93 px-11 pb-7 pt-8 shadow-[0_24px_80px_rgba(15,23,42,0.10)] backdrop-blur-sm">
+          <section className="flex min-h-0 items-start justify-center pl-0 pr-0 lg:items-center lg:pl-3 lg:pr-1">
+            <div className="w-full max-w-[500px] rounded-[28px] border border-white/85 bg-white/93 px-6 pb-6 pt-7 shadow-[0_24px_80px_rgba(15,23,42,0.10)] backdrop-blur-sm sm:px-8 sm:pb-7 sm:pt-8 lg:px-11">
               <div className="flex items-center justify-center gap-4">
-                <BrandMark className="h-[36px] w-[36px]" />
-                <span className="text-[32px] font-semibold tracking-[-0.08em] text-slate-950">Eko</span>
+                <BrandMark className="h-[32px] w-[32px] sm:h-[36px] sm:w-[36px]" />
+                <span className="text-[28px] font-semibold tracking-[-0.08em] text-slate-950 sm:text-[32px]">Eko</span>
               </div>
 
               <div className="mt-5 text-center">
-                <h2 className="text-[36px] font-semibold tracking-[-0.07em] text-slate-950">欢迎回来</h2>
-                <p className="mt-1.5 text-[15px] text-slate-500">登录你的 Eko 工作区</p>
+                <h2 className="text-[30px] font-semibold tracking-[-0.07em] text-slate-950 sm:text-[36px]">欢迎回来</h2>
+                <p className="mt-1.5 text-[14px] text-slate-500 sm:text-[15px]">登录你的 Eko 工作区</p>
               </div>
 
               {justRegistered ? (
                 <p className="mt-4 rounded-2xl border border-emerald-200/90 bg-emerald-50/90 px-4 py-3 text-center text-[12px] font-medium text-emerald-800">
-                  注册步骤已完成（演示未接后端）。邮箱已填入下方输入框；登录校验仍使用演示账号，请参见页面说明或 README。
+                  注册已完成，请使用刚创建的账号继续登录。
                 </p>
               ) : null}
 
-              <form className="mt-6 space-y-4" onSubmit={handleSubmit}>
+              <form className="mt-6 space-y-4" noValidate onSubmit={handleSubmit}>
                 <label className="block">
                   <span className="mb-1.5 block text-[13px] font-medium text-slate-500">邮箱</span>
                   <div className="flex h-[52px] items-center gap-2.5 rounded-[14px] border border-slate-200 px-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.6)]">
@@ -358,7 +333,11 @@ export function LoginPage({ justRegistered = false }: { justRegistered?: boolean
                       <path d="m5.2 7 6.1 5.2a1 1 0 0 0 1.4 0L18.8 7" />
                     </svg>
                     <input
-                      type="email"
+                      type="text"
+                      inputMode="email"
+                      autoCapitalize="none"
+                      autoCorrect="off"
+                      spellCheck={false}
                       value={email}
                       onChange={(event) => setEmail(event.target.value)}
                       placeholder="you@company.com"
@@ -436,20 +415,28 @@ export function LoginPage({ justRegistered = false }: { justRegistered?: boolean
                 </button>
               </form>
 
-              <div className="mt-6 flex items-center gap-4 text-[12px] text-slate-400">
+              <div className="mt-5 flex items-center gap-4 text-[12px] text-slate-400 sm:mt-6">
                 <div className="h-px flex-1 bg-slate-200" />
                 或使用以下方式继续
                 <div className="h-px flex-1 bg-slate-200" />
               </div>
 
               <div className="mt-4 space-y-3">
-                <button className="flex h-[50px] w-full items-center justify-center gap-3 rounded-[14px] border border-slate-200 bg-white text-[15px] font-medium text-slate-900 shadow-[0_8px_20px_rgba(15,23,42,0.05)] transition hover:border-slate-300">
+                <Link
+                  href="/login/feishu/start"
+                  className="flex h-[50px] w-full items-center justify-center gap-3 rounded-[14px] border border-slate-200 bg-white text-[15px] font-medium text-slate-700 shadow-[0_8px_20px_rgba(15,23,42,0.05)] transition hover:border-blue-200 hover:text-blue-600"
+                >
                   <FeishuLogo className="h-7 w-7" />
-                  使用飞书继续
-                </button>
-                <button className="flex h-[50px] w-full items-center justify-center gap-3 rounded-[14px] border border-slate-200 bg-white text-[15px] font-medium text-slate-900 shadow-[0_8px_20px_rgba(15,23,42,0.05)] transition hover:border-slate-300">
+                  使用飞书登录
+                </Link>
+                <button
+                  type="button"
+                  disabled
+                  className="flex h-[50px] w-full items-center justify-center gap-3 rounded-[14px] border border-slate-200 bg-white text-[15px] font-medium text-slate-400 shadow-[0_8px_20px_rgba(15,23,42,0.05)] opacity-60"
+                  aria-disabled="true"
+                >
                   <GoogleLogo className="h-7 w-7" />
-                  使用 Google 继续
+                  Google 登录暂未接入
                 </button>
               </div>
 
@@ -475,7 +462,7 @@ export function LoginPage({ justRegistered = false }: { justRegistered?: boolean
           </section>
         </div>
 
-        <footer className="pointer-events-none absolute bottom-[22px] left-1/2 flex w-[min(1280px,calc(100%-112px))] -translate-x-1/2 items-center justify-between text-[11px] text-slate-400">
+        <footer className="pointer-events-none relative mt-8 flex w-full items-center justify-between text-[11px] text-slate-400 lg:absolute lg:bottom-[22px] lg:left-1/2 lg:w-[min(1280px,calc(100%-112px))] lg:-translate-x-1/2">
           <span>© {currentYear} Eko Technologies Inc.</span>
           <div className="pointer-events-auto flex items-center gap-5">
             <a href="#">条款</a>

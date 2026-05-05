@@ -33,17 +33,20 @@ npm run build
 npm start
 ```
 
-## 演示登录（Mock，非真实鉴权）
+## 登录
 
-当前登录页为**前端模拟校验**，与后端联调后需替换为真实接口。开发/演示时可使用：
+当前登录页已经接入后端真实鉴权，支持：
 
-| 项目 | 值 |
-|------|-----|
-| 邮箱 | `sarah.chen@eko.ai` |
-| 密码 | `12345678` |
+- 邮箱密码登录
+- 飞书 OAuth 登录
 
-邮箱需**完全一致**（不区分大小写，提交时会按小写比较）。  
-若曾在浏览器中修改过 `localStorage` 的 `eko:mock-password`，则以浏览器中保存的密码为准；可清除站点数据后恢复为上述默认密码。
+开发时如果需要直接验证飞书流程，请确保后端 `FEISHU_OAUTH_REDIRECT_URI` 指向前端回调页：
+
+```text
+http://127.0.0.1:3002/login/feishu/callback
+```
+
+邮箱密码登录仍可用于本地调试；如果还没有账号，先走 `/login/register` 创建一个即可。
 
 **保持登录**：
 
@@ -57,7 +60,8 @@ npm start
 | 路径 | 说明 |
 |------|------|
 | `/login` | 登录页 |
-| `/login/register` | 创建账号（演示表单，未接后端注册接口） |
+| `/login/feishu/callback` | 飞书 OAuth 回调页 |
+| `/login/register` | 创建账号 |
 | `/sessions` | 会话列表 |
 | `/sessions/meeting-confirmation` | 会话详情（示例） |
 | `/sessions/weekly-marketing-summary` | 会话详情（示例） |
@@ -65,7 +69,6 @@ npm start
 
 ## 代码与配置
 
-- 模拟账号常量位于：`src/components/login/LoginPage.tsx`（`MOCK_EMAIL`、`DEFAULT_PASSWORD`）
 - 全局状态（登录态、筛选、星标等）：`src/store/app-store.ts`
 
 ## 其他命令

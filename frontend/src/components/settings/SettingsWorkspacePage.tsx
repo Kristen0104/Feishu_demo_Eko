@@ -8,19 +8,19 @@ import type { SessionListPageData } from "@/types/session";
 const cards = [
   {
     title: "我的资料",
-    desc: "头像、姓名与对外展示信息",
+    desc: "姓名与邮箱读取后端登录身份；其他字段为本地覆盖",
     href: "/profile",
     tone: "blue" as const,
   },
   {
     title: "账号与安全",
-    desc: "密码、登录设备与第三方绑定",
+    desc: "当前仅展示本地安全偏好；密码与设备管理未接后端",
     href: "/profile/security",
     tone: "slate" as const,
   },
   {
     title: "通知设置",
-    desc: "桌面提醒、邮件与飞书推送范围",
+    desc: "通知开关保存到本机，暂未回写后端通知服务",
     href: "/profile/notifications",
     tone: "emerald" as const,
   },
@@ -31,9 +31,13 @@ export function SettingsWorkspacePage({ data }: { data: SessionListPageData }) {
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-white">
         <WorkspacePageHeader
           title="设置"
-          description="飞书式工作台统一入口；以下为演示分组，详细表单仍在个人资料子页编辑。"
+          description="飞书式工作台统一入口；真实登录身份已接入，安全与通知仍标记为本地偏好。"
         />
         <div className="min-h-0 flex-1 overflow-auto px-7 py-6">
+          <div className="mb-5 rounded-[18px] border border-amber-200 bg-amber-50/80 px-4 py-3 text-[13px] text-amber-900">
+            <p className="font-semibold">能力边界</p>
+            <p className="mt-1">个人资料页会读取后端当前用户；账号安全、通知和实验功能当前仍是浏览器本地状态，不代表真实企业后台配置。</p>
+          </div>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {cards.map((c) => (
               <Link
@@ -58,7 +62,7 @@ export function SettingsWorkspacePage({ data }: { data: SessionListPageData }) {
 
           <div className="mt-10 rounded-[20px] border border-dashed border-slate-200 bg-slate-50/60 px-5 py-4 text-[12px] text-slate-500">
             <p className="font-semibold text-slate-700">偏好与实验功能</p>
-            <p className="mt-1">后续可在此接入主题、语言与 Beta 开关；当前为占位说明。</p>
+            <p className="mt-1">后续可在此接入主题、语言与 Beta 开关；当前不发起网络请求。</p>
           </div>
         </div>
       </div>

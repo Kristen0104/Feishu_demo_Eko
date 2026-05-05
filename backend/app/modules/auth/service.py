@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+import json
 import secrets
 from datetime import UTC, datetime, timedelta
 
 from fastapi import HTTPException
 
 from app.config import Settings, get_settings
-from app.core.security import AuthContext
+from app.core.security import AuthContext, create_access_token
+from app.modules.auth.passwords import hash_password, verify_password
 from app.modules.auth.provider import FeishuOAuthProviderProtocol
 from app.modules.auth.repository import AuthRepository, FeishuIdentityUpsert
 from app.modules.auth.schemas import (
+    AuthLoginRequest,
+    AuthRegisterRequest,
     AuthTokenSchema,
     AuthUserSchema,
     FeishuCallbackRequest,
@@ -32,6 +36,24 @@ class AuthService:
         self._redis = redis_client
         self._settings = settings or get_settings()
         self._token_factory = token_factory
+
+    async def register_with_password(self, payload: AuthRegisterRequest) -> AuthTokenSchema:
+        email = self._normalize_email(payload.email)
+        if await self._repository.get_user_by_email(email) is not None:
+            raise HTTPException(status_code=409, detail="Email already registered")
+        user = await self._repository.create_local_user(
+            email=email,
+            display_name=payload.display_name.strip(),
+            password_hash=hash_password(payload.password),
+        )
+        return await self._issue_token_for_user(user)
+
+    async def login_with_password(self, payload: AuthLoginRequest) -> AuthTokenSchema:
+        email = self._normalize_email(payload.email)
+        user = await self._repository.get_user_by_email(email)
+        if user is None or not user.password_hash or not verify_password(payload.password, user.password_hash):
+            raise HTTPException(status_code=401, detail="Invalid email or password")
+        return await self._issue_token_for_user(user)
 
     async def create_feishu_login_url(self, redirect_uri: str | None = None) -> FeishuLoginUrlSchema:
         state = secrets.token_urlsafe(24)
@@ -72,19 +94,12 @@ class AuthService:
             )
         )
         account = await self._repository.get_feishu_account_by_user_id(user.id)
-        return AuthTokenSchema(
-            access_token=self._build_access_token(user.id, account.open_id if account else oauth_result.identity.open_id),
-            token_type="Bearer",
-            expires_in=self._settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
-            user=AuthUserSchema(
-                user_id=user.id,
-                display_name=user.display_name,
-                avatar_url=user.avatar_url,
-                feishu_user_id=account.open_id if account else oauth_result.identity.open_id,
-            ),
-        )
+        return await self._issue_token_for_user(user, feishu_user_id=account.open_id if account else oauth_result.identity.open_id)
 
     async def get_current_user(self, auth_context: AuthContext) -> AuthUserSchema:
+        if auth_context.token_id:
+            await self._ensure_session_active(auth_context.token_id, auth_context.user_id)
+
         user = await self._repository.get_user_by_id(auth_context.user_id)
         if user is None:
             raise HTTPException(status_code=404, detail="Authenticated user was not found")
@@ -94,6 +109,60 @@ class AuthService:
             display_name=user.display_name,
             avatar_url=user.avatar_url,
             feishu_user_id=(account.open_id if account else auth_context.feishu_user_id) or "",
+            email=getattr(user, "email", None),
+        )
+
+    async def _issue_token_for_user(self, user, feishu_user_id: str | None = None) -> AuthTokenSchema:
+        token_id = secrets.token_urlsafe(24)
+        access_token = self._build_access_token(user.id, feishu_user_id, token_id=token_id)
+        await self._store_session(
+            token_id=token_id,
+            user_id=user.id,
+            feishu_user_id=feishu_user_id,
+            email=getattr(user, "email", None),
+        )
+        return AuthTokenSchema(
+            access_token=access_token,
+            token_type="Bearer",
+            expires_in=self._settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+            user=AuthUserSchema(
+                user_id=user.id,
+                display_name=user.display_name,
+                avatar_url=user.avatar_url,
+                feishu_user_id=feishu_user_id or "",
+                email=getattr(user, "email", None),
+            ),
+        )
+
+    async def _ensure_session_active(self, token_id: str, user_id: str) -> None:
+        session = await self._redis.get(self._session_key(token_id))
+        if session is None:
+            raise HTTPException(status_code=401, detail="Session expired")
+        try:
+            payload = json.loads(session)
+        except json.JSONDecodeError as exc:  # pragma: no cover - defensive
+            raise HTTPException(status_code=401, detail="Session expired") from exc
+        if payload.get("user_id") != user_id:
+            raise HTTPException(status_code=401, detail="Session expired")
+
+    async def _store_session(
+        self,
+        *,
+        token_id: str,
+        user_id: str,
+        feishu_user_id: str | None,
+        email: str | None,
+    ) -> None:
+        session = {
+            "user_id": user_id,
+            "feishu_user_id": feishu_user_id,
+            "email": email,
+            "roles": ["member"],
+        }
+        await self._redis.set(
+            self._session_key(token_id),
+            json.dumps(session, ensure_ascii=False),
+            ex=self._settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         )
 
     async def _consume_state(self, state: str) -> str:
@@ -104,22 +173,31 @@ class AuthService:
         await self._redis.delete(key)
         return redirect_uri
 
-    def _build_access_token(self, user_id: str, feishu_user_id: str | None) -> str:
+    def _build_access_token(self, user_id: str, feishu_user_id: str | None, *, token_id: str | None = None) -> str:
         if self._token_factory is not None:
-            return self._token_factory(user_id=user_id, feishu_user_id=feishu_user_id, roles=["member"])
-        from app.core.security import create_access_token
+            return self._token_factory(user_id=user_id, feishu_user_id=feishu_user_id, roles=["member"], token_id=token_id)
 
         return create_access_token(
             user_id=user_id,
             feishu_user_id=feishu_user_id,
             roles=["member"],
+            token_id=token_id,
             settings=self._settings,
         )
 
     def _state_key(self, state: str) -> str:
         return f"feishu:oauth:state:{state}"
 
+    def _session_key(self, token_id: str) -> str:
+        return f"auth:session:{token_id}"
+
     def _expires_at(self, expires_in: int | None) -> datetime | None:
         if expires_in is None:
             return None
         return datetime.now(UTC).replace(microsecond=0) + timedelta(seconds=expires_in)
+
+    def _normalize_email(self, email: str) -> str:
+        normalized = email.strip().lower()
+        if not normalized or "@" not in normalized:
+            raise HTTPException(status_code=400, detail="Invalid email")
+        return normalized

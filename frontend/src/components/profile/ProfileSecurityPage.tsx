@@ -39,21 +39,21 @@ export function ProfileSecurityPage() {
 
   return (
     <>
-      <SectionCard title="登录方式" description="演示环境展示 SSO / 邮箱登录说明；接入后端后可替换为真实绑定状态。">
+      <SectionCard title="登录方式" description="当前登录身份由后端鉴权提供；绑定状态与 MFA 仍未接真实账号安全服务。">
         <div className="space-y-3 py-4">
           <div className="flex flex-wrap items-center gap-2">
             <span className="rounded-full bg-slate-100 px-3 py-1 text-[13px] font-medium text-slate-700">
-              企业邮箱 + SSO（演示）
+              企业邮箱 + SSO
             </span>
             <span className="text-[13px] text-slate-500">与飞书扫码 / MFA 可在网关层对接。</span>
           </div>
           <p className="text-[13px] leading-relaxed text-slate-500">
-            当前会话：浏览器本地令牌（mock）。生产环境请使用 HttpOnly Cookie 或 OAuth 回调。
+            当前会话：浏览器保存后端访问令牌；本页安全设置仍为本地演示偏好。
           </p>
         </div>
       </SectionCard>
 
-      <SectionCard title="修改密码" description="以下为前端表单校验演示；不会发起网络请求。">
+      <SectionCard title="修改密码" description="本区域仅做前端表单校验，不调用后端改密 API。">
         <div className="grid gap-4 py-4 sm:max-w-md">
           <label className="block text-[13px] font-medium text-slate-600">
             当前密码
@@ -91,19 +91,19 @@ export function ProfileSecurityPage() {
               className="rounded-[12px] bg-blue-600 px-4 py-2.5 text-[13px] font-semibold text-white hover:bg-blue-700"
               onClick={submitPasswordDemo}
             >
-              保存新密码（演示）
+              保存新密码（本地演示）
             </button>
             {pwMsg ? <span className="text-[13px] text-emerald-600">{pwMsg}</span> : null}
           </div>
         </div>
       </SectionCard>
 
-      <SectionCard title="安全偏好" description="开关将写入本地存储，便于多端演示同步逻辑。">
+      <SectionCard title="安全偏好" description="开关只写入本地存储，不会改变真实账号安全策略。">
         <div className="py-2">
           <div className="flex flex-col gap-2 border-b border-slate-100 py-4 last:border-b-0 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <p className="text-[15px] font-medium text-slate-900">新设备登录提醒</p>
-              <p className="mt-1 text-[13px] text-slate-500">检测到陌生设备登录时推送通知（演示）。</p>
+              <p className="mt-1 text-[13px] text-slate-500">检测到陌生设备登录时推送通知（本地开关）。</p>
             </div>
             <button
               type="button"
@@ -129,7 +129,7 @@ export function ProfileSecurityPage() {
           <div className="flex flex-col gap-2 py-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <p className="text-[15px] font-medium text-slate-900">新设备需二次验证</p>
-              <p className="mt-1 text-[13px] text-slate-500">开启后陌生设备首次登录需 OTP（演示）。</p>
+              <p className="mt-1 text-[13px] text-slate-500">开启后陌生设备首次登录需 OTP（本地开关）。</p>
             </div>
             <button
               type="button"
@@ -155,7 +155,7 @@ export function ProfileSecurityPage() {
         </div>
       </SectionCard>
 
-      <SectionCard title="登录设备" description="以下为静态演示列表；接入会话服务后可展示实时设备管理。">
+      <SectionCard title="登录设备" description="以下为静态本地列表；下线按钮不会调用后端设备管理接口。">
         <div className="divide-y divide-slate-100">
           {MOCK_DEVICES.map((d) => (
             <div key={d.id} className="flex flex-col gap-2 py-4 sm:flex-row sm:items-center sm:justify-between">

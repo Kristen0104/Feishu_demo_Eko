@@ -142,9 +142,11 @@ export function WorkspaceTopBar({
             <span className="min-w-0 flex-1 truncate text-[14px] text-slate-400">搜索（⌘K）</span>
           </div>
         )}
-        <button
-          type="button"
+        <Link
+          href="/team"
+          prefetch={false}
           className="hidden min-w-[170px] max-w-[220px] shrink-0 items-center justify-between gap-2 rounded-[16px] border border-slate-200 bg-white px-3 py-2.5 text-left shadow-[0_4px_12px_rgba(15,23,42,0.03)] xl:flex"
+          aria-label="打开团队空间"
         >
           <div className="flex min-w-0 items-center gap-2">
             <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[12px] bg-blue-50 text-blue-600">
@@ -169,16 +171,18 @@ export function WorkspaceTopBar({
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true" className="shrink-0">
             <path d="M4.5 6.5L8 10L11.5 6.5" stroke="#64748B" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
-        </button>
-        <button
-          type="button"
+        </Link>
+        <Link
+          href="/settings"
+          prefetch={false}
           className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white shadow-[0_4px_12px_rgba(15,23,42,0.03)]"
           aria-label="帮助"
         >
           <HelpIcon />
-        </button>
-        <button
-          type="button"
+        </Link>
+        <Link
+          href="/profile/notifications"
+          prefetch={false}
           className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white shadow-[0_4px_12px_rgba(15,23,42,0.03)]"
           aria-label="通知"
         >
@@ -186,7 +190,7 @@ export function WorkspaceTopBar({
           <span className="absolute right-0.5 top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-semibold leading-none text-white">
             1
           </span>
-        </button>
+        </Link>
         <Link
           href="/profile"
           prefetch={false}
@@ -205,6 +209,7 @@ type NavIconType =
   | "home"
   | "chat"
   | "doc"
+  | "knowledge"
   | "share"
   | "tasks"
   | "team"
@@ -233,6 +238,14 @@ function NavIcon({ type, active }: { type: NavIconType; active?: boolean }) {
         <svg {...common}>
           <path d="M6 2.8H12.2L15.8 6.4V17.2H6V2.8Z" stroke={stroke} strokeWidth="1.6" strokeLinejoin="round" />
           <path d="M12 2.8V6.6H15.8" stroke={stroke} strokeWidth="1.6" strokeLinejoin="round" />
+        </svg>
+      );
+    case "knowledge":
+      return (
+        <svg {...common}>
+          <path d="M4.2 4.2H9.5C10.9 4.2 12 5.3 12 6.7V16.2H6.7C5.3 16.2 4.2 15.1 4.2 13.7V4.2Z" stroke={stroke} strokeWidth="1.5" strokeLinejoin="round" />
+          <path d="M7 7H9.8M7 9.8H9.6" stroke={stroke} strokeWidth="1.5" strokeLinecap="round" />
+          <path d="M12 5.2H13.2C14.6 5.2 15.8 6.4 15.8 7.8V15.2" stroke={stroke} strokeWidth="1.5" strokeLinecap="round" />
         </svg>
       );
     case "share":
@@ -288,6 +301,7 @@ const NAV_ROW: Array<{
   { label: "主页", href: "/home", key: "home", icon: "home" },
   { label: "会话", href: "/sessions", key: "sessions", icon: "chat" },
   { label: "文档", href: "/documents", key: "documents", icon: "doc" },
+  { label: "知识库", href: "/knowledge", key: "knowledge", icon: "knowledge" },
   { label: "分享 / 协作", href: "/share", key: "share", icon: "share" },
   { label: "任务", href: "/tasks", key: "tasks", icon: "tasks" },
   { label: "团队", href: "/team", key: "team", icon: "team" },

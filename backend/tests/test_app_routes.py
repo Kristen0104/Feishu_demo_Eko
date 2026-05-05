@@ -204,3 +204,14 @@ def test_settings_redis_url_includes_password_when_present() -> None:
 
     assert with_password.REDIS_URL == "redis://:secret@redis.example.com:6380/2"
     assert without_password.REDIS_URL == "redis://redis.example.com:6380/2"
+
+
+def test_settings_default_feishu_redirect_uri_points_to_frontend_callback() -> None:
+    settings = Settings()
+
+    assert settings.FEISHU_OAUTH_REDIRECT_URI == "http://127.0.0.1:3002/login/feishu/callback"
+    assert settings.FRONTEND_LOGIN_SUCCESS_URL == "http://127.0.0.1:3002/home"
+
+
+def test_team_router_is_registered_in_container_registry() -> None:
+    assert ("app.modules.team.router", "/api/v1/team") in container.ROUTER_REGISTRY

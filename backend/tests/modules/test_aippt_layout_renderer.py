@@ -28,7 +28,7 @@ def test_three_cards_template_renders_fixed_cards() -> None:
     svg = client.generate_slide_svg(plan, plan.slides[0], "# Design Spec")
 
     assert 'viewBox="0 0 1280 720"' in svg
-    assert "Key Cards" in svg
+    assert "Key Cards" not in svg
     assert svg.count('<rect x="748"') == 3
     assert "跨部门协作低效" in svg
 
@@ -379,3 +379,33 @@ def test_fit_text_to_box_shrinks_font_and_still_truncates_when_necessary() -> No
         font_size=fitted.font_size,
         line_height=fitted.line_height,
     )
+
+
+def test_dense_left_points_stay_inside_content_panel() -> None:
+    renderer = AIPPTTemplateRenderer()
+    profile = renderer._body_density_profile("dense")
+    svg = renderer.render(
+        deck_title="测试 PPT",
+        slide_number=1,
+        template_name="three_cards",
+        page_title="语义扩写测试",
+        objective="验证 dense 模式不会把左侧正文挤出面板。",
+        text_box=[
+            "第一条正文需要足够完整，说明背景、判断依据和业务影响。",
+            "第二条正文需要展开关键场景，避免只保留一个短标签。",
+            "第三条正文需要说明行动抓手，帮助读者理解下一步。",
+            "第四条正文需要承接前后页面，让叙事保持连贯。",
+            "第五条正文需要给出结论或验证口径，保证信息完整。",
+            "第六条正文作为计划内容存在，但视觉渲染应控制在安全范围内。",
+        ],
+        right_items=["背景", "行动", "验证"],
+        accent="#C53030",
+        accent_soft="#FED7D7",
+        accent_pale="#FFF5F5",
+        body_density="dense",
+    )
+
+    assert profile["left_points"] == 5
+    assert svg.count('<circle cx="108"') == 5
+    assert "第六条正文" not in svg
+    assert "Key Cards" not in svg

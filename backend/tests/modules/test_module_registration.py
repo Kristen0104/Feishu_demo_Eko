@@ -5,6 +5,7 @@ from collections.abc import Callable
 from fastapi import FastAPI
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
+from starlette.routing import WebSocketRoute
 
 from app.core import container
 from app.modules.aippt.dependencies import get_aippt_service
@@ -64,14 +65,19 @@ def test_register_routers_mounts_expected_paths() -> None:
     app = FastAPI()
     container.register_routers(app)
 
-    routes = {
-        route.path: route
-        for route in app.routes
-        if isinstance(route, APIRoute)
-    }
+    routes: dict[str, set[str]] = {}
+    websocket_routes: set[str] = set()
+    for route in app.routes:
+        if isinstance(route, WebSocketRoute):
+            websocket_routes.add(route.path)
+            continue
+        if isinstance(route, APIRoute):
+            routes.setdefault(route.path, set()).update(route.methods or set())
 
     expected_surface = {
         "/system/ping": {"GET"},
+        "/api/v1/auth/register": {"POST"},
+        "/api/v1/auth/login": {"POST"},
         "/api/v1/auth/feishu/login": {"POST"},
         "/api/v1/auth/feishu/login-url": {"GET"},
         "/api/v1/auth/feishu/callback": {"GET"},
@@ -86,7 +92,8 @@ def test_register_routers_mounts_expected_paths() -> None:
         "/api/v1/canvas/board/tasks/{task_id}": {"GET"},
         "/api/v1/canvas/board/tasks/{task_id}/run": {"POST"},
         "/api/v1/agent/tasks": {"POST"},
-        "/api/v1/rag/files": {"GET"},
+        "/api/v1/rag/files": {"GET", "POST"},
+        "/api/v1/rag/search": {"GET"},
         "/api/v1/feishu/cards/{card_id}": {"GET"},
         "/api/v1/feishu/board/import": {"POST"},
         "/api/v1/feishu/board/create-notes": {"POST"},
@@ -94,6 +101,7 @@ def test_register_routers_mounts_expected_paths() -> None:
         "/api/v1/feishu/board/image/{whiteboard_id}": {"GET"},
         "/api/v1/feishu/board/update": {"POST"},
         "/api/v1/feishu/board/delete": {"POST"},
+        "/api/v1/feishu/events": {"POST"},
         "/api/v1/feishu/sync/publish": {"POST"},
         "/api/v1/feishu/sync/status/{ticket}": {"GET"},
         "/api/v1/ppt/generate": {"POST"},
@@ -102,11 +110,21 @@ def test_register_routers_mounts_expected_paths() -> None:
         "/api/v1/ppt/files/{job_id}": {"GET"},
         "/api/v1/workspace/{workspace_id}": {"GET"},
         "/api/v1/sync/ws/{session_id}": {"GET"},
+        "/api/v1/sync/sessions": {"GET"},
+        "/api/v1/sync/sessions/{session_id}": {"GET", "DELETE"},
+        "/api/v1/team/members": {"GET"},
+        "/api/v1/team/members/invite": {"POST"},
+        "/api/v1/team/members/{member_id}": {"DELETE"},
+    }
+    expected_websocket_surface = {
+        "/api/v1/sync/ws/session/{session_id}",
     }
 
     assert expected_surface.keys() <= routes.keys()
     for path, methods in expected_surface.items():
-        assert routes[path].methods == methods
+        assert routes[path] == methods
+    for path in expected_websocket_surface:
+        assert path in websocket_routes
 
 
 def test_stub_module_endpoints_return_expected_contracts() -> None:
@@ -238,3 +256,16 @@ def test_stub_module_endpoints_return_expected_contracts() -> None:
 
         assert response.status_code == 200
         assert validator(response.json())
+
+
+def test_sync_websocket_emits_session_connected_frame() -> None:
+    client = _build_client()
+
+    with client.websocket_connect("/api/v1/sync/ws/session/session-999") as websocket:
+        frame = websocket.receive_json()
+
+    assert frame == {
+        "type": "SESSION_CONNECTED",
+        "session_id": "session-999",
+        "payload": {"transport": "websocket"},
+    }

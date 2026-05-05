@@ -288,11 +288,11 @@
         <div class="title-row">
           <div>
             <h1>PPT 生成测试页</h1>
-            <div class="subtitle">极简测试界面，直接调用 `/api/v1/ppt/decks`、`/modify`、`/export` 和 `/themes`。</div>
+            <div class="subtitle">极简测试界面，直接调用 `/api/v1/ppt/generate`、`/jobs/{job_id}` 和 `/files/{job_id}`。</div>
           </div>
           <div class="row">
             <span class="badge info" id="connectionBadge">待连接</span>
-            <span class="badge" id="deckBadge">Deck: -</span>
+            <span class="badge" id="jobBadge">Job: -</span>
           </div>
         </div>
       </header>
@@ -347,7 +347,7 @@
 
             <div class="compact">
               <div class="field">
-                <label for="themeSelect">主题</label>
+                <label for="themeSelect">风格</label>
                 <select id="themeSelect">
                   <option value="business">business 商务风</option>
                   <option value="academic">academic 学术风</option>
@@ -357,60 +357,59 @@
                 </select>
               </div>
               <div class="field">
-                <label for="slidesLimit">slides_limit</label>
-                <input id="slidesLimit" type="number" min="1" max="100" step="1" value="8" />
+                <label for="designModeSelect">design_mode</label>
+                <select id="designModeSelect">
+                  <option value="template" selected>template 模板</option>
+                  <option value="free_design">free_design 自由设计</option>
+                </select>
               </div>
-            </div>
-
-            <div class="field">
-              <label for="modifyText">自然语言修改</label>
-              <textarea id="modifyText" placeholder="例如：把前 3 页改成更商务一些，减少长句。"></textarea>
             </div>
 
             <div class="compact">
               <div class="field">
-                <label for="slideId">slide_id</label>
-                <input id="slideId" placeholder="可选，例如 1 / intro / slide-3" />
+                <label for="slidesLimit">page_count</label>
+                <input id="slidesLimit" type="number" min="1" max="20" step="1" value="8" />
               </div>
               <div class="field">
-                <label for="deckId">deck_id</label>
-                <input id="deckId" placeholder="生成后自动回填" />
+                <label for="jobId">job_id</label>
+                <input id="jobId" placeholder="生成后自动回填，也可手动查询已有任务" />
               </div>
             </div>
 
             <div class="field">
-              <label for="themesHint">后端主题列表</label>
-              <div class="theme-hint" id="themesHint">正在加载 themes...</div>
-              <div class="theme-list" id="themeList"></div>
+              <label for="designModesHint">后端生成模式</label>
+              <div class="theme-hint" id="designModesHint">正在加载 /design-modes...</div>
+              <div class="theme-list" id="designModesList"></div>
             </div>
 
             <div class="row">
               <button class="button primary" id="generateBtn">生成 PPT</button>
-              <button class="button secondary" id="modifyBtn" disabled>修改并刷新</button>
-              <button class="button ghost" id="exportBtn" disabled>导出</button>
+              <button class="button secondary" id="refreshBtn" disabled>刷新状态</button>
+              <button class="button ghost" id="downloadBtn" disabled>打开文件</button>
             </div>
 
             <div class="status">
               <div class="status-line">
                 <span class="badge" id="requestBadge">空闲</span>
-                <span class="badge" id="themeBadge">主题: -</span>
-                <span class="badge" id="slidesBadge">slides_limit: 8</span>
+                <span class="badge" id="styleBadge">风格: -</span>
+                <span class="badge" id="designModeBadge">design_mode: template</span>
+                <span class="badge" id="slidesBadge">page_count: 8</span>
               </div>
               <div class="log" id="logBox">等待操作。</div>
-              <div class="small" id="exportInfo"></div>
+              <div class="small" id="jobInfo"></div>
             </div>
           </div>
         </section>
 
         <section class="panel preview-wrap">
           <div class="panel-head">
-            <h2>HTML PPT 预览</h2>
+            <h2>任务状态与下载</h2>
             <div class="preview-toolbar">
-              <span class="small">直接渲染后端返回的 HTML</span>
+              <span class="small">轮询 /jobs/{job_id}，完成后打开 /files/{job_id}</span>
             </div>
           </div>
-          <div class="preview-box">
-            <iframe id="previewFrame" sandbox="allow-scripts allow-same-origin"></iframe>
+          <div class="panel-body" id="jobSummary">
+            <div class="small">等待生成任务或手动输入 job_id 后刷新状态。</div>
           </div>
         </section>
       </main>
@@ -425,23 +424,23 @@
         feishuState: document.getElementById("feishuState"),
         sourceText: document.getElementById("sourceText"),
         themeSelect: document.getElementById("themeSelect"),
+        designModeSelect: document.getElementById("designModeSelect"),
         slidesLimit: document.getElementById("slidesLimit"),
-        modifyText: document.getElementById("modifyText"),
-        slideId: document.getElementById("slideId"),
-        deckId: document.getElementById("deckId"),
-        themesHint: document.getElementById("themesHint"),
-        themeList: document.getElementById("themeList"),
+        jobId: document.getElementById("jobId"),
+        designModesHint: document.getElementById("designModesHint"),
+        designModesList: document.getElementById("designModesList"),
         requestBadge: document.getElementById("requestBadge"),
         connectionBadge: document.getElementById("connectionBadge"),
-        themeBadge: document.getElementById("themeBadge"),
+        styleBadge: document.getElementById("styleBadge"),
+        designModeBadge: document.getElementById("designModeBadge"),
         slidesBadge: document.getElementById("slidesBadge"),
-        deckBadge: document.getElementById("deckBadge"),
+        jobBadge: document.getElementById("jobBadge"),
         logBox: document.getElementById("logBox"),
-        previewFrame: document.getElementById("previewFrame"),
-        exportInfo: document.getElementById("exportInfo"),
+        jobInfo: document.getElementById("jobInfo"),
+        jobSummary: document.getElementById("jobSummary"),
         generateBtn: document.getElementById("generateBtn"),
-        modifyBtn: document.getElementById("modifyBtn"),
-        exportBtn: document.getElementById("exportBtn"),
+        refreshBtn: document.getElementById("refreshBtn"),
+        downloadBtn: document.getElementById("downloadBtn"),
         loginUrlBtn: document.getElementById("loginUrlBtn"),
         openLoginBtn: document.getElementById("openLoginBtn"),
         exchangeLoginBtn: document.getElementById("exchangeLoginBtn"),
@@ -449,10 +448,10 @@
       };
 
       const state = {
-        html: "",
-        deckId: "",
-        exportResult: null,
-        themes: [],
+        jobId: "",
+        job: null,
+        designModes: [],
+        pollTimer: null,
       };
 
       const storageKey = "eko-ppt-test-api-base";
@@ -462,6 +461,7 @@
       const defaultBase = window.location.protocol === "file:"
         ? "http://localhost:8000"
         : (window.location.origin && window.location.origin !== "null" ? window.location.origin : "http://localhost:8000");
+
       els.apiBase.value = localStorage.getItem(storageKey) || defaultBase;
       els.feishuState.value = localStorage.getItem(oauthStateKey) || "";
       els.feishuRedirectUri.value = localStorage.getItem(oauthRedirectKey) || "";
@@ -485,6 +485,15 @@
         return base ? `${base}${path}` : path;
       }
 
+      function escapeHtml(text) {
+        return String(text)
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#39;");
+      }
+
       function setRequestState(text, kind = "info") {
         els.requestBadge.textContent = text;
         els.requestBadge.className = `badge ${kind === "error" ? "err" : kind === "ok" ? "ok" : "info"}`;
@@ -503,53 +512,6 @@
           else lines.push(JSON.stringify(extra, null, 2));
         }
         els.logBox.textContent = lines.join("\n");
-      }
-
-      function setPreview(html) {
-        state.html = html || "";
-        els.previewFrame.srcdoc = state.html || "<!doctype html><html><body style='font-family:system-ui;padding:24px;color:#64748b;'>等待后端返回 HTML...</body></html>";
-      }
-
-      function updateMeta() {
-        const theme = els.themeSelect.value || "-";
-        els.themeBadge.textContent = `主题: ${theme}`;
-        els.slidesBadge.textContent = `slides_limit: ${els.slidesLimit.value || "-"}`;
-        els.deckBadge.textContent = `Deck: ${state.deckId || "-"}`;
-        els.modifyBtn.disabled = !state.deckId;
-        els.exportBtn.disabled = !state.deckId;
-      }
-
-      function pickHtml(data) {
-        if (!data || typeof data !== "object") return "";
-        return (
-          data.html ||
-          data.preview_html ||
-          data.deck_html ||
-          data.content ||
-          data.rendered_html ||
-          data.preview ||
-          data.deck?.html ||
-          data.result?.html ||
-          ""
-        );
-      }
-
-      function pickDeckId(data) {
-        if (!data || typeof data !== "object") return "";
-        return data.deck_id || data.deckId || data.id || data.deck?.id || "";
-      }
-
-      function pickExport(data) {
-        if (!data || typeof data !== "object") return null;
-        return {
-          path: data.path || data.export_path || data.file_path || "",
-          url: data.url || data.export_url || data.download_url || "",
-          raw: data,
-        };
-      }
-
-      function safeText(value) {
-        return escapeHtml(value == null ? "" : String(value));
       }
 
       async function requestJson(path, options = {}) {
@@ -579,6 +541,102 @@
           throw new Error(body.message || `API 返回错误 code=${body.code}`);
         }
         return body;
+      }
+
+      function pickJobId(data) {
+        if (!data || typeof data !== "object") return "";
+        return data.job_id || data.jobId || data.id || "";
+      }
+
+      function pickDownloadUrl(data) {
+        if (!data || typeof data !== "object") return "";
+        return data.download_url || data.downloadUrl || "";
+      }
+
+      function resolveHref(url) {
+        if (!url) return "";
+        return /^https?:\/\//i.test(url) ? url : apiUrl(url);
+      }
+
+      function renderDesignModes(modes) {
+        els.designModesList.innerHTML = "";
+        if (!modes.length) {
+          els.designModesHint.textContent = "后端没有返回生成模式，继续使用下拉框中的固定选项。";
+          return;
+        }
+        els.designModesHint.textContent = "后端 design-modes：";
+        modes.forEach((item) => {
+          const span = document.createElement("span");
+          span.className = "pill";
+          if (typeof item === "string") {
+            span.textContent = item;
+          } else {
+            span.textContent = [item.mode, item.label].filter(Boolean).join(" ");
+          }
+          els.designModesList.appendChild(span);
+        });
+      }
+
+      function renderJobSummary(job) {
+        if (!job) {
+          els.jobSummary.innerHTML = '<div class="small">等待生成任务或手动输入 job_id 后刷新状态。</div>';
+          return;
+        }
+        const rows = [
+          ["job_id", job.job_id],
+          ["status", job.status],
+          ["progress", `${job.progress}%`],
+          ["current_step", job.current_step],
+          ["source_type", job.source_type],
+          ["source_name", job.source_name || "-"],
+          ["page_count", job.page_count],
+          ["style", job.style],
+          ["design_mode", job.design_mode],
+          ["download_url", job.download_url || "-"],
+          ["error", job.error || "-"],
+          ["created_at", job.created_at],
+          ["updated_at", job.updated_at],
+        ];
+        els.jobSummary.innerHTML = rows.map(([label, value]) => `
+          <div class="status-line" style="justify-content:space-between;border-bottom:1px solid var(--line);padding:8px 0;">
+            <span class="small" style="min-width:120px;">${escapeHtml(label)}</span>
+            <span style="text-align:right;word-break:break-all;">${escapeHtml(value == null ? "-" : String(value))}</span>
+          </div>
+        `).join("");
+      }
+
+      function renderJobInfo(job) {
+        if (!job) {
+          els.jobInfo.textContent = "";
+          return;
+        }
+        const downloadUrl = pickDownloadUrl(job);
+        els.jobInfo.innerHTML = downloadUrl
+          ? `下载链接：<a class="link" href="${escapeHtml(resolveHref(downloadUrl))}" target="_blank" rel="noreferrer">${escapeHtml(downloadUrl)}</a>`
+          : "下载链接：等待任务完成后生成。";
+      }
+
+      function syncMeta() {
+        const style = els.themeSelect.value || "-";
+        const designMode = els.designModeSelect.value || "-";
+        els.styleBadge.textContent = `风格: ${style}`;
+        els.designModeBadge.textContent = `design_mode: ${designMode}`;
+        els.slidesBadge.textContent = `page_count: ${els.slidesLimit.value || "-"}`;
+        els.jobBadge.textContent = `Job: ${state.jobId || "-"}`;
+        els.refreshBtn.disabled = !state.jobId;
+        els.downloadBtn.disabled = !pickDownloadUrl(state.job);
+      }
+
+      function applyJob(job) {
+        state.job = job || null;
+        const jobId = pickJobId(job);
+        if (jobId) {
+          state.jobId = jobId;
+          els.jobId.value = jobId;
+        }
+        renderJobSummary(state.job);
+        renderJobInfo(state.job);
+        syncMeta();
       }
 
       async function getFeishuLoginUrl() {
@@ -642,187 +700,142 @@
         }
       }
 
-      function renderThemes(themes) {
-        els.themeList.innerHTML = "";
-        if (!themes.length) {
-          els.themesHint.textContent = "后端没有返回主题列表，继续使用上面的固定选项。";
-          return;
-        }
-        els.themesHint.textContent = "后端 themes：";
-        themes.forEach((item) => {
-          const span = document.createElement("span");
-          span.className = "pill";
-          span.textContent = typeof item === "string" ? item : (item.name || item.label || item.id || JSON.stringify(item));
-          els.themeList.appendChild(span);
-        });
-      }
-
-      async function loadThemes() {
+      async function loadDesignModes() {
         try {
-          const body = await requestJson("/api/v1/ppt/themes", { method: "GET" });
-          const data = body.data;
-          const themes = Array.isArray(data) ? data : Array.isArray(data?.themes) ? data.themes : [];
-          state.themes = themes;
-          renderThemes(themes);
-          setConnectionState("themes 已加载", "ok");
-          log("已加载 themes", themes);
+          const body = await requestJson("/api/v1/ppt/design-modes", { method: "GET" });
+          const modes = Array.isArray(body.data) ? body.data : [];
+          state.designModes = modes;
+          renderDesignModes(modes);
+          setConnectionState("design-modes 已加载", "ok");
+          log("已加载 design-modes", modes);
         } catch (error) {
-          els.themesHint.textContent = "themes 加载失败，界面仍可继续测试生成/修改/导出。";
-          setConnectionState("themes 加载失败", "error");
-          log("加载 themes 失败", String(error.message || error));
+          els.designModesHint.textContent = "design-modes 加载失败，界面仍可继续测试生成/状态/下载。";
+          setConnectionState("design-modes 加载失败", "error");
+          log("加载 design-modes 失败", String(error.message || error));
         }
       }
 
       function syncLocalSettings() {
         localStorage.setItem(storageKey, els.apiBase.value);
-        updateMeta();
+        syncMeta();
       }
 
-      async function generateDeck() {
+      function stopPolling() {
+        if (state.pollTimer) {
+          window.clearInterval(state.pollTimer);
+          state.pollTimer = null;
+        }
+      }
+
+      function startPolling() {
+        stopPolling();
+        state.pollTimer = window.setInterval(() => {
+          if (!state.jobId) {
+            stopPolling();
+            return;
+          }
+          refreshJobStatus({ quiet: true });
+        }, 3000);
+      }
+
+      async function generatePpt() {
         syncLocalSettings();
         setRequestState("生成中...", "info");
         els.generateBtn.disabled = true;
         try {
           const text = els.sourceText.value.trim();
-          const theme = els.themeSelect.value;
-          const slidesLimit = Number(els.slidesLimit.value || 0);
+          const style = els.themeSelect.value;
+          const designMode = els.designModeSelect.value;
+          const pageCount = Number(els.slidesLimit.value || 0);
           const payload = {
-            type: "chat_record",
-            content: text,
-            preferences: {
-              theme,
-              slides_limit: slidesLimit,
-            },
+            topic: text,
+            page_count: pageCount,
+            style,
+            design_mode: designMode,
           };
-          const body = await requestJson("/api/v1/ppt/decks", {
+          const body = await requestJson("/api/v1/ppt/generate", {
             method: "POST",
             body: JSON.stringify(payload),
           });
-          const data = body.data || {};
-          const html = pickHtml(data);
-          const deckId = pickDeckId(data);
-          if (deckId) {
-            state.deckId = deckId;
-            els.deckId.value = deckId;
-          }
-          if (html) setPreview(html);
-          els.exportInfo.textContent = "";
-          setRequestState("生成成功", "ok");
+          applyJob(body.data || {});
+          setRequestState("任务已创建", "ok");
           log("生成成功", body);
+          startPolling();
+          await refreshJobStatus({ quiet: true });
         } catch (error) {
           setRequestState("生成失败", "error");
           log("生成失败", String(error.message || error));
         } finally {
           els.generateBtn.disabled = false;
-          updateMeta();
+          syncMeta();
         }
       }
 
-      async function modifyDeck() {
+      async function refreshJobStatus(options = {}) {
         syncLocalSettings();
-        const deckId = (els.deckId.value || state.deckId || "").trim();
-        if (!deckId) {
-          setRequestState("缺少 deck_id", "error");
-          log("修改失败：请先生成 deck 或手动填写 deck_id");
-          return;
-        }
-        setRequestState("修改中...", "info");
-        els.modifyBtn.disabled = true;
-        try {
-          const instruction = els.modifyText.value.trim();
-          const slideId = els.slideId.value.trim();
-          const payload = {
-            instruction,
-            prompt: instruction,
-            natural_language: instruction,
-            text: instruction,
-            slide_id: slideId || undefined,
-            slideId: slideId || undefined,
-          };
-          const body = await requestJson(`/api/v1/ppt/decks/${encodeURIComponent(deckId)}/modify`, {
-            method: "POST",
-            body: JSON.stringify(payload),
-          });
-          const data = body.data || {};
-          const html = pickHtml(data);
-          if (html) setPreview(html);
-          const nextDeckId = pickDeckId(data);
-          if (nextDeckId) {
-            state.deckId = nextDeckId;
-            els.deckId.value = nextDeckId;
+        const quiet = Boolean(options.quiet);
+        const jobId = (els.jobId.value || state.jobId || "").trim();
+        if (!jobId) {
+          if (!quiet) {
+            setRequestState("缺少 job_id", "error");
+            log("刷新失败：请先生成任务或手动填写 job_id");
           }
-          setRequestState("修改成功", "ok");
-          log("修改成功", body);
-        } catch (error) {
-          setRequestState("修改失败", "error");
-          log("修改失败", String(error.message || error));
-        } finally {
-          els.modifyBtn.disabled = false;
-          updateMeta();
-        }
-      }
-
-      async function exportDeck() {
-        syncLocalSettings();
-        const deckId = (els.deckId.value || state.deckId || "").trim();
-        if (!deckId) {
-          setRequestState("缺少 deck_id", "error");
-          log("导出失败：请先生成 deck 或手动填写 deck_id");
           return;
         }
-        setRequestState("导出中...", "info");
-        els.exportBtn.disabled = true;
+        if (!quiet) {
+          setRequestState("查询中...", "info");
+        }
+        els.refreshBtn.disabled = true;
         try {
-          const body = await requestJson(`/api/v1/ppt/decks/${encodeURIComponent(deckId)}/export`, {
-            method: "POST",
-            body: JSON.stringify({}),
-          });
-          const data = body.data || {};
-          const result = pickExport(data);
-          state.exportResult = result;
-          const parts = [];
-          if (result?.path) parts.push(`<div>path: ${safeText(result.path)}</div>`);
-          if (result?.url) parts.push(`<div>url: <a class="link" href="${safeText(result.url)}" target="_blank" rel="noreferrer">${safeText(result.url)}</a></div>`);
-          els.exportInfo.innerHTML = parts.length
-            ? parts.join("")
-            : `<div>导出结果：<pre style="margin:6px 0 0; white-space:pre-wrap;">${escapeHtml(JSON.stringify(data, null, 2))}</pre></div>`;
-          setRequestState("导出成功", "ok");
-          log("导出成功", body);
+          const body = await requestJson(`/api/v1/ppt/jobs/${encodeURIComponent(jobId)}`, { method: "GET" });
+          applyJob(body.data || {});
+          if (!quiet) {
+            setRequestState("状态已更新", "ok");
+            log("任务状态", body);
+          }
+          if (state.job?.status === "done" || state.job?.status === "failed") {
+            stopPolling();
+          }
         } catch (error) {
-          setRequestState("导出失败", "error");
-          log("导出失败", String(error.message || error));
+          if (!quiet) {
+            setRequestState("刷新失败", "error");
+            log("刷新失败", String(error.message || error));
+          }
         } finally {
-          els.exportBtn.disabled = false;
-          updateMeta();
+          syncMeta();
         }
       }
 
-      function escapeHtml(text) {
-        return String(text)
-          .replaceAll("&", "&amp;")
-          .replaceAll("<", "&lt;")
-          .replaceAll(">", "&gt;")
-          .replaceAll('"', "&quot;")
-          .replaceAll("'", "&#39;");
+      function openDownload() {
+        const downloadUrl = pickDownloadUrl(state.job);
+        const jobId = (state.jobId || els.jobId.value || "").trim();
+        if (downloadUrl) {
+          window.open(resolveHref(downloadUrl), "_blank", "noopener,noreferrer");
+          return;
+        }
+        if (jobId) {
+          window.open(apiUrl(`/api/v1/ppt/files/${encodeURIComponent(jobId)}`), "_blank", "noopener,noreferrer");
+        }
       }
 
       els.apiBase.addEventListener("change", syncLocalSettings);
-      els.themeSelect.addEventListener("change", updateMeta);
-      els.slidesLimit.addEventListener("input", updateMeta);
-      els.deckId.addEventListener("input", () => {
-        state.deckId = els.deckId.value.trim();
-        updateMeta();
+      els.themeSelect.addEventListener("change", syncMeta);
+      els.designModeSelect.addEventListener("change", syncMeta);
+      els.slidesLimit.addEventListener("input", syncMeta);
+      els.jobId.addEventListener("input", () => {
+        state.jobId = els.jobId.value.trim();
+        syncMeta();
       });
 
-      els.generateBtn.addEventListener("click", generateDeck);
-      els.modifyBtn.addEventListener("click", modifyDeck);
-      els.exportBtn.addEventListener("click", exportDeck);
+      els.generateBtn.addEventListener("click", generatePpt);
+      els.refreshBtn.addEventListener("click", () => refreshJobStatus());
+      els.downloadBtn.addEventListener("click", openDownload);
       els.loginUrlBtn.addEventListener("click", getFeishuLoginUrl);
       els.openLoginBtn.addEventListener("click", openFeishuLogin);
       els.exchangeLoginBtn.addEventListener("click", exchangeFeishuCode);
       els.meBtn.addEventListener("click", loadCurrentUser);
 
-      els.sourceText.value = `试验版多布局 PPT 联测材料
+      els.sourceText.value = `试验版 AIPPT 联测材料
 请优先覆盖这些新版结构：
 1. 章节页 / section_divider：每个章节开头单独分页，标题要简短有力。
 2. 金句页 / quote：用一句最能代表章节结论的话做强记忆点。
@@ -833,12 +846,17 @@
 7. 指标页 / metrics：展示 3-4 个核心 KPI，数字要醒目。
 8. 时间线 / timeline：按时间顺序写里程碑、交付节奏和截止日期。
 要求：至少 8 页，尽量覆盖 section_divider、quote、process、matrix、architecture、comparison、metrics、timeline 这些结构差异。`;
-      els.modifyText.value = "保留多布局结构，把封面更简洁，指标页更突出数字，时间线和风险对比更清晰，再补一页行动总结。";
-
-      updateMeta();
-      setPreview("");
+      els.themeSelect.value = "apple_white";
+      els.designModeSelect.value = "template";
+      els.slidesLimit.value = "8";
+      els.jobId.value = "";
+      state.jobId = "";
+      state.job = null;
+      renderJobSummary(null);
+      renderJobInfo(null);
+      syncMeta();
       setRequestState("空闲", "info");
-      loadThemes();
+      loadDesignModes();
     </script>
   </body>
 </html>

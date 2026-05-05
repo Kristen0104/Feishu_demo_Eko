@@ -3,6 +3,17 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 
+class AuthLoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class AuthRegisterRequest(BaseModel):
+    display_name: str
+    email: str
+    password: str
+
+
 class FeishuLoginRequest(BaseModel):
     code: str
     state: str
@@ -32,6 +43,7 @@ class AuthUserSchema(BaseModel):
     user_id: str
     display_name: str
     feishu_user_id: str
+    email: str | None = None
     avatar_url: str | None = None
 
 

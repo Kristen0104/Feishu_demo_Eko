@@ -2,6 +2,7 @@ export type WorkspaceNavKey =
   | "home"
   | "sessions"
   | "documents"
+  | "knowledge"
   | "share"
   | "tasks"
   | "team"
@@ -12,6 +13,7 @@ const LABELS: Record<WorkspaceNavKey, string> = {
   home: "主页",
   sessions: "会话",
   documents: "文档",
+  knowledge: "知识库",
   share: "分享 / 协作",
   tasks: "任务",
   team: "团队",
@@ -26,6 +28,7 @@ export function resolveWorkspaceNav(pathname: string): { activeNav: WorkspaceNav
   if (path === "/home") return { activeNav: "home", pageLabel: LABELS.home };
   if (path.startsWith("/sessions")) return { activeNav: "sessions", pageLabel: LABELS.sessions };
   if (path.startsWith("/documents")) return { activeNav: "documents", pageLabel: LABELS.documents };
+  if (path.startsWith("/knowledge")) return { activeNav: "knowledge", pageLabel: LABELS.knowledge };
   if (path.startsWith("/share")) return { activeNav: "share", pageLabel: LABELS.share };
   if (path.startsWith("/tasks")) return { activeNav: "tasks", pageLabel: LABELS.tasks };
   if (path.startsWith("/team")) return { activeNav: "team", pageLabel: LABELS.team };

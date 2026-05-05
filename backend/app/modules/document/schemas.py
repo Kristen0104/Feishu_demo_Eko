@@ -41,6 +41,20 @@ class DocumentGenerationRequest(BaseModel):
     bitable_records: list[BitableRecord] = Field(default_factory=list)
 
 
+class DocumentEditRequest(BaseModel):
+    session_id: str
+    instruction: str
+    current_content: str
+    title: str | None = None
+
+
+class DocumentEditResponse(BaseModel):
+    session_id: str
+    status: str
+    content: str
+    summary: str
+
+
 class DocumentGenerationResponse(BaseModel):
     session_id: str
     status: str
@@ -60,3 +74,17 @@ class DocumentSaveResponse(BaseModel):
     session_id: str
     status: str
     message: str
+
+
+class DocumentAutoSyncRequest(BaseModel):
+    session_id: str
+    title: str
+    content: str
+    current_url: str | None = None
+
+
+class DocumentAutoSyncResponse(BaseModel):
+    session_id: str
+    status: str
+    message: str
+    document_url: str | None = None

@@ -197,9 +197,13 @@ def get_palette(name: str = "classic") -> dict[str, Any]:
 
 def choose_layout_mode(message: str) -> str:
     normalized = _normalize_text(message)
+    if any(keyword in normalized for keyword in ("树图", "树状图", "树形图")):
+        return LAYOUT_TREE
+    if any(keyword in normalized for keyword in ("思路图", "脑图", "导图", "思维导图", "mindmap")):
+        return LAYOUT_TREE
     if any(keyword in normalized for keyword in ("组织架构", "组织图", "汇报关系", "部门", "团队")):
         return LAYOUT_TREE
-    if any(keyword in normalized for keyword in ("矩阵", "对比", "表格", "维度")):
+    if any(keyword in normalized for keyword in ("矩阵", "对比", "表格", "维度", "看板", "kanban")):
         return LAYOUT_MATRIX
     if any(keyword in normalized for keyword in ("微服务", "拓扑", "集成", "平级互联", "独立模块")):
         return LAYOUT_ISLAND
@@ -912,6 +916,52 @@ def fallback_plan_from_message(message: str) -> dict[str, Any]:
     layout_mode = choose_layout_mode(message)
     title = _infer_title(message)
     detail_level = _infer_detail_level(message)
+    normalized_message = _normalize_text(message)
+
+    if layout_mode == LAYOUT_TREE and any(keyword in normalized_message for keyword in ("思路图", "脑图", "导图", "思维导图", "mindmap")):
+        if any(keyword in normalized_message for keyword in ("营销", "市场", "推广")) and any(keyword in normalized_message for keyword in ("新产品", "新品", "产品")):
+            children = ["市场洞察\n机会判断", "目标客群\n人群分层", "价值主张\n卖点提炼", "渠道打法\n触达转化", "增长验证\n数据复盘"]
+            child_groups = [
+                {"parent": "市场洞察\n机会判断", "children": ["竞品扫描\n差异定位", "需求场景\n痛点确认"]},
+                {"parent": "目标客群\n人群分层", "children": ["核心用户\n首批种子", "决策链路\n购买角色"]},
+                {"parent": "价值主张\n卖点提炼", "children": ["核心利益\n明确承诺", "证据素材\n案例背书"]},
+                {"parent": "渠道打法\n触达转化", "children": ["内容种草\n认知建立", "活动转化\n线索承接"]},
+                {"parent": "增长验证\n数据复盘", "children": ["指标看板\n漏斗监控", "AB测试\n快速迭代"]},
+            ]
+        else:
+            children = ["目标定义\n明确方向", "用户场景\n识别需求", "关键路径\n拆解动作", "资源协同\n推进落地"]
+            child_groups = [
+                {"parent": "目标定义\n明确方向", "children": ["核心问题\n统一口径", "成功指标\n衡量结果"]},
+                {"parent": "用户场景\n识别需求", "children": ["使用人群\n分层画像", "场景链路\n关键触点"]},
+                {"parent": "关键路径\n拆解动作", "children": ["优先级\n先后排序", "里程碑\n阶段交付"]},
+                {"parent": "资源协同\n推进落地", "children": ["责任分工\n owner 明确", "风险预案\n提前处理"]},
+            ]
+        edges = [{"from": "g0n0", "to": f"g1n{index}", "direction": "tb"} for index in range(len(children))]
+        for parent_index, child_group in enumerate(child_groups):
+            parent = str(child_group.get("parent") or "")
+            for child_index, _ in enumerate(_string_list(child_group.get("children"))):
+                edges.append(
+                    {
+                        "from": f"g1n{children.index(parent)}",
+                        "to": f"g2n{parent_index}_{child_index}",
+                        "direction": "tb",
+                        "shape": "right_angled_polyline",
+                    }
+                )
+        return {
+            "title": title,
+            "palette": infer_palette_name(message),
+            "layout": LAYOUT_TREE,
+            "groups": [
+                {
+                    "title": "思路图",
+                    "root": title,
+                    "children": children,
+                    "child_groups": child_groups,
+                }
+            ],
+            "edges": edges,
+        }
 
     if layout_mode == LAYOUT_MATRIX:
         rows = [
@@ -937,6 +987,44 @@ def fallback_plan_from_message(message: str) -> dict[str, Any]:
             ],
             "edges": [],
         }
+    if layout_mode == LAYOUT_TREE and not any(keyword in normalized_message for keyword in ("组织架构", "组织图", "汇报关系", "部门", "团队")):
+        children = ["主题拆解\n范围边界", "关键分支\n主要内容", "关系路径\n层级依赖", "落地输出\n结果呈现"]
+        child_groups: list[dict[str, Any]] = [
+            {"parent": "主题拆解\n范围边界", "children": ["核心对象\n明确中心", "覆盖范围\n划定边界"]},
+            {"parent": "关键分支\n主要内容", "children": ["一级分支\n主干归类", "二级要点\n补充说明"]},
+            {"parent": "关系路径\n层级依赖", "children": ["上下游关系\n顺序展开", "交叉依赖\n重点标注"]},
+            {"parent": "落地输出\n结果呈现", "children": ["行动项\n后续推进", "验收标准\n判断完成"]},
+        ]
+        if detail_level == "simple":
+            children = children[:3]
+            child_groups = child_groups[:3]
+        edges = [{"from": "g0n0", "to": f"g1n{index}", "direction": "tb"} for index in range(len(children))]
+        for parent_index, child_group in enumerate(child_groups):
+            parent = str(child_group.get("parent") or "")
+            for child_index, _ in enumerate(_string_list(child_group.get("children"))):
+                edges.append(
+                    {
+                        "from": f"g1n{children.index(parent)}",
+                        "to": f"g2n{parent_index}_{child_index}",
+                        "direction": "tb",
+                        "shape": "right_angled_polyline",
+                    }
+                )
+        return {
+            "title": title,
+            "palette": infer_palette_name(message),
+            "layout": LAYOUT_TREE,
+            "groups": [
+                {
+                    "title": "树形结构",
+                    "root": title,
+                    "children": children,
+                    "child_groups": child_groups,
+                }
+            ],
+            "edges": edges,
+        }
+
     if layout_mode == LAYOUT_TREE:
         children = ["产品设计线\n需求与体验", "技术研发线\n开发与交付"]
         child_groups: list[dict[str, Any]] = [
@@ -1014,9 +1102,12 @@ def fallback_plan_from_message(message: str) -> dict[str, Any]:
         if detail_level != "simple":
             free_nodes[1] = "原因一\n链路阻塞"
             free_nodes[2] = "原因二\n资源排队"
+            if variant != "fishbone":
+                free_nodes.append("关键指标\n趋势观察")
         if detail_level == "detailed":
             free_nodes[3] = "原因三\n协作偏差"
-            free_nodes.append("原因四\n数据延迟")
+            if variant != "fishbone":
+                free_nodes.append("原因四\n数据延迟")
         return {
             "title": title,
             "palette": infer_palette_name(message),
@@ -1734,9 +1825,12 @@ def _infer_title(message: str) -> str:
 
 def _clean_inferred_title(value: str) -> str:
     title = value.strip()
+    title = title.split("\n", 1)[0].strip()
+    title = title.split("## RAG", 1)[0].strip()
     title = re.sub(r"^(一个|一张|一份)", "", title)
     title = re.sub(r"^(完整详细的|完整的|详细的|简单的|简版的|完整详细|完整|详细|简单)", "", title)
     title = re.sub(r"(需要.*|要求.*|并体现.*|并突出.*|并展示.*)$", "", title).strip(" ，,。")
+    title = re.sub(r"[吧。.!！?？]+$", "", title).strip()
     return title or "Feishu Board"
 
 

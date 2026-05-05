@@ -1,35 +1,38 @@
 "use client";
 
+import Link from "next/link";
+
 import { WorkspacePageHeader } from "@/components/workspace/workspace-page-framing";
 import { cn } from "@/components/UiPrimitives";
-import type { SessionListPageData } from "@/types/session";
+import type { SessionItem, SessionListPageData } from "@/types/session";
 
-const mockDocs = [
-  { id: "1", name: "Q2 营销复盘 · Markdown", owner: "Sarah Chen", updated: "今天 14:20", source: "飞书文档", status: "已同步" },
-  { id: "2", name: "客户提案 · 结构化文稿", owner: "Leo", updated: "昨天 18:06", source: "会话生成", status: "草稿" },
-  { id: "3", name: "周报模板", owner: "Mia", updated: "周一", source: "本地上传", status: "已同步" },
-];
+function getDocumentSessions(data: SessionListPageData): SessionItem[] {
+  return data.sections.flatMap((section) => section.items).filter((item) => item.kind === "doc");
+}
 
 export function DocumentsWorkspacePage({ data }: { data: SessionListPageData }) {
+  const docs = getDocumentSessions(data);
+
   return (
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-white">
         <WorkspacePageHeader
           title="文档"
-          description="集中查看与管理由会话、飞书或本地上传的文稿；打开会话后可继续让 Eko 协作编辑。"
+          description="集中查看由后端同步会话产出的文稿；打开会话后可继续让 Eko 协作编辑。"
           actions={
-            <button
-              type="button"
+            <Link
+              href="/sessions"
+              prefetch={false}
               className="rounded-[12px] border border-slate-200 bg-white px-4 py-2 text-[13px] font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
             >
-              新建空白文稿
-            </button>
+              从会话生成文稿
+            </Link>
           }
         />
         <div className="min-h-0 flex-1 overflow-auto px-7 py-5">
           <div className="mb-4 flex flex-wrap items-center gap-2">
-            <span className="rounded-full bg-slate-100 px-3 py-1 text-[12px] font-medium text-slate-600">全部</span>
-            <span className="rounded-full px-3 py-1 text-[12px] font-medium text-slate-500 hover:bg-slate-50">我创建的</span>
-            <span className="rounded-full px-3 py-1 text-[12px] font-medium text-slate-500 hover:bg-slate-50">共享给我的</span>
+            <span className="rounded-full bg-slate-100 px-3 py-1 text-[12px] font-medium text-slate-600">全部 {docs.length}</span>
+            <span className="rounded-full px-3 py-1 text-[12px] font-medium text-slate-500">已同步 {docs.filter((row) => row.status === "已同步").length}</span>
+            <span className="rounded-full px-3 py-1 text-[12px] font-medium text-slate-500">生成中 {docs.filter((row) => row.status === "进行中").length}</span>
           </div>
 
           <div className="overflow-hidden rounded-[18px] border border-slate-200/90 shadow-[0_4px_24px_rgba(15,23,42,0.04)]">
@@ -44,16 +47,16 @@ export function DocumentsWorkspacePage({ data }: { data: SessionListPageData }) 
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 bg-white text-slate-800">
-                {mockDocs.map((row) => (
+                {docs.map((row) => (
                   <tr key={row.id} className="transition hover:bg-slate-50/80">
                     <td className="px-5 py-3.5">
-                      <button type="button" className="font-semibold text-blue-600 hover:underline">
-                        {row.name}
-                      </button>
+                      <Link href={`/sessions/${encodeURIComponent(row.id)}`} prefetch={false} className="font-semibold text-blue-600 hover:underline">
+                        {row.title}
+                      </Link>
                     </td>
-                    <td className="hidden px-4 py-3.5 text-slate-600 sm:table-cell">{row.owner}</td>
-                    <td className="whitespace-nowrap px-4 py-3.5 text-slate-500">{row.updated}</td>
-                    <td className="hidden px-4 py-3.5 text-slate-500 md:table-cell">{row.source}</td>
+                    <td className="hidden px-4 py-3.5 text-slate-600 sm:table-cell">{row.participants[0]?.name ?? data.user.name}</td>
+                    <td className="whitespace-nowrap px-4 py-3.5 text-slate-500">{row.updatedAt}</td>
+                    <td className="hidden px-4 py-3.5 text-slate-500 md:table-cell">{row.source} / {row.kindLabel}</td>
                     <td className="px-5 py-3.5">
                       <span
                         className={cn(
@@ -66,11 +69,19 @@ export function DocumentsWorkspacePage({ data }: { data: SessionListPageData }) 
                     </td>
                   </tr>
                 ))}
+                {docs.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="px-5 py-12 text-center">
+                      <p className="text-[14px] font-semibold text-slate-700">还没有后端同步的文稿</p>
+                      <p className="mt-1 text-[12px] text-slate-400">当会话产出 DOCX / PPT artifact 后，会自动出现在这里。</p>
+                    </td>
+                  </tr>
+                ) : null}
               </tbody>
             </table>
           </div>
 
-          <p className="mt-6 text-center text-[12px] text-slate-400">以上为演示数据；接入后端文档列表后将替换为实时内容。</p>
+          <p className="mt-6 text-center text-[12px] text-slate-400">数据来自后端同步会话列表；未再使用本地 mock 文档。</p>
         </div>
       </div>
   );

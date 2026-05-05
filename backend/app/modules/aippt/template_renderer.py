@@ -277,8 +277,8 @@ class AIPPTTemplateRenderer:
             return {
                 "objective_spec": TextBoxSpec(box_width=570, box_height=78, font_size=18, line_height=22, max_lines=3, max_chars=27, min_font_size=14),
                 "left_spec": TextBoxSpec(box_width=500, box_height=38, font_size=16, line_height=19, max_lines=2, max_chars=25, min_font_size=12),
-                "left_points": 6,
-                "left_gap": 45,
+                "left_points": 5,
+                "left_gap": 46,
             }
         return {
             "objective_spec": self._OBJECTIVE_BOX_SPEC,

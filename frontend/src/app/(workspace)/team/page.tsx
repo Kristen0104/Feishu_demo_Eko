@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 
 import { TeamWorkspacePage } from "@/components/workspace/workspace-module-pages";
-import { getSessionListPageData } from "@/lib/mock/session-list-data";
 
 export const metadata: Metadata = {
   title: "团队 · Eko",
@@ -9,5 +8,5 @@ export const metadata: Metadata = {
 };
 
 export default function TeamPage() {
-  return <TeamWorkspacePage data={getSessionListPageData()} />;
+  return <TeamWorkspacePage />;
 }

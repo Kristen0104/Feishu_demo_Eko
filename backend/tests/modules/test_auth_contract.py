@@ -9,6 +9,8 @@ from app.modules.auth.router import router
 from app.modules.auth.schemas import (
     AuthTokenSchema,
     AuthUserSchema,
+    AuthLoginRequest,
+    AuthRegisterRequest,
     FeishuCallbackRequest,
     FeishuLoginRequest,
     FeishuLoginUrlSchema,
@@ -22,6 +24,34 @@ def _build_client() -> TestClient:
 
 
 class _OverrideAuthService:
+    async def register_with_password(self, payload: AuthRegisterRequest) -> AuthTokenSchema:
+        return AuthTokenSchema(
+            access_token=f"register-{payload.email}",
+            token_type="Bearer",
+            expires_in=600,
+            user=AuthUserSchema(
+                user_id="register-user",
+                display_name=payload.display_name,
+                avatar_url=None,
+                feishu_user_id="",
+                email=payload.email,
+            ),
+        )
+
+    async def login_with_password(self, payload: AuthLoginRequest) -> AuthTokenSchema:
+        return AuthTokenSchema(
+            access_token=f"login-{payload.email}",
+            token_type="Bearer",
+            expires_in=600,
+            user=AuthUserSchema(
+                user_id="login-user",
+                display_name="Login User",
+                avatar_url=None,
+                feishu_user_id="",
+                email=payload.email,
+            ),
+        )
+
     async def create_feishu_login_url(self, redirect_uri: str | None = None) -> FeishuLoginUrlSchema:
         return FeishuLoginUrlSchema(
             authorize_url=f"https://accounts.feishu.cn/open-apis/authen/v1/authorize?redirect_uri={redirect_uri}",
@@ -69,6 +99,40 @@ def test_feishu_login_url_contract_returns_authorize_url_and_state() -> None:
     payload = response.json()["data"]
     assert payload["state"] == "state-123"
     assert payload["authorize_url"].startswith("https://accounts.feishu.cn/open-apis/authen/v1/authorize")
+
+
+def test_register_contract_returns_token_and_user() -> None:
+    app = FastAPI()
+    app.include_router(router, prefix="/api/v1/auth")
+    app.dependency_overrides[get_auth_service] = lambda: _OverrideAuthService()
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/v1/auth/register",
+        json={"email": "alice@example.com", "password": "Password123", "display_name": "Alice"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    assert payload["access_token"] == "register-alice@example.com"
+    assert payload["user"]["email"] == "alice@example.com"
+
+
+def test_login_contract_returns_token_and_user() -> None:
+    app = FastAPI()
+    app.include_router(router, prefix="/api/v1/auth")
+    app.dependency_overrides[get_auth_service] = lambda: _OverrideAuthService()
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/v1/auth/login",
+        json={"email": "alice@example.com", "password": "Password123"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    assert payload["access_token"] == "login-alice@example.com"
+    assert payload["user"]["email"] == "alice@example.com"
 
 
 def test_feishu_login_contract_returns_overridden_token_and_user() -> None:

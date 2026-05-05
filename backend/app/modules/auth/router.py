@@ -9,6 +9,8 @@ from app.modules.auth.dependencies import get_auth_service
 from app.modules.auth.schemas import (
     AuthTokenSchema,
     AuthUserSchema,
+    AuthLoginRequest,
+    AuthRegisterRequest,
     FeishuCallbackRequest,
     FeishuLoginRequest,
     FeishuLoginUrlSchema,
@@ -17,6 +19,30 @@ from app.modules.auth.service import AuthService
 from app.shared.responses import ApiResponse
 
 router = APIRouter()
+
+
+@router.post(
+    "/register",
+    response_model=ApiResponse[AuthTokenSchema],
+    summary="邮箱密码注册",
+)
+async def register(
+    payload: AuthRegisterRequest,
+    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+) -> ApiResponse[AuthTokenSchema]:
+    return ApiResponse.success(await auth_service.register_with_password(payload))
+
+
+@router.post(
+    "/login",
+    response_model=ApiResponse[AuthTokenSchema],
+    summary="邮箱密码登录",
+)
+async def login(
+    payload: AuthLoginRequest,
+    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+) -> ApiResponse[AuthTokenSchema]:
+    return ApiResponse.success(await auth_service.login_with_password(payload))
 
 
 @router.get(

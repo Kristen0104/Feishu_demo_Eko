@@ -15,10 +15,14 @@ def _utcnow() -> datetime:
 
 class User(Base):
     __tablename__ = "users"
+    __table_args__ = (UniqueConstraint("email", name="uq_users_email"),)
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: f"user_{uuid4().hex}")
+    email: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
     display_name: Mapped[str] = mapped_column(String(255), nullable=False)
     avatar_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    password_hash: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False)
 

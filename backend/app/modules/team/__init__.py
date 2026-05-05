@@ -1,0 +1,2 @@
+"""Team membership module."""
+

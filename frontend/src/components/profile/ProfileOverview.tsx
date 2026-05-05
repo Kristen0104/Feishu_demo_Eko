@@ -1,9 +1,10 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { EditableTextRow, SectionCard } from "@/components/profile/profile-blocks";
 import { deriveInitials, mergeProfile, parseLanguages } from "@/lib/profile-merge";
+import { authUserToProfilePatch, fetchCurrentAuthUser } from "@/lib/profile-api";
 import { useProfileStore } from "@/store/profile-store";
 import type { UserProfile } from "@/types/profile";
 
@@ -12,8 +13,28 @@ export function ProfileOverview({ base }: { base: UserProfile }) {
   const setProfileOverrides = useProfileStore((s) => s.setProfileOverrides);
   const markSaved = useProfileStore((s) => s.markSaved);
   const lastSavedAt = useProfileStore((s) => s.lastSavedAt);
+  const [authPatch, setAuthPatch] = useState<Partial<UserProfile> | null>(null);
+  const [authStatus, setAuthStatus] = useState<"loading" | "live" | "fallback">("loading");
 
-  const data = useMemo(() => mergeProfile(base, profileOverrides), [base, profileOverrides]);
+  useEffect(() => {
+    let alive = true;
+    void fetchCurrentAuthUser()
+      .then((user) => {
+        if (!alive) return;
+        setAuthPatch(authUserToProfilePatch(user));
+        setAuthStatus("live");
+      })
+      .catch(() => {
+        if (!alive) return;
+        setAuthStatus("fallback");
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const serverBase = useMemo(() => mergeProfile(base, authPatch ?? {}), [authPatch, base]);
+  const data = useMemo(() => mergeProfile(serverBase, profileOverrides), [profileOverrides, serverBase]);
 
   const commit = (patch: Partial<UserProfile>) => {
     setProfileOverrides(patch);
@@ -57,11 +78,18 @@ export function ProfileOverview({ base }: { base: UserProfile }) {
             {lastSavedAt ? (
               <p className="mt-3 text-[12px] text-slate-400">上次保存 · {lastSavedAt}</p>
             ) : null}
+            <p className="mt-2 text-[12px] text-slate-400">
+              {authStatus === "live"
+                ? "身份来源：后端 /api/v1/auth/me；本页编辑仍为本地覆盖"
+                : authStatus === "loading"
+                  ? "正在读取后端登录身份…"
+                  : "身份来源：本地兜底资料；未读到后端登录身份"}
+            </p>
           </div>
         </div>
       </section>
 
-      <SectionCard title="基本信息" description="点击下方「编辑」修改单项；保存后写入本地存储（演示）。">
+      <SectionCard title="基本信息" description="姓名与邮箱优先来自后端 auth/me；点击「编辑」后的变更仅写入本机覆盖层。">
         <EditableTextRow
           label="姓名"
           value={data.displayName}

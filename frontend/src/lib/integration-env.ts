@@ -1,4 +1,4 @@
-/** When true, login calls POST `/api/v1/auth/dev/token` after mock credential check (backend needs ALLOW_DEV_TOKEN=true). */
+/** Legacy compatibility hook kept while demo auth is being removed. */
 export function shouldFetchBackendDevToken(): boolean {
-  return process.env.NEXT_PUBLIC_EKO_USE_DEV_AUTH === "true";
+  return false;
 }

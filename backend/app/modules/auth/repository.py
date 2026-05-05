@@ -70,11 +70,44 @@ class AuthRepository:
     async def get_user_by_id(self, user_id: str) -> User | None:
         return await self._session.scalar(select(User).where(User.id == user_id))
 
+    async def get_user_by_email(self, email: str) -> User | None:
+        return await self._session.scalar(select(User).where(User.email == email))
+
+    async def create_local_user(self, *, email: str, display_name: str, password_hash: str) -> User:
+        now = datetime.now(UTC)
+        user = User(
+            email=email,
+            name=display_name,
+            display_name=display_name,
+            password_hash=password_hash,
+            avatar_url=None,
+            created_at=now,
+            updated_at=now,
+        )
+        self._session.add(user)
+        await self._session.flush()
+        await self._commit()
+        return user
+
     async def get_feishu_account_by_user_id(self, user_id: str) -> FeishuAccount | None:
         return await self._session.scalar(select(FeishuAccount).where(FeishuAccount.user_id == user_id))
 
     async def get_feishu_account_by_open_id(self, open_id: str) -> FeishuAccount | None:
         return await self._session.scalar(select(FeishuAccount).where(FeishuAccount.open_id == open_id))
+
+    async def resolve_user_by_feishu_identity(self, *, open_id: str | None, union_id: str | None = None) -> User | None:
+        conditions = []
+        if open_id:
+            conditions.append(FeishuAccount.open_id == open_id)
+        if union_id:
+            conditions.append(FeishuAccount.union_id == union_id)
+        if not conditions:
+            return None
+        return await self._session.scalar(
+            select(User)
+            .join(FeishuAccount, FeishuAccount.user_id == User.id)
+            .where(or_(*conditions))
+        )
 
     async def get_latest_token_by_user_id(self, user_id: str) -> FeishuOAuthToken | None:
         return await self._session.scalar(
@@ -98,6 +131,7 @@ class AuthRepository:
         )
         self._session.add(oauth_token)
         await self._session.flush()
+        await self._commit()
         return oauth_token
 
     async def upsert_feishu_identity(self, identity: FeishuIdentityUpsert) -> User:
@@ -109,7 +143,14 @@ class AuthRepository:
         )
 
         if account is None:
-            user = User(display_name=identity.name, avatar_url=identity.avatar_url, created_at=now, updated_at=now)
+            user = User(
+                name=identity.name,
+                display_name=identity.name,
+                email=identity.email,
+                avatar_url=identity.avatar_url,
+                created_at=now,
+                updated_at=now,
+            )
             self._session.add(user)
             await self._session.flush()
             account = FeishuAccount(
@@ -124,7 +165,9 @@ class AuthRepository:
             self._session.add(account)
         else:
             user = await self.get_user_by_id(account.user_id)
+            user.name = identity.name
             user.display_name = identity.name
+            user.email = identity.email or user.email
             user.avatar_url = identity.avatar_url
             user.updated_at = now
             account.open_id = identity.open_id
@@ -137,4 +180,11 @@ class AuthRepository:
         oauth_token = identity.oauth_token()
         if oauth_token is not None:
             await self.save_oauth_token(user.id, oauth_token)
+        await self._commit()
         return user
+
+    async def _commit(self) -> None:
+        commit = getattr(self._session, "commit", None)
+        if commit is None:
+            return
+        await commit()

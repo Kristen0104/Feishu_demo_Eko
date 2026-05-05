@@ -252,6 +252,16 @@ def test_simple_tree_plan_still_contains_second_level_children() -> None:
     assert plan["groups"][0]["child_groups"]
 
 
+def test_tree_diagram_keyword_uses_generic_tree_not_org_fallback() -> None:
+    plan = fallback_plan_from_message("请生成一个客户旅程树图")
+
+    assert plan["layout"] == "tree"
+    assert plan["groups"][0]["root"] == "客户旅程树图"
+    assert plan["groups"][0]["title"] == "树形结构"
+    assert "总部" not in plan["groups"][0]["root"]
+    assert all("团队" not in child for child in plan["groups"][0]["children"])
+
+
 def test_normalize_tree_plan_keeps_original_plan_shape() -> None:
     plan = {
         "title": "组织架构图",
