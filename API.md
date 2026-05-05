@@ -1,14 +1,14 @@
-# Eko API 接口说明
+# Eko API 接口文档
 
-**版本**：v1.2  
-**日期**：2026-04-26  
+**版本**：v2.0
+**日期**：2026-05-05
 **基础路径**：`/api/v1`
 
 ---
 
 ## 1. 总览
 
-本文档描述当前后端骨架在 `/api/v1` 下暴露的接口。这里只保留目前代码里已经存在的路由和响应语义，暂不展开未实现的业务流程。占位接口会明确标注为框架预留。
+本文档描述后端 `/api/v1` 下的所有接口，按模块分组。
 
 ### 1.1 通用约定
 
@@ -17,7 +17,7 @@
 | 基础路径 | `/api/v1` |
 | 鉴权头 | `Authorization: Bearer {token}` |
 | 数据格式 | JSON |
-| 通用包裹 | 大多数接口返回 `ApiResponse` |
+| 通用包裹 | `ApiResponse` |
 
 ### 1.2 通用响应包裹
 
@@ -29,45 +29,116 @@
 }
 ```
 
----
+### 1.3 路由模块
 
-## 2. 路由分组
-
-当前后端骨架按以下分组组织：
-
-- `auth`
-- `canvas`
-- `agent`
-- `rag`
-- `feishu`
-- `ppt`
-- `workspace`
-- `sync`
-- `system`
-
-这些分组定义了当前重构后的框架级路由面，后续可以继续扩展业务，但不会改变这套基础分组。
+- `auth` - 认证
+- `agent` - Agent 任务
+- `aippt` - AI PPT 生成
+- `canvas` - 画板会话
+- `document` - 文档生成
+- `feishu` - 飞书集成
+- `rag` - 知识库检索
+- `sync` - 实时同步
+- `team` - 团队管理
+- `system` - 系统
 
 ---
 
-## 3. 鉴权
+## 2. 认证 (Auth)
 
-### 鉴权说明
+### POST `/auth/register`
 
-- 当前登录方式基于飞书认证。
-- 受保护接口使用 Bearer Token 鉴权。
-- 飞书 OAuth `state` 使用 Redis 一次性保存与消费。
-- 本地用户、飞书账号和 OAuth token 使用 PostgreSQL 持久化。
+邮箱密码注册。
+
+**请求体**
+```json
+{
+  "email": "string",
+  "password": "string",
+  "display_name": "string"
+}
+```
+
+**响应**
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "access_token": "string",
+    "expires_in": 3600,
+    "user": {
+      "user_id": "string",
+      "display_name": "string",
+      "email": "string"
+    }
+  }
+}
+```
+
+---
+
+### POST `/auth/login`
+
+邮箱密码登录。
+
+**请求体**
+```json
+{
+  "email": "string",
+  "password": "string"
+}
+```
+
+**响应**
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "access_token": "string",
+    "expires_in": 3600,
+    "user": {
+      "user_id": "string",
+      "display_name": "string",
+      "email": "string"
+    }
+  }
+}
+```
+
+---
+
+### GET `/auth/me`
+
+返回当前登录用户信息。
+
+**请求头**
+- `Authorization: Bearer {access_token}`
+
+**响应**
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "user_id": "string",
+    "display_name": "string",
+    "email": "string"
+  }
+}
+```
+
+---
 
 ### GET `/auth/feishu/login-url`
 
-生成飞书 OAuth 授权 URL，并在 Redis 写入一次性 `state`。
+生成飞书 OAuth 授权 URL。
 
 **查询参数**
-
-- `redirect_uri`：可选。测试页可传当前页面地址，后端默认使用配置里的飞书回调地址。
+- `redirect_uri`：可选
 
 **响应**
-
 ```json
 {
   "code": 0,
@@ -80,22 +151,13 @@
 }
 ```
 
-### GET `/auth/feishu/callback`
-
-飞书 OAuth 回调入口，使用 `code + state` 完成登录并签发本系统 JWT。
-
-**查询参数**
-
-- `code`：飞书回调 code
-- `state`：此前 `/auth/feishu/login-url` 返回的一次性 state
-- `redirect_uri`：可选。需要与生成授权 URL 时的 redirect URI 保持一致。
+---
 
 ### POST `/auth/feishu/login`
 
-测试页使用飞书登录 `code + state` 换取本系统 JWT 和基础用户信息。该接口与 callback 共用登录服务逻辑，便于前端手动粘贴 code 联测。
+使用飞书 code + state 登录。
 
 **请求体**
-
 ```json
 {
   "code": "string",
@@ -104,7 +166,6 @@
 ```
 
 **响应**
-
 ```json
 {
   "code": 0,
@@ -121,53 +182,249 @@
 }
 ```
 
-### GET `/auth/me`
+---
 
-返回当前 Bearer Token 对应的登录用户信息。
+### GET `/auth/feishu/callback`
 
-**请求头**
+飞书 OAuth 回调入口。
 
-- `Authorization: Bearer {access_token}`
+**查询参数**
+- `code`：飞书回调 code
+- `state`：一次性 state
+- `redirect_uri`：可选
 
 **响应**
-
 ```json
 {
   "code": 0,
   "message": "success",
   "data": {
-    "user_id": "string",
-    "display_name": "string",
-    "feishu_user_id": "string"
+    "access_token": "string",
+    "expires_in": 3600,
+    "user": {
+      "user_id": "string",
+      "display_name": "string",
+      "feishu_user_id": "string"
+    }
   }
 }
 ```
 
-### 登录相关存储
+---
 
-| 存储 | Key / 表 | 用途 |
-|------|----------|------|
-| Redis | `feishu:oauth:state:{state}` | OAuth state 一次性校验，过期后无法登录 |
-| PostgreSQL | `users` | 本系统用户 |
-| PostgreSQL | `feishu_accounts` | 飞书 open_id / union_id 与本地用户绑定 |
-| PostgreSQL | `feishu_oauth_tokens` | 用户飞书 access token / refresh token，用于后续邀请好友等飞书 API |
+## 3. Agent
+
+### POST `/agent/tasks`
+
+创建 Agent 任务。
+
+**响应**
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "task_id": "string",
+    "status": "accepted"
+  }
+}
+```
 
 ---
 
-## 4. Canvas
+### POST `/agent/chat`
 
-Canvas 是当前内容工作台的主框架术语。现在的路由只暴露按会话维度的画板元数据。
+Agent 对话（非流式）。
+
+**请求体**
+```json
+{
+  "session_id": "string",
+  "message": "string",
+  "context": {
+    "chat_history": [
+      { "role": "user", "content": "string" },
+      { "role": "assistant", "content": "string" }
+    ]
+  }
+}
+```
+
+**响应**
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "response": "string",
+    "session_id": "string"
+  }
+}
+```
+
+---
+
+### POST `/agent/chat/stream`
+
+Agent 对话（流式），返回 SSE。
+
+**请求体**
+```json
+{
+  "session_id": "string",
+  "message": "string",
+  "context": {
+    "chat_history": []
+  }
+}
+```
+
+**响应** (text/event-stream)
+```
+data: {"event": "...", "data": {...}}
+
+data: {"event": "...", "data": {...}}
+```
+
+---
+
+## 4. AI PPT (AIPPT)
+
+### GET `/aippt/design-modes`
+
+获取 PPT 生成模式选项。
+
+**响应**
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": [
+    {
+      "mode": "template",
+      "label": "模板",
+      "description": "使用稳定模板布局生成 PPT，速度更快、结果更可控。"
+    },
+    {
+      "mode": "free_design",
+      "label": "自由设计",
+      "description": "逐页自由设计并可使用生图能力，适合更强视觉表现。"
+    }
+  ]
+}
+```
+
+---
+
+### POST `/aippt/generate`
+
+创建 PPT 生成任务。
+
+**请求体** (JSON)
+```json
+{
+  "topic": "string",
+  "page_count": 6,
+  "style": "clean_business",
+  "design_mode": "template",
+  "source_url": "string"
+}
+```
+
+或 **multipart/form-data**：
+- `topic`：PPT 主题
+- `page_count`：页数（默认 6）
+- `style`：风格
+- `design_mode`：设计模式
+- `source_url`：来源 URL
+- `file`：上传文件
+- `image_files`：图片文件列表
+
+**响应**
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "job_id": "string",
+    "status": "pending",
+    "created_at": "2026-05-05T00:00:00Z"
+  }
+}
+```
+
+---
+
+### GET `/aippt/jobs/{job_id}`
+
+查询 PPT 任务状态。
+
+**响应**
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "job_id": "string",
+    "status": "completed|pending|failed",
+    "created_at": "2026-05-05T00:00:00Z"
+  }
+}
+```
+
+---
+
+### GET `/aippt/preview/{job_id}`
+
+获取 PPT 预览结构。
+
+**响应**
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "job_id": "string",
+    "slides": [
+      {
+        "slide_number": 1,
+        "title": "string",
+        "svg": "string"
+      }
+    ]
+  }
+}
+```
+
+---
+
+### GET `/aippt/preview/{job_id}/slides/{slide_number}`
+
+获取单页 SVG 预览。
+
+**响应**
+- Content-Type: `image/svg+xml`
+- 内容：SVG 文件
+
+---
+
+### GET `/aippt/files/{job_id}`
+
+下载生成的 PPTX 文件。
+
+**响应**
+- Content-Type: `application/vnd.openxmlformats-officedocument.presentationml.presentation`
+- Content-Disposition: `attachment; filename="{job_id}.pptx"`
+
+---
+
+## 5. Canvas
 
 ### GET `/canvas/sessions/{session_id}`
 
-返回当前画板会话的 stub 信息。
-
-**路径参数**
-
-- `session_id`：画板会话标识
+获取 Canvas 会话信息。
 
 **响应**
-
 ```json
 {
   "code": 0,
@@ -182,69 +439,185 @@ Canvas 是当前内容工作台的主框架术语。现在的路由只暴露按�
 
 ---
 
-## 5. Agent
+### POST `/canvas/board/tasks`
 
-当前 Agent 面是任务提交占位接口，仅保留异步任务入口，不描述尚未实现的执行细节。
+创建飞书画板任务。
 
-### POST `/agent/tasks`
-
-创建一个 Agent 任务。
+**请求体**
+```json
+{
+  "session_id": "string",
+  "instruction": "string",
+  "whiteboard_id": "string"
+}
+```
 
 **响应**
-
 ```json
 {
   "code": 0,
   "message": "success",
   "data": {
     "task_id": "string",
-    "status": "accepted"
+    "status": "pending"
   }
 }
 ```
 
 ---
 
-## 6. RAG
+### GET `/canvas/board/tasks/{task_id}`
 
-当前 RAG 面是文件列表占位接口，作为知识文件管理的框架预留入口。
-
-### GET `/rag/files`
-
-返回当前后端骨架可见的 RAG 文件列表。
+获取飞书画板任务状态。
 
 **响应**
-
 ```json
 {
   "code": 0,
   "message": "success",
-  "data": [
-    {
-      "file_id": "string",
-      "filename": "string",
-      "source": "string"
-    }
-  ]
+  "data": {
+    "task_id": "string",
+    "status": "pending|running|completed|failed"
+  }
 }
 ```
 
 ---
 
-## 7. 飞书
+### POST `/canvas/board/tasks/{task_id}/run`
 
-飞书面当前只保留卡片元数据读取能力，属于后续平台集成的框架预留接口。
+执行飞书画板任务。
+
+**响应**
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "task_id": "string",
+    "status": "running"
+  }
+}
+```
+
+---
+
+## 6. 文档 (Document)
+
+### POST `/document/generate`
+
+生成文档（非流式）。
+
+**请求体**
+```json
+{
+  "session_id": "string",
+  "topic": "string",
+  "document_type": "meeting_notes|project_plan|report|proposal",
+  "requirement": "string",
+  "tone": "formal|casual|technical"
+}
+```
+
+**响应**
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "session_id": "string",
+    "status": "completed",
+    "content": "# 文档内容..."
+  }
+}
+```
+
+---
+
+### POST `/document/generate/stream`
+
+生成文档（流式）。
+
+**请求体**：同 `/document/generate`
+
+**响应** (text/event-stream)
+```
+data: {"session_id": "xxx", "status": "generating"}
+
+data: {"content": "## 第一部分..."}
+
+data: {"status": "completed"}
+```
+
+---
+
+### POST `/document/save`
+
+保存文档并可选同步到飞书。
+
+**请求体**
+```json
+{
+  "session_id": "string",
+  "title": "string",
+  "content": "string",
+  "sync_to_feishu": false,
+  "app_token": "string",
+  "table_id": "string"
+}
+```
+
+**响应**
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "session_id": "string",
+    "status": "saved|saving",
+    "message": "文档已保存"
+  }
+}
+```
+
+---
+
+### POST `/document/sync`
+
+自动同步 Markdown 文档到飞书。
+
+**请求体**
+```json
+{
+  "session_id": "string",
+  "content": "string",
+  "current_url": "string"
+}
+```
+
+**响应**
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "session_id": "string",
+    "status": "completed",
+    "message": "文档同步完成",
+    "document_url": "string"
+  }
+}
+```
+
+---
+
+## 7. 飞书 (Feishu)
 
 ### GET `/feishu/cards/{card_id}`
 
-返回一个飞书卡片 stub。
-
-**路径参数**
-
-- `card_id`：卡片标识
+获取飞书卡片信息。
 
 **响应**
-
 ```json
 {
   "code": 0,
@@ -259,192 +632,329 @@ Canvas 是当前内容工作台的主框架术语。现在的路由只暴露按�
 
 ---
 
-## 8. PPT
+### POST `/feishu/board/import`
 
-PPT 模块独立于 `canvas/board`。它以 JSON deck 作为中间层：生成、自然语言修改、HTML 预览和 PPTX 导出都围绕同一份 deck 数据工作，不复用飞书白板节点渲染流程。
+导入图表到飞书画板。
 
-试验版多布局 schema 已明确支持 slide 级 `layout` 字段，当前可用值为 `cover`、`bullets`、`two_column`、`timeline`、`metrics`、`summary`。这一版的目标是让前端联测和导出验证能直接看出结构差异，而不是把所有页面都压成同一种版式。
-
-### 预期新增 layout
-
-下面这些布局名称和字段是后续扩展的预期约定，供前端联测和文档对齐使用，当前可以先按这些名字准备内容：
-
-| layout | 预期字段 |
-|---|---|
-| `section_divider` | `title`, `subtitle`, `section`, `accent`, `notes` |
-| `quote` | `quote`, `author`, `context`, `notes` |
-| `comparison` | `left_title`, `right_title`, `left_items`, `right_items`, `summary`, `notes` |
-| `process` | `title`, `steps`, `inputs`, `outputs`, `notes` |
-| `matrix` | `title`, `quadrants`, `axis_x`, `axis_y`, `highlights`, `notes` |
-| `architecture` | `title`, `modules`, `layers`, `links`, `notes` |
-
-说明：
-
-- `section_divider`：适合章节页、转场页、阶段切换页。
-- `quote`：适合金句页、结论页、态度表达页。
-- `comparison`：适合对比页、方案取舍页、前后版本页。
-- `process`：适合流程页、步骤页、操作链路页。
-- `matrix`：适合四象限页、优先级页、分类判断页。
-- `architecture`：适合架构模块页、系统结构页、能力分层页。
-
-### GET `/ppt/themes`
-
-返回当前支持的主题。
+**请求体**
+```json
+{
+  "diagram_content": "string",
+  "title": "string",
+  "whiteboard_id": "string"
+}
+```
 
 **响应**
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "whiteboard_id": "string",
+    "status": "imported"
+  }
+}
+```
 
+---
+
+### POST `/feishu/board/create-notes`
+
+创建飞书画板节点。
+
+**请求体**
+```json
+{
+  "whiteboard_id": "string",
+  "parent_node_id": "string",
+  "content": "string",
+  "position": { "x": 0, "y": 0 }
+}
+```
+
+**响应**
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "node_id": "string",
+    "status": "created"
+  }
+}
+```
+
+---
+
+### GET `/feishu/board/nodes/{whiteboard_id}`
+
+获取飞书画板节点。
+
+**响应**
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "whiteboard_id": "string",
+    "nodes": []
+  }
+}
+```
+
+---
+
+### GET `/feishu/board/image/{whiteboard_id}`
+
+获取飞书画板图片。
+
+**响应**
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "image_url": "string"
+  }
+}
+```
+
+---
+
+### POST `/feishu/board/update`
+
+更新飞书画板内容。
+
+**请求体**
+```json
+{
+  "whiteboard_id": "string",
+  "node_id": "string",
+  "content": "string"
+}
+```
+
+**响应**
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "status": "updated"
+  }
+}
+```
+
+---
+
+### POST `/feishu/board/delete`
+
+删除飞书画板节点。
+
+**请求体**
+```json
+{
+  "whiteboard_id": "string",
+  "node_id": "string"
+}
+```
+
+**响应**
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "status": "deleted"
+  }
+}
+```
+
+---
+
+### POST `/feishu/sync/publish`
+
+发布 Markdown 文档到飞书（异步）。
+
+**请求体**
+```json
+{
+  "markdown_content": "string",
+  "title": "string",
+  "session_id": "string",
+  "app_token": "string",
+  "table_id": "string"
+}
+```
+
+**响应**
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "ticket": "string",
+    "status": "processing"
+  }
+}
+```
+
+---
+
+### GET `/feishu/sync/status/{ticket}`
+
+查询导入任务状态。
+
+**响应**
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "ticket": "string",
+    "status": "pending|processing|completed|failed",
+    "result_url": "string"
+  }
+}
+```
+
+---
+
+### POST `/feishu/events`
+
+飞书事件回调。
+
+---
+
+## 8. 知识库 (RAG)
+
+### GET `/rag/files`
+
+获取 RAG 文件列表。
+
+**响应**
 ```json
 {
   "code": 0,
   "message": "success",
   "data": [
-    { "theme_id": "tech", "label": "科技风" },
-    { "theme_id": "business", "label": "商务风" },
-    { "theme_id": "minimal", "label": "简约风" }
+    {
+      "file_id": "string",
+      "filename": "string",
+      "source": "string",
+      "created_at": "2026-05-05T00:00:00Z"
+    }
   ]
 }
 ```
 
-### POST `/ppt/decks`
+---
 
-根据文本或聊天记录生成 PPT deck。`theme` 支持中文值如 `科技风`，服务端会归一化为 `tech`。如果 `content` 中出现明确页数（如 `生成 3 页`、`做 6 页`、`输出 8-10 页`），服务端会优先使用消息里的页数；范围写法取上限，并统一限制在 `1-20`，覆盖 `preferences.slides_limit`。
+### POST `/rag/files`
+
+RAG 文件入库。
 
 **请求体**
-
 ```json
 {
-  "type": "chat_record",
-  "content": "今天团队讨论了项目进度，需要生成 PPT 总结。",
-  "preferences": {
-    "theme": "科技风",
-    "slides_limit": 10,
-    "author": "user123"
-  }
+  "filename": "string",
+  "source": "string",
+  "content": "string",
+  "metadata": {}
 }
 ```
 
 **响应**
-
 ```json
 {
   "code": 0,
   "message": "success",
   "data": {
-    "deck_id": "deck_xxx",
-    "type": "chat_record",
-    "title": "string",
-    "source_content": "string",
-    "theme": "tech",
-    "author": "user123",
-    "version": 1,
-    "last_modified": "2026-04-28T12:00:00Z",
-    "slides": [
+    "file_id": "string",
+    "filename": "string",
+    "status": "ingested"
+  }
+}
+```
+
+---
+
+### POST `/rag/files/upload`
+
+上传并解析 RAG 文件。
+
+**请求体** (multipart/form-data)
+- `file`：文件
+- `source`：来源（可选）
+- `metadata`：JSON 元数据（可选）
+
+**响应**
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "file_id": "string",
+    "filename": "string",
+    "status": "ingested"
+  }
+}
+```
+
+---
+
+### DELETE `/rag/files/{file_id}`
+
+删除 RAG 文件及其向量块。
+
+**响应**
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": true
+}
+```
+
+---
+
+### GET `/rag/search`
+
+RAG 知识库检索。
+
+**查询参数**
+- `query`：检索词（必填）
+- `limit`：返回数量，默认 8，最大 20
+
+**响应**
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "query": "string",
+    "results": [
       {
-        "id": "slide_xxx",
-        "slide_id": "slide_xxx",
-        "title": "第一页标题",
-        "body": ["要点 1"],
-        "images": [],
-        "notes": "讲稿备注",
-        "theme": "tech",
-        "author": "user123",
-        "last_modified": "2026-04-28T12:00:00Z",
-        "version": 1
+        "file_id": "string",
+        "filename": "string",
+        "chunk_text": "string",
+        "score": 0.95
       }
-    ],
-    "html": "<!DOCTYPE html>...",
-    "history": []
-  }
-}
-```
-
-### POST `/ppt/decks/{deck_id}/modify`
-
-通过自然语言修改 deck。可传 `slide_id` 做增量修改；目标 slide 的 `version` 会递增，deck 的 `version` 与 `last_modified` 也会更新。
-
-**请求体**
-
-```json
-{
-  "instruction": "把第二页的标题改为“下周计划”",
-  "slide_id": "slide_xxx"
-}
-```
-
-**响应**
-
-返回更新后的 deck，结构同 `POST /ppt/decks`。
-
-### POST `/ppt/decks/{deck_id}/export`
-
-把当前 deck 同步导出为 PPTX。
-
-**响应**
-
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {
-    "deck_id": "deck_xxx",
-    "file_name": "deck.pptx",
-    "path": "/absolute/path/to/deck.pptx",
-    "url": null,
-    "version": 2
-  }
-}
-```
-
-### 运行时说明
-
-当前实现会把 HTML 和 JSON 产物保存到 `GENERATED_ROOT/ppt/{deck_id}/`。PPTX 导出优先使用 Node.js 和 `pptxgenjs` 生成原生幻灯片；如果本机运行时不可用，服务会返回一个可追踪的 fallback 文件，保证 demo 链路和 API 契约不中断。
-
-PPT 生成与自然语言修改必须配置 DeepSeek 兼容接口，当前默认模型为 `deepseek-v4-flash`。未配置 `AGENT_API_KEY` 时，生成和修改接口会返回 `503`，不会走本地内容 fallback。
-
----
-
-## 9. 工作台
-
-Workspace 是用于承载协作状态的后端容器。当前只暴露轻量元数据。
-
-### GET `/workspace/{workspace_id}`
-
-返回工作台元信息。
-
-**路径参数**
-
-- `workspace_id`：工作台标识
-
-**响应**
-
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {
-    "workspace_id": "string",
-    "role": "string",
-    "locked": false
+    ]
   }
 }
 ```
 
 ---
 
-## 10. 同步
-
-Sync 分组用于预留实时传输能力的发现入口，当前只描述传输元数据，不代表已经定义完整消息协议。
+## 9. 同步 (Sync)
 
 ### GET `/sync/ws/{session_id}`
 
-返回某个会话的同步通道信息。
-
-**路径参数**
-
-- `session_id`：同步会话标识
+获取同步通道信息。
 
 **响应**
-
 ```json
 {
   "code": 0,
@@ -458,29 +968,185 @@ Sync 分组用于预留实时传输能力的发现入口，当前只描述传输
 
 ---
 
-## 10. 系统
+### GET `/sync/sessions`
 
-### GET `/system/ping`
-
-健康检查接口。
+获取会话列表。
 
 **响应**
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": []
+}
+```
 
+---
+
+### GET `/sync/sessions/{session_id}`
+
+获取会话详情。
+
+**响应**
 ```json
 {
   "code": 0,
   "message": "success",
   "data": {
-    "status": "ok",
-    "timestamp": "2026-04-26T10:00:00Z"
+    "session_id": "string",
+    "status": "string"
   }
 }
 ```
 
 ---
 
-## 11. 说明
+### DELETE `/sync/sessions/{session_id}`
 
-- 基础路径保持 `/api/v1`
-- 路由命名已与当前后端骨架和 OpenAPI 摘要对齐
-- 旧的 `sessions`、`settings`、`webhook`、旧 Agent 执行/历史接口，以及旧 Canvas 快照/元素/版本文档已移除，等待对应框架路由真正恢复后再补
+删除会话。
+
+**响应**
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "session_id": "string",
+    "deleted": true
+  }
+}
+```
+
+---
+
+### POST `/sync/sessions/{session_id}/context/selection`
+
+选择上下文并运行 Agent。
+
+**请求体**
+```json
+{
+  "start_index": 0,
+  "end_index": 5,
+  "instruction": "string"
+}
+```
+
+**响应**
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "response": "string"
+  }
+}
+```
+
+---
+
+### WebSocket `/sync/ws/session/{session_id}`
+
+实时会话 WebSocket 连接。
+
+---
+
+## 10. 团队 (Team)
+
+### GET `/team/members`
+
+获取团队成员列表。
+
+**响应**
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": [
+    {
+      "member_id": "string",
+      "display_name": "string",
+      "email": "string",
+      "role": "owner|member",
+      "joined_at": "2026-05-05T00:00:00Z"
+    }
+  ]
+}
+```
+
+---
+
+### POST `/team/members/invite`
+
+按邮箱邀请团队成员。
+
+**请求体**
+```json
+{
+  "email": "string",
+  "role": "member"
+}
+```
+
+**响应**
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "member_id": "string",
+    "email": "string",
+    "status": "invited"
+  }
+}
+```
+
+---
+
+### DELETE `/team/members/{member_id}`
+
+移除团队成员。
+
+**响应**
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": null
+}
+```
+
+---
+
+## 11. 系统 (System)
+
+### GET `/system/ping`
+
+健康检查。
+
+**响应**
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "status": "ok",
+    "timestamp": "2026-05-05T00:00:00Z"
+  }
+}
+```
+
+---
+
+## 12. 错误码
+
+| code | 说明 |
+|------|------|
+| 0 | 成功 |
+| 400 | 请求参数错误 |
+| 401 | 未认证 |
+| 403 | 无权限 |
+| 404 | 资源不存在 |
+| 422 | 业务验证失败 |
+| 502 | LLM 服务错误 |
+| 500 | 服务器内部错误 |
