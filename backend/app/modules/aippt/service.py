@@ -416,7 +416,17 @@ class AIPPTService:
     def _generate_notes(self, record: PPTJobRecord, plan, source_text: str, project_dir: Path) -> None:
         self._update_record(record, status="generating_notes", progress=80, current_step="生成讲稿 notes")
         design_spec = (project_dir / "design_spec.md").read_text(encoding="utf-8")
-        notes = self._llm_client.generate_speaker_notes(design_spec, source_text, plan)
+        try:
+            notes = self._llm_client.generate_speaker_notes(design_spec, source_text, plan)
+        except Exception:
+            fallback = getattr(self._llm_client, "_fallback_notes", None)
+            if callable(fallback):
+                notes = fallback(plan)
+            else:
+                notes = "\n\n".join(
+                    f"# slide_{slide.slide_number:02d}\n\n这一页重点说明{slide.title}。"
+                    for slide in plan.slides[: record.page_count]
+                )
         (project_dir / "notes" / "total.md").write_text(notes, encoding="utf-8")
 
     def _export(self, record: PPTJobRecord, project_dir: Path) -> None:
@@ -885,21 +895,49 @@ class AIPPTService:
         filtered = sorted(number for number in targets if 1 <= number <= max_slide)
         return filtered or [1]
 
+    def _parse_ppt_edit_intent_with_llm(
+        self,
+        *,
+        instruction: str,
+        slides: list[dict[str, object]],
+        page_count: int,
+    ) -> dict[str, object] | None:
+        parser = getattr(self._llm_client, "parse_ppt_edit_intent", None)
+        if not callable(parser):
+            return None
+        try:
+            result = parser(instruction=instruction, slides=slides, page_count=page_count)
+        except Exception:
+            return None
+        return result if isinstance(result, dict) else None
+
     def _build_current_ppt_edit_plan(self, source_text: str, record: PPTJobRecord, edit_context: dict[str, object]) -> DeckPlan:
         _ = source_text
         instruction = str(edit_context["instruction"])
-        target_slides = set(int(number) for number in edit_context["target_slides"])
         slides_payload = list(edit_context["slides"])
         page_operations = edit_context.get("page_operations") if isinstance(edit_context.get("page_operations"), dict) else {}
         delete_pages = {int(number) for number in page_operations.get("delete_pages", [])}
         clear_pages = {int(number) for number in page_operations.get("clear_pages", [])}
         add_pages = [item for item in page_operations.get("add_pages", []) if isinstance(item, dict)]
         source_page_count = max(1, int(edit_context.get("page_count") or record.page_count))
+        llm_edit_intent = self._parse_ppt_edit_intent_with_llm(
+            instruction=instruction,
+            slides=slides_payload,
+            page_count=source_page_count,
+        )
+        target_slides = set(
+            int(number)
+            for number in (
+                llm_edit_intent.get("target_slides")
+                if isinstance(llm_edit_intent, dict) and isinstance(llm_edit_intent.get("target_slides"), list)
+                else edit_context["target_slides"]
+            )
+        )
         source_slides = self._apply_ppt_page_operations(slides_payload, delete_pages=delete_pages, add_pages=add_pages, instruction=instruction)
         page_count = max(1, len(source_slides))
         replacement_text = self._extract_ppt_replacement_text(instruction)
         full_text_replacement = replacement_text is not None and self._is_ppt_full_text_replacement(instruction)
-        edit_semantics = self._parse_ppt_edit_semantics(instruction)
+        edit_semantics = self._parse_ppt_edit_semantics(instruction, llm_intent=llm_edit_intent)
         source_theme = self._load_source_ppt_theme(edit_context.get("source_job_id"))
         slides: list[DeckSlide] = []
         changed_numbers: set[int] = set()
@@ -1352,7 +1390,12 @@ class AIPPTService:
         cleaned = cleaned[:3]
         return title, cleaned, self._ppt_edit_objective(title, cleaned)
 
-    def _parse_ppt_edit_semantics(self, instruction: str) -> dict[str, object]:
+    def _parse_ppt_edit_semantics(
+        self,
+        instruction: str,
+        *,
+        llm_intent: dict[str, object] | None = None,
+    ) -> dict[str, object]:
         normalized = re.sub(r"\s+", "", instruction)
         detail_keywords = (
             "详细",
@@ -1380,11 +1423,15 @@ class AIPPTService:
             "增加文字",
             "加点字",
             "加正文",
+            "加一点",
+            "补一点",
+            "多一点",
         )
         preserve_keywords = ("保留结构", "结构不要动", "不要改变结构", "不改结构", "保持结构", "保留原结构")
+        llm_intent = llm_intent or {}
         return {
-            "needs_more_detail": any(keyword in normalized or keyword in instruction for keyword in detail_keywords),
-            "preserve_structure": any(keyword in normalized for keyword in preserve_keywords),
+            "needs_more_detail": bool(llm_intent.get("needs_more_detail")) or any(keyword in normalized or keyword in instruction for keyword in detail_keywords),
+            "preserve_structure": bool(llm_intent.get("preserve_structure")) or any(keyword in normalized for keyword in preserve_keywords),
         }
 
     def _extract_ppt_replacement_text(self, instruction: str) -> str | None:

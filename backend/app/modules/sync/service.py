@@ -141,6 +141,25 @@ class SyncService:
             payload["messages"] = messages
         if error is not None:
             payload["error"] = error
+        existing = await self._manager.get_session(session_id)
+        if existing is None:
+            title = self._derive_session_title(session_id, intent=intent, artifact=artifact, messages=messages)
+            summary = message or "任务已完成。"
+            source = "feishu" if session_id.startswith("feishu:") else "app"
+            chat_id = self._extract_feishu_chat_id(session_id) if source == "feishu" else None
+            message_id = self._extract_feishu_message_id(session_id) if source == "feishu" else None
+            await self.register_session(
+                session_id,
+                source=source,
+                title=title,
+                summary=summary,
+                status=status,
+                chat_id=chat_id,
+                message_id=message_id,
+                intent=intent,
+                artifact=artifact,
+                messages=messages,
+            )
         await self._manager.update_session(
             session_id,
             status=status,
@@ -287,6 +306,25 @@ class SyncService:
             summary=message,
         )
 
+    async def update_session_reply_echo_state(self, session_id: str, *, sent: bool) -> None:
+        session = await self._manager.get_session(session_id)
+        artifact = dict(session.artifact) if session is not None and session.artifact is not None else {}
+        artifact["feishu_chat_reply_echo_sent"] = sent
+        if session is None:
+            await self.register_session(
+                session_id,
+                source="feishu" if session_id.startswith("feishu:") else "app",
+                title=self._derive_session_title(session_id, intent="chat", artifact=artifact, messages=None),
+                summary="会话回执状态已更新。",
+                status="进行中",
+                chat_id=self._extract_feishu_chat_id(session_id),
+                message_id=self._extract_feishu_message_id(session_id),
+                intent="chat",
+                artifact=artifact,
+            )
+            return
+        await self._manager.update_session(session_id, artifact=artifact)
+
     def _to_schema(self, record: SessionRecord | None, *, compact_artifact: bool = False) -> SyncSessionSchema:
         if record is None:  # pragma: no cover - defensive guard
             raise ValueError("session record is missing")
@@ -320,3 +358,44 @@ class SyncService:
             compact["content_length"] = len(content)
             compact.pop("content", None)
         return compact
+
+    def _derive_session_title(
+        self,
+        session_id: str,
+        *,
+        intent: str,
+        artifact: dict[str, Any] | None,
+        messages: list[dict[str, Any]] | None,
+    ) -> str:
+        if messages:
+            for message in reversed(messages):
+                if str(message.get("role") or "").lower() == "user":
+                    content = str(message.get("content") or "").strip()
+                    if content:
+                        return content[:48]
+        if artifact is not None:
+            for key in ("title", "topic", "name"):
+                value = artifact.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()[:48]
+        if intent == "docx":
+            return "Eko 文档"
+        if intent == "ppt":
+            return "Eko PPT"
+        if intent == "board":
+            return "Eko 画板"
+        if session_id.startswith("feishu:"):
+            return "飞书群聊新会话"
+        return "Eko 会话"
+
+    def _extract_feishu_chat_id(self, session_id: str) -> str | None:
+        parts = session_id.split(":", 2)
+        if len(parts) != 3 or parts[0] != "feishu":
+            return None
+        return parts[1] or None
+
+    def _extract_feishu_message_id(self, session_id: str) -> str | None:
+        parts = session_id.split(":", 2)
+        if len(parts) != 3 or parts[0] != "feishu":
+            return None
+        return parts[2] or None

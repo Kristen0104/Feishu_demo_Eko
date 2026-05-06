@@ -5,10 +5,11 @@ import { useRouter } from "next/navigation";
 import type { FormEvent } from "react";
 import { useMemo, useState } from "react";
 
-import { BrandMark, FeishuLogo, GoogleLogo } from "@/components/login/brand-icons";
+import { BrandMark, FeishuLogo } from "@/components/login/brand-icons";
 import { apiUrl } from "@/lib/eko-api";
 import { saveAccessToken } from "@/lib/auth-token";
 import { useAppStore } from "@/store/app-store";
+import { useProfileStore } from "@/store/profile-store";
 
 function FeatureIcon({
   tone,
@@ -31,6 +32,7 @@ function FeatureIcon({
 export function CreateAccountPage() {
   const router = useRouter();
   const setLogin = useAppStore((state) => state.setLogin);
+  const adoptProfileOwner = useProfileStore((state) => state.adoptProfileOwner);
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -108,6 +110,7 @@ export function CreateAccountPage() {
           throw new Error(json.message || json.detail || res.statusText || "注册失败");
         }
         saveAccessToken(json.data.access_token, true);
+        adoptProfileOwner(trimmedEmail);
         setLogin(trimmedEmail, { remember: true });
         router.push("/home");
       } catch (e) {
@@ -346,11 +349,11 @@ export function CreateAccountPage() {
 
               <div className="mt-6 flex items-center gap-4 text-[12px] text-slate-400">
                 <div className="h-px flex-1 bg-slate-200" />
-                或使用以下方式继续
+                使用企业身份继续
                 <div className="h-px flex-1 bg-slate-200" />
               </div>
 
-              <div className="mt-4 space-y-3">
+              <div className="mt-4">
                 <a
                   href="/login/feishu/start"
                   className="flex h-[50px] w-full items-center justify-center gap-3 rounded-[14px] border border-slate-200 bg-white text-[15px] font-medium text-slate-700 shadow-[0_8px_20px_rgba(15,23,42,0.05)] transition hover:border-blue-200 hover:text-blue-600"
@@ -358,16 +361,12 @@ export function CreateAccountPage() {
                   <FeishuLogo className="h-7 w-7" />
                   使用飞书注册 / 登录
                 </a>
-                <button type="button" disabled className="flex h-[50px] w-full items-center justify-center gap-3 rounded-[14px] border border-slate-200 bg-white text-[15px] font-medium text-slate-400 shadow-[0_8px_20px_rgba(15,23,42,0.05)] opacity-60" aria-disabled="true">
-                  <GoogleLogo className="h-7 w-7" />
-                  Google 注册暂未接入
-                </button>
               </div>
 
               <div className="mt-5 text-center text-[14px] text-slate-500">
                 已有账号？
                 {" "}
-                <Link href="/login" className="rounded-md font-semibold text-blue-500 outline outline-1 outline-blue-500/40 hover:text-blue-600">
+                <Link href="/login" className="font-semibold text-blue-500 transition hover:text-blue-600">
                   立即登录
                 </Link>
               </div>

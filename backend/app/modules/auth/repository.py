@@ -7,7 +7,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.auth.models import FeishuAccount, FeishuOAuthToken, User
-from app.modules.auth.schemas import FeishuOAuthTokenResult
+from app.modules.auth.schemas import AuthUserUpdateRequest, FeishuOAuthTokenResult
 
 
 @dataclass(slots=True)
@@ -95,6 +95,12 @@ class AuthRepository:
     async def get_feishu_account_by_open_id(self, open_id: str) -> FeishuAccount | None:
         return await self._session.scalar(select(FeishuAccount).where(FeishuAccount.open_id == open_id))
 
+    async def get_feishu_account_by_identity(self, *, open_id: str, union_id: str | None = None) -> FeishuAccount | None:
+        conditions = [FeishuAccount.open_id == open_id]
+        if union_id:
+            conditions.append(FeishuAccount.union_id == union_id)
+        return await self._session.scalar(select(FeishuAccount).where(or_(*conditions)))
+
     async def resolve_user_by_feishu_identity(self, *, open_id: str | None, union_id: str | None = None) -> User | None:
         conditions = []
         if open_id:
@@ -134,25 +140,128 @@ class AuthRepository:
         await self._commit()
         return oauth_token
 
-    async def upsert_feishu_identity(self, identity: FeishuIdentityUpsert) -> User:
+    async def update_user_profile(self, user: User, payload: AuthUserUpdateRequest) -> User:
+        data = payload.model_dump(exclude_unset=True)
         now = datetime.now(UTC)
-        account = await self._session.scalar(
-            select(FeishuAccount).where(
-                or_(FeishuAccount.open_id == identity.open_id, FeishuAccount.union_id == identity.union_id)
-            )
-        )
+
+        if "display_name" in data and data["display_name"] is not None:
+            display_name = data["display_name"].strip()
+            if display_name:
+                user.display_name = display_name
+                user.name = display_name
+
+        if "email" in data:
+            email = self._clean_optional(data["email"])
+            user.email = email.lower() if email else None
+
+        if "name_en" in data:
+            user.name_en = self._clean_optional(data["name_en"])
+
+        scalar_fields = {
+            "avatar_url": "avatar_url",
+            "phone": "phone",
+            "phone_ext": "phone_ext",
+            "location": "location",
+            "time_zone": "time_zone",
+            "employee_id": "employee_id",
+            "job_title": "job_title",
+            "department": "department",
+            "team": "team",
+            "reports_to": "reports_to",
+            "joined_at": "joined_at",
+            "bio": "bio",
+        }
+        for payload_key, attr in scalar_fields.items():
+            if payload_key in data:
+                setattr(user, attr, self._clean_optional(data[payload_key]))
+
+        if "languages" in data:
+            languages = data["languages"] or []
+            cleaned = [item.strip() for item in languages if isinstance(item, str) and item.strip()]
+            user.languages = "||".join(cleaned[:10]) or None
+
+        user.updated_at = now
+        await self._session.flush()
+        await self._commit()
+        return user
+
+    async def update_password_hash(self, user: User, password_hash: str) -> User:
+        user.password_hash = password_hash
+        user.updated_at = datetime.now(UTC)
+        await self._session.flush()
+        await self._commit()
+        return user
+
+    async def bind_feishu_identity(self, *, user: User, identity: FeishuIdentityUpsert) -> User:
+        now = datetime.now(UTC)
+        account = await self.get_feishu_account_by_identity(open_id=identity.open_id, union_id=identity.union_id)
+        if account is not None and account.user_id != user.id:
+            raise ValueError("Feishu account is already bound to another user")
+
+        existing_for_user = await self.get_feishu_account_by_user_id(user.id)
+        if existing_for_user is not None and existing_for_user.id != (account.id if account else None):
+            account = existing_for_user
 
         if account is None:
-            user = User(
-                name=identity.name,
-                display_name=identity.name,
+            account = FeishuAccount(
+                user_id=user.id,
+                open_id=identity.open_id,
+                union_id=identity.union_id,
+                tenant_key=identity.tenant_key,
                 email=identity.email,
-                avatar_url=identity.avatar_url,
                 created_at=now,
                 updated_at=now,
             )
-            self._session.add(user)
-            await self._session.flush()
+            self._session.add(account)
+        else:
+            account.open_id = identity.open_id
+            account.union_id = identity.union_id
+            account.tenant_key = identity.tenant_key
+            account.email = identity.email
+            account.updated_at = now
+
+        if not user.avatar_url and identity.avatar_url:
+            user.avatar_url = identity.avatar_url
+        if not user.email and identity.email:
+            user.email = identity.email.lower()
+        if (not user.display_name or user.display_name == user.email) and identity.name:
+            user.display_name = identity.name
+            user.name = identity.name
+        user.updated_at = now
+
+        await self._session.flush()
+        oauth_token = identity.oauth_token()
+        if oauth_token is not None:
+            await self.save_oauth_token(user.id, oauth_token)
+        await self._commit()
+        return user
+
+    async def upsert_feishu_identity(self, identity: FeishuIdentityUpsert) -> User:
+        now = datetime.now(UTC)
+        conditions = [FeishuAccount.open_id == identity.open_id]
+        if identity.union_id:
+            conditions.append(FeishuAccount.union_id == identity.union_id)
+        account = await self._session.scalar(
+            select(FeishuAccount).where(or_(*conditions))
+        )
+
+        if account is None:
+            user = await self.get_user_by_email(identity.email.lower()) if identity.email else None
+            if user is None:
+                user = User(
+                    name=identity.name,
+                    display_name=identity.name,
+                    email=identity.email.lower() if identity.email else None,
+                    avatar_url=identity.avatar_url,
+                    created_at=now,
+                    updated_at=now,
+                )
+                self._session.add(user)
+                await self._session.flush()
+            else:
+                if not user.avatar_url and identity.avatar_url:
+                    user.avatar_url = identity.avatar_url
+                user.updated_at = now
             account = FeishuAccount(
                 user_id=user.id,
                 open_id=identity.open_id,
@@ -182,6 +291,14 @@ class AuthRepository:
             await self.save_oauth_token(user.id, oauth_token)
         await self._commit()
         return user
+
+    def _clean_optional(self, value: object) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            return None
+        cleaned = value.strip()
+        return cleaned or None
 
     async def _commit(self) -> None:
         commit = getattr(self._session, "commit", None)

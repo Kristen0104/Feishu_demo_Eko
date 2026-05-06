@@ -262,6 +262,80 @@ Visual text rules for PPT Master export:
         except Exception as exc:
             return self._fallback_plan(source_text, page_count, style, fallback_reason=str(exc), raw_plan_excerpt=content[:1200])
 
+    def parse_ppt_edit_intent(
+        self,
+        *,
+        instruction: str,
+        slides: list[dict[str, object]],
+        page_count: int,
+    ) -> dict[str, object] | None:
+        slide_lines: list[str] = []
+        for slide in slides[:20]:
+            try:
+                number = int(slide.get("slide_number") or 0)
+            except (TypeError, ValueError):
+                continue
+            if number <= 0:
+                continue
+            title = str(slide.get("title") or f"第 {number} 页").strip()
+            items = [str(item).strip() for item in slide.get("items", []) if str(item).strip()]
+            suffix = f"；要点：{' / '.join(items[:4])}" if items else ""
+            slide_lines.append(f"- 第 {number} 页：{title}{suffix}")
+
+        prompt = f"""
+Return JSON only.
+You are extracting structured edit intent for an existing PPT.
+
+Instruction:
+{instruction}
+
+Current deck:
+页数：{page_count}
+{chr(10).join(slide_lines)}
+
+Required JSON schema:
+{{
+  "target_slides": [1],
+  "needs_more_detail": true,
+  "preserve_structure": true,
+  "replace_all_text": false,
+  "reason": "short explanation"
+}}
+
+Rules:
+- If the user says a page has too little content, is too empty, asks to add a bit more, add more words, enrich, expand, or make it fuller, set needs_more_detail=true.
+- If the user names specific pages, include only those pages in target_slides.
+- If the user is editing current slides rather than asking for a brand new deck, set preserve_structure=true.
+- If the user asks to fully replace all text on a page with one sentence or explicit new wording, set replace_all_text=true.
+- Keep target_slides within 1..{page_count}.
+- If uncertain but the instruction clearly points to one page, prefer that page rather than all pages.
+""".strip()
+
+        try:
+            content = self._chat_completion(prompt, temperature=0.1, max_tokens=500)
+            payload = self._extract_json(content)
+        except Exception:
+            return None
+
+        target_slides: list[int] = []
+        raw_targets = payload.get("target_slides")
+        if isinstance(raw_targets, list):
+            for item in raw_targets:
+                try:
+                    value = int(item)
+                except (TypeError, ValueError):
+                    continue
+                if 1 <= value <= page_count and value not in target_slides:
+                    target_slides.append(value)
+
+        return {
+            "target_slides": target_slides,
+            "needs_more_detail": bool(payload.get("needs_more_detail")),
+            "preserve_structure": bool(payload.get("preserve_structure")),
+            "replace_all_text": bool(payload.get("replace_all_text")),
+            "reason": str(payload.get("reason") or "").strip(),
+        }
+
     def _normalize_content_outline(self, content: str, *, source_text: str, page_count: int) -> str:
         cleaned = content.strip()
         if cleaned.startswith("```"):

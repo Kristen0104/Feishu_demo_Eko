@@ -7,7 +7,9 @@ from fastapi import APIRouter, Depends
 from app.core.security import AuthContext, get_auth_context
 from app.modules.auth.dependencies import get_auth_service
 from app.modules.auth.schemas import (
+    AuthPasswordUpdateRequest,
     AuthTokenSchema,
+    AuthUserUpdateRequest,
     AuthUserSchema,
     AuthLoginRequest,
     AuthRegisterRequest,
@@ -97,3 +99,47 @@ async def get_current_user(
     auth_service: Annotated[AuthService, Depends(get_auth_service)],
 ) -> ApiResponse[AuthUserSchema]:
     return ApiResponse.success(await auth_service.get_current_user(auth_context))
+
+
+@router.patch(
+    "/me",
+    response_model=ApiResponse[AuthUserSchema],
+    summary="修改当前用户资料",
+)
+async def update_current_user(
+    payload: AuthUserUpdateRequest,
+    auth_context: Annotated[AuthContext, Depends(get_auth_context)],
+    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+) -> ApiResponse[AuthUserSchema]:
+    return ApiResponse.success(await auth_service.update_current_user(auth_context, payload))
+
+
+@router.patch(
+    "/me/password",
+    response_model=ApiResponse[AuthUserSchema],
+    summary="修改当前用户密码",
+)
+async def update_current_password(
+    payload: AuthPasswordUpdateRequest,
+    auth_context: Annotated[AuthContext, Depends(get_auth_context)],
+    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+) -> ApiResponse[AuthUserSchema]:
+    return ApiResponse.success(await auth_service.update_current_password(auth_context, payload))
+
+
+@router.post(
+    "/feishu/bind",
+    response_model=ApiResponse[AuthUserSchema],
+    summary="将飞书账号绑定到当前网站账号",
+)
+async def bind_feishu_account(
+    payload: FeishuLoginRequest,
+    auth_context: Annotated[AuthContext, Depends(get_auth_context)],
+    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+) -> ApiResponse[AuthUserSchema]:
+    return ApiResponse.success(
+        await auth_service.bind_feishu_callback(
+            auth_context,
+            FeishuCallbackRequest(code=payload.code, state=payload.state, redirect_uri=payload.redirect_uri),
+        )
+    )

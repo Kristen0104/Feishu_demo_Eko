@@ -1,8 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
+import { useEffect, useState } from "react";
 
 import { SectionCard } from "@/components/profile/profile-blocks";
+import { fetchCurrentAuthUser, updateCurrentPassword, type AuthMeUser } from "@/lib/profile-api";
 import { useProfileStore } from "@/store/profile-store";
 
 const MOCK_DEVICES = [
@@ -12,48 +15,109 @@ const MOCK_DEVICES = [
 ];
 
 export function ProfileSecurityPage() {
+  const searchParams = useSearchParams();
   const securityPreferences = useProfileStore((s) => s.securityPreferences);
   const setSecurityPreferences = useProfileStore((s) => s.setSecurityPreferences);
   const markSaved = useProfileStore((s) => s.markSaved);
+  const [authUser, setAuthUser] = useState<AuthMeUser | null>(null);
+  const [authError, setAuthError] = useState<string | null>(null);
 
   const [oldPw, setOldPw] = useState("");
   const [newPw, setNewPw] = useState("");
   const [confirmPw, setConfirmPw] = useState("");
   const [pwMsg, setPwMsg] = useState<string | null>(null);
 
-  const submitPasswordDemo = () => {
+  useEffect(() => {
+    let alive = true;
+    void fetchCurrentAuthUser()
+      .then((user) => {
+        if (!alive) return;
+        setAuthUser(user);
+        setAuthError(null);
+      })
+      .catch((error) => {
+        if (!alive) return;
+        setAuthError(error instanceof Error ? error.message : "读取账号状态失败");
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const submitPassword = async () => {
     if (!oldPw || !newPw || !confirmPw) {
-      setPwMsg("请填写全部字段（演示）");
+      setPwMsg("请填写全部字段");
       return;
     }
     if (newPw !== confirmPw) {
       setPwMsg("两次新密码不一致");
       return;
     }
-    setPwMsg("已保存到本地演示状态（未调用后端 API）");
-    markSaved();
-    setOldPw("");
-    setNewPw("");
-    setConfirmPw("");
+    try {
+      await updateCurrentPassword(oldPw, newPw);
+      setPwMsg("密码已更新");
+      markSaved();
+      setOldPw("");
+      setNewPw("");
+      setConfirmPw("");
+    } catch (error) {
+      setPwMsg(error instanceof Error ? error.message : "密码修改失败");
+    }
   };
 
   return (
     <>
-      <SectionCard title="登录方式" description="当前登录身份由后端鉴权提供；绑定状态与 MFA 仍未接真实账号安全服务。">
+      <SectionCard title="登录方式" description="当前登录身份与飞书绑定状态来自后端账号服务。">
         <div className="space-y-3 py-4">
+          {searchParams.get("feishu_bind") === "success" ? (
+            <div className="rounded-[12px] border border-emerald-100 bg-emerald-50 px-3 py-2 text-[13px] font-medium text-emerald-700">
+              飞书账号已绑定到当前网站账号。
+            </div>
+          ) : null}
+          {searchParams.get("feishu_bind") === "error" ? (
+            <div className="rounded-[12px] border border-rose-100 bg-rose-50 px-3 py-2 text-[13px] font-medium text-rose-700">
+              飞书绑定失败，请确认当前已登录网站账号并重试。
+            </div>
+          ) : null}
+
           <div className="flex flex-wrap items-center gap-2">
             <span className="rounded-full bg-slate-100 px-3 py-1 text-[13px] font-medium text-slate-700">
-              企业邮箱 + SSO
+              邮箱密码
             </span>
-            <span className="text-[13px] text-slate-500">与飞书扫码 / MFA 可在网关层对接。</span>
+            <span
+              className={`rounded-full px-3 py-1 text-[13px] font-medium ${
+                authUser?.feishu_bound
+                  ? "bg-emerald-50 text-emerald-700"
+                  : "bg-amber-50 text-amber-700"
+              }`}
+            >
+              {authUser?.feishu_bound ? "已绑定飞书" : "未绑定飞书"}
+            </span>
           </div>
-          <p className="text-[13px] leading-relaxed text-slate-500">
-            当前会话：浏览器保存后端访问令牌；本页安全设置仍为本地演示偏好。
-          </p>
+          <div className="rounded-[14px] border border-slate-100 bg-slate-50/70 px-4 py-3">
+            <p className="text-[13px] font-medium text-slate-700">
+              当前账号：{authUser?.display_name || "读取中"} {authUser?.email ? `· ${authUser.email}` : ""}
+            </p>
+            <p className="mt-1 text-[13px] text-slate-500">
+              飞书 Open ID：{authUser?.feishu_user_id || "尚未绑定"}
+            </p>
+            {authError ? <p className="mt-2 text-[13px] text-rose-500">{authError}</p> : null}
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <Link
+              href="/login/feishu/start?mode=bind"
+              className="rounded-[12px] bg-blue-600 px-4 py-2.5 text-[13px] font-semibold text-white hover:bg-blue-700"
+            >
+              {authUser?.feishu_bound ? "重新绑定飞书" : "绑定飞书账号"}
+            </Link>
+            <span className="text-[13px] text-slate-500">
+              绑定后，飞书登录和飞书消息事件会映射到同一个网站账号。
+            </span>
+          </div>
         </div>
       </SectionCard>
 
-      <SectionCard title="修改密码" description="本区域仅做前端表单校验，不调用后端改密 API。">
+      <SectionCard title="修改密码" description="修改当前网站账号密码；仅邮箱密码账号可使用。">
         <div className="grid gap-4 py-4 sm:max-w-md">
           <label className="block text-[13px] font-medium text-slate-600">
             当前密码
@@ -89,9 +153,9 @@ export function ProfileSecurityPage() {
             <button
               type="button"
               className="rounded-[12px] bg-blue-600 px-4 py-2.5 text-[13px] font-semibold text-white hover:bg-blue-700"
-              onClick={submitPasswordDemo}
+              onClick={() => void submitPassword()}
             >
-              保存新密码（本地演示）
+              保存新密码
             </button>
             {pwMsg ? <span className="text-[13px] text-emerald-600">{pwMsg}</span> : null}
           </div>

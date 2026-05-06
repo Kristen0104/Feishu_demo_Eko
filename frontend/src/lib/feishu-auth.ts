@@ -1,4 +1,4 @@
-import { apiUrl } from "@/lib/eko-api";
+import { apiUrl, fetchEkoJson } from "@/lib/eko-api";
 
 const FEISHU_LOGIN_DRAFT_KEY = "eko-feishu-login-draft-v1";
 
@@ -14,6 +14,7 @@ export type FeishuAuthUser = {
   feishu_user_id: string;
   email?: string | null;
   avatar_url?: string | null;
+  feishu_bound?: boolean;
 };
 
 export type FeishuAuthTokenData = {
@@ -155,4 +156,15 @@ export async function exchangeFeishuLogin(code: string, state: string, redirectU
   }
 
   return readEnvelope<FeishuAuthTokenData>(body, "飞书登录失败");
+}
+
+export async function bindFeishuAccount(code: string, state: string, redirectUri?: string): Promise<FeishuAuthUser> {
+  return fetchEkoJson<FeishuAuthUser>("/api/v1/auth/feishu/bind", {
+    method: "POST",
+    body: JSON.stringify({
+      code,
+      state,
+      ...(redirectUri ? { redirect_uri: redirectUri } : {}),
+    }),
+  });
 }

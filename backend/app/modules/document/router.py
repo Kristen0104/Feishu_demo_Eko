@@ -95,6 +95,7 @@ async def save_document(
     request: DocumentSaveRequest,
     background_tasks: BackgroundTasks,
     service: Annotated[DocumentService, Depends(get_document_service)],
+    sync_service: Annotated[SyncService, Depends(get_sync_service)],
 ) -> ApiResponse[DocumentSaveResponse]:
     """保存文档，可选同步到飞书"""
     if request.sync_to_feishu:
@@ -106,6 +107,7 @@ async def save_document(
             content=request.content,
             app_token=request.app_token,
             table_id=request.table_id,
+            sync_service=sync_service,
         )
         return ApiResponse.success(
             DocumentSaveResponse(

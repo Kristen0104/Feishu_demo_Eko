@@ -20,6 +20,7 @@ from app.modules.document.schemas import (
     BitableRecord,
 )
 from app.modules.feishu.service import FeishuService
+from app.modules.sync.service import SyncService
 
 logger = logging.getLogger(__name__)
 
@@ -440,6 +441,7 @@ Eko 的唤醒方式：在飞书群中 @Eko + 一句指令
         content: str,
         app_token: str | None = None,
         table_id: str | None = None,
+        sync_service: SyncService | None = None,
     ) -> dict[str, Any]:
         """保存文档并同步到飞书"""
         app_token = app_token or settings.FEISHU_BITABLE_APP_TOKEN or None
@@ -458,6 +460,23 @@ Eko 的唤醒方式：在飞书群中 @Eko + 一句指令
                 "document_url": result["document_url"],
                 "record_id": result["record_id"],
             }
+            if sync_service is not None:
+                await sync_service.publish_task_completed(
+                    session_id,
+                    intent="docx",
+                    message="文档已同步到飞书。",
+                    status="completed",
+                    artifact={
+                        "kind": "docx",
+                        "content": content,
+                        "status": "completed",
+                        "current_step": "文档已保存并同步",
+                        "sharing_url": result["document_url"],
+                        "result_summary": "文档已同步到飞书。",
+                    },
+                    messages=None,
+                    error=None,
+                )
             await self._publish_status(session_id, payload)
             return payload
         except Exception as exc:
@@ -469,6 +488,24 @@ Eko 的唤醒方式：在飞书群中 @Eko + 一句指令
                 "record_id": None,
                 "error": str(exc),
             }
+            if sync_service is not None:
+                await sync_service.publish_task_completed(
+                    session_id,
+                    intent="docx",
+                    message="文档同步失败。",
+                    status="failed",
+                    artifact={
+                        "kind": "docx",
+                        "content": content,
+                        "status": "failed",
+                        "current_step": "文档同步失败",
+                        "sharing_url": None,
+                        "result_summary": "文档同步失败。",
+                        "error_message": str(exc),
+                    },
+                    messages=None,
+                    error=str(exc),
+                )
             await self._publish_status(session_id, payload)
             return payload
 

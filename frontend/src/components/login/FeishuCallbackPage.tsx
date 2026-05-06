@@ -7,6 +7,7 @@ import { BrandMark, FeishuLogo } from "@/components/login/brand-icons";
 import { saveAccessToken } from "@/lib/auth-token";
 import { clearFeishuLoginDraft, exchangeFeishuLogin, readFeishuLoginDraft } from "@/lib/feishu-auth";
 import { useAppStore } from "@/store/app-store";
+import { useProfileStore } from "@/store/profile-store";
 
 type FeishuCallbackPageProps = {
   code: string | null;
@@ -18,6 +19,7 @@ type FeishuCallbackPageProps = {
 export function FeishuCallbackPage({ code, state, error, errorDescription }: FeishuCallbackPageProps) {
   const router = useRouter();
   const setLogin = useAppStore((store) => store.setLogin);
+  const adoptProfileOwner = useProfileStore((store) => store.adoptProfileOwner);
   const [status, setStatus] = useState<"loading" | "success" | "error">("loading");
   const [message, setMessage] = useState("正在完成飞书登录...");
   const callbackSummary = (() => {
@@ -58,6 +60,7 @@ export function FeishuCallbackPage({ code, state, error, errorDescription }: Fei
           result.user.display_name ||
           result.user.feishu_user_id ||
           result.user.user_id;
+        adoptProfileOwner(result.user.email?.trim().toLowerCase() || null);
         setLogin(loginLabel, { remember: true });
         clearFeishuLoginDraft();
         setStatus("success");
@@ -76,7 +79,7 @@ export function FeishuCallbackPage({ code, state, error, errorDescription }: Fei
     return () => {
       cancelled = true;
     };
-  }, [code, error, errorDescription, router, setLogin, state]);
+  }, [adoptProfileOwner, code, error, errorDescription, router, setLogin, state]);
 
   return (
     <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[radial-gradient(circle_at_top,#eef5ff_0%,#edf2fb_38%,#e8eefb_100%)] px-4 py-8 text-slate-900">

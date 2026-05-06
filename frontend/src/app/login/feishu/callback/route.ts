@@ -40,8 +40,13 @@ function getParam(searchParams: URLSearchParams, key: string): string | null {
   return value && value.trim() ? value.trim() : null;
 }
 
-function buildErrorRedirect(request: NextRequest): NextResponse {
-  return NextResponse.redirect(new URL("/login?feishu_error=1", getPublicOrigin(request)), { status: 302 });
+function readAccessToken(request: NextRequest): string | null {
+  return request.cookies.get(ACCESS_PERSIST_KEY)?.value || request.cookies.get(ACCESS_SESSION_KEY)?.value || null;
+}
+
+function buildErrorRedirect(request: NextRequest, mode: "login" | "bind" = "login"): NextResponse {
+  const target = mode === "bind" ? "/profile/security?feishu_bind=error" : "/login?feishu_error=1";
+  return NextResponse.redirect(new URL(target, getPublicOrigin(request)), { status: 302 });
 }
 
 function setAuthCookies(
@@ -87,25 +92,40 @@ export async function GET(request: NextRequest) {
   const code = getParam(searchParams, "code");
   const state = getParam(searchParams, "state");
   const error = getParam(searchParams, "error");
+  const mode = getParam(searchParams, "mode") === "bind" ? "bind" : "login";
 
   if (error || !code || !state) {
-    return buildErrorRedirect(request);
+    return buildErrorRedirect(request, mode);
   }
 
   try {
     const backendOrigin = getBackendOrigin();
-    const response = await fetch(`${backendOrigin}/api/v1/auth/feishu/login`, {
+    const endpoint = mode === "bind" ? "/api/v1/auth/feishu/bind" : "/api/v1/auth/feishu/login";
+    const token = mode === "bind" ? readAccessToken(request) : null;
+    if (mode === "bind" && !token) {
+      return buildErrorRedirect(request, mode);
+    }
+
+    const response = await fetch(`${backendOrigin}${endpoint}`, {
       method: "POST",
       cache: "no-store",
       headers: {
         "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: JSON.stringify({ code, state }),
     });
 
     const body = (await response.json().catch(() => null)) as FeishuAuthTokenResponse | null;
     if (!response.ok || !body || body.code !== 0 || !body.data?.access_token) {
+      if (mode === "bind" && body?.code === 0) {
+        return NextResponse.redirect(new URL("/profile/security?feishu_bind=success", getPublicOrigin(request)), { status: 302 });
+      }
       throw new Error(body?.message || `HTTP ${response.status}`);
+    }
+
+    if (mode === "bind") {
+      return NextResponse.redirect(new URL("/profile/security?feishu_bind=success", getPublicOrigin(request)), { status: 302 });
     }
 
     const accessToken = body.data.access_token;
@@ -121,6 +141,6 @@ export async function GET(request: NextRequest) {
     setAuthCookies(redirectResponse, request, accessToken, loginLabel);
     return redirectResponse;
   } catch {
-    return buildErrorRedirect(request);
+    return buildErrorRedirect(request, mode);
   }
 }

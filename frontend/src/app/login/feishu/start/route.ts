@@ -37,11 +37,12 @@ async function readFeishuLoginUrl(redirectUri: string): Promise<string> {
 }
 
 export async function GET(request: NextRequest) {
+  const mode = request.nextUrl.searchParams.get("mode") === "bind" ? "bind" : "login";
   const forwardedHost = request.headers.get("x-forwarded-host")?.trim();
   const forwardedProto = request.headers.get("x-forwarded-proto")?.trim();
   const host = forwardedHost || request.headers.get("host") || new URL(request.url).host;
   const protocol = forwardedProto || new URL(request.url).protocol.replace(":", "");
-  const redirectUri = `${protocol}://${host}/login/feishu/callback`;
+  const redirectUri = `${protocol}://${host}/login/feishu/callback${mode === "bind" ? "?mode=bind" : ""}`;
 
   try {
     const authorizeUrl = await readFeishuLoginUrl(redirectUri);

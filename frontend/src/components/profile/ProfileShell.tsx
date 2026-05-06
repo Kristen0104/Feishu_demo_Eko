@@ -77,7 +77,7 @@ export function ProfileShell({ children }: { children: React.ReactNode }) {
           </div>
           <div className="flex items-center gap-2 text-[12px] text-slate-400">
             <span className="rounded-full bg-emerald-50 px-2.5 py-1 font-medium text-emerald-700">在线</span>
-            <span>身份读后端 · 编辑为本地覆盖</span>
+            <span>身份读后端 · 编辑优先写后端，失败时才暂存本机</span>
           </div>
         </div>
 
@@ -105,7 +105,7 @@ export function ProfileShell({ children }: { children: React.ReactNode }) {
               })}
             </nav>
             <p className="px-2 text-[11px] leading-relaxed text-slate-400">
-              布局参考飞书「设置 — 个人信息」：登录身份来自后端；字段变更写入浏览器本地覆盖层。
+              布局参考飞书「设置 — 个人信息」：登录身份来自后端；字段变更默认保存到账号资料，仅在接口异常时暂存本地。
             </p>
           </aside>
 

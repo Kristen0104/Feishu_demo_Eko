@@ -128,6 +128,10 @@ function makeSessionItem(session: SyncSession): SessionItem {
         action: "创建了新会话",
         time: "刚刚",
       },
+      externalUrl:
+        typeof session.artifact?.sharing_url === "string" && session.artifact.sharing_url
+          ? session.artifact.sharing_url
+          : undefined,
     },
   };
 }

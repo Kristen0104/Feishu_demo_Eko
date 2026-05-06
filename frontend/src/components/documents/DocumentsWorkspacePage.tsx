@@ -50,7 +50,13 @@ export function DocumentsWorkspacePage({ data }: { data: SessionListPageData }) 
                 {docs.map((row) => (
                   <tr key={row.id} className="transition hover:bg-slate-50/80">
                     <td className="px-5 py-3.5">
-                      <Link href={`/sessions/${encodeURIComponent(row.id)}`} prefetch={false} className="font-semibold text-blue-600 hover:underline">
+                      <Link
+                        href={row.preview.externalUrl || `/sessions/${encodeURIComponent(row.id)}`}
+                        prefetch={false}
+                        target={row.preview.externalUrl ? "_blank" : undefined}
+                        rel={row.preview.externalUrl ? "noreferrer" : undefined}
+                        className="font-semibold text-blue-600 hover:underline"
+                      >
                         {row.title}
                       </Link>
                     </td>

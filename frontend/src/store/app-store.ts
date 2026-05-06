@@ -3,6 +3,7 @@ import { persist } from "zustand/middleware";
 
 import { clearAccessToken } from "@/lib/auth-token";
 import { clearAuthStorage, saveAuthAfterLogin } from "@/lib/auth-session";
+import { useProfileStore } from "@/store/profile-store";
 import type { SessionStatus } from "@/types/session";
 
 export type SessionFilter = "all" | "chat" | "doc" | "canvas" | "recent" | "starred";
@@ -61,6 +62,7 @@ export const useAppStore = create<AppStore>()(
           clearAuthStorage();
           clearAccessToken();
         }
+        useProfileStore.getState().clearProfileState();
         set({
           isLoggedIn: false,
           loginEmail: null,
@@ -144,4 +146,3 @@ export const useAppStore = create<AppStore>()(
     },
   ),
 );
-

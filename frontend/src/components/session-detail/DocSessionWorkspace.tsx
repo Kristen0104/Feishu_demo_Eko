@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { AnimatePresence, motion } from "framer-motion";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -530,11 +531,11 @@ function ArtifactPresenter({
 }) {
   const kind = normalizeArtifactKind(artifact);
   const state = normalizeArtifactState(artifact?.status);
- const title =
-   kind === "ppt" ? artifact?.title || "AI PPT" : kind === "board" ? artifact?.title || "飞书画板" : artifact?.title || "文档产物";
+  const title =
+    kind === "ppt" ? artifact?.title || "AI PPT" : kind === "board" ? artifact?.title || "飞书画板" : artifact?.title || "文档产物";
   const [pptPreview, setPptPreview] = useState<PPTPreview | null>(null);
   const [selectedSlideNumber, setSelectedSlideNumber] = useState(1);
-  const [brokenSlides, setBrokenSlides] = useState<Set<number>>(new Set());
+  const [brokenSlidesByPreview, setBrokenSlidesByPreview] = useState<Record<string, Set<number>>>({});
   const boardViewportRef = useRef<HTMLDivElement | null>(null);
   const boardDragRef = useRef<{
     pointerId: number;
@@ -562,6 +563,13 @@ function ArtifactPresenter({
       : [1, 2, 3].map((slide) => ({ slide_number: slide, title: slide === 1 ? "封面" : slide === 2 ? "内容" : "结尾", template: "" }));
   const selectedSlide =
     previewSlides.find((slide) => slide.slide_number === selectedSlideNumber) ?? previewSlides[0];
+  const pptPreviewKey = useMemo(() => {
+    if (!artifact?.jobId) return "ppt:placeholder";
+    const slideCount = pptPreview?.slides?.length ?? 0;
+    const statusKey = pptPreview?.status ?? artifact?.status ?? "unknown";
+    return `${artifact.jobId}:${statusKey}:${slideCount}`;
+  }, [artifact?.jobId, artifact?.status, pptPreview?.slides?.length, pptPreview?.status]);
+  const brokenSlides = brokenSlidesByPreview[pptPreviewKey] ?? new Set<number>();
   const boardZoomPct = Math.round(boardZoom * 100);
   const docMarkdown = markdown || sections.map((section) => `## ${section.title}\n\n${section.body ?? ""}`).join("\n\n");
   const docFileName = `${(title || "Eko 文档").replace(/[\\/:*?"<>|]/g, "_")}.doc`;
@@ -668,10 +676,6 @@ function ArtifactPresenter({
   }, [jobId, kind, artifact?.status]);
 
   useEffect(() => {
-    setBrokenSlides(new Set());
-  }, [pptPreview]);
-
-  useEffect(() => {
     if (kind !== "board") return;
     if (artifact?.previewUrl) {
       return;
@@ -705,11 +709,23 @@ function ArtifactPresenter({
           <div className="flex w-full max-w-[1120px] flex-col gap-3">
             <div className="aspect-[16/9] w-full overflow-hidden rounded-[16px] border border-slate-200 bg-white shadow-[0_18px_44px_rgba(15,23,42,0.06)]">
               {selectedSlide && artifact?.jobId && !brokenSlides.has(selectedSlide.slide_number) ? (
-                <img
+                <Image
                   src={apiUrl(`/api/v1/ppt/preview/${encodeURIComponent(artifact.jobId)}/slides/${selectedSlide.slide_number}`)}
                   alt={selectedSlide.title || title}
+                  width={1600}
+                  height={900}
+                  unoptimized
+                  sizes="(max-width: 1120px) 100vw, 1120px"
                   className="h-full w-full object-cover"
-                  onError={() => setBrokenSlides((prev) => new Set(prev).add(selectedSlide.slide_number))}
+                  onError={() =>
+                    setBrokenSlidesByPreview((prev) => {
+                      const next = { ...prev };
+                      const nextSet = new Set(next[pptPreviewKey] ?? []);
+                      nextSet.add(selectedSlide.slide_number);
+                      next[pptPreviewKey] = nextSet;
+                      return next;
+                    })
+                  }
                 />
               ) : selectedSlide && brokenSlides.has(selectedSlide.slide_number) ? (
                 <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-slate-50 to-white p-8">
@@ -738,6 +754,24 @@ function ArtifactPresenter({
                 </div>
               )}
             </div>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              {artifact?.errorMessage ? <span className="rounded-full bg-rose-50 px-3 py-2 text-[12px] font-semibold text-rose-700">{artifact.errorMessage}</span> : null}
+              {artifactSharingUrl ? (
+                <>
+                  <button type="button" onClick={handleCopyArtifactLink} className="inline-flex h-9 items-center justify-center rounded-[12px] border border-slate-200 bg-white px-3 text-[13px] font-semibold text-slate-600 shadow-[0_8px_18px_rgba(15,23,42,0.06)] hover:border-blue-200 hover:text-blue-600">
+                    复制链接
+                  </button>
+                  <a href={artifactSharingUrl} target="_blank" rel="noreferrer" className="inline-flex h-9 items-center justify-center rounded-[12px] bg-slate-900 px-3 text-[13px] font-semibold text-white shadow-[0_10px_20px_rgba(15,23,42,0.14)] hover:bg-blue-600">
+                    打开飞书
+                  </a>
+                </>
+              ) : null}
+              {artifact?.downloadUrl ? (
+                <a href={artifact.downloadUrl} target="_blank" rel="noreferrer" className="inline-flex h-9 items-center justify-center rounded-[12px] bg-blue-600 px-3 text-[13px] font-semibold text-white shadow-[0_10px_20px_rgba(37,99,235,0.18)]">
+                  下载 PPT
+                </a>
+              ) : null}
+            </div>
             <div className="flex min-w-0 gap-2 overflow-x-auto pb-1">
               {previewSlides.slice(0, 8).map((slide) => (
                 <button
@@ -745,7 +779,15 @@ function ArtifactPresenter({
                   type="button"
                   onClick={() => {
                     setSelectedSlideNumber(slide.slide_number);
-                    setBrokenSlides((prev) => { const next = new Set(prev); next.delete(slide.slide_number); return next; });
+                    setBrokenSlidesByPreview((prev) => {
+                      const current = prev[pptPreviewKey];
+                      if (!current?.has(slide.slide_number)) return prev;
+                      const next = { ...prev };
+                      const nextSet = new Set(current);
+                      nextSet.delete(slide.slide_number);
+                      next[pptPreviewKey] = nextSet;
+                      return next;
+                    });
                   }}
                   className={[
                     "w-[132px] shrink-0 overflow-hidden rounded-[12px] border bg-white text-left shadow-[0_8px_20px_rgba(15,23,42,0.04)] transition",
@@ -757,11 +799,23 @@ function ArtifactPresenter({
                     <span className="truncate">{slide.title || slide.template || ""}</span>
                   </div>
                   {pptPreview && artifact?.jobId && !brokenSlides.has(slide.slide_number) ? (
-                    <img
+                    <Image
                       src={apiUrl(`/api/v1/ppt/preview/${encodeURIComponent(artifact.jobId)}/slides/${slide.slide_number}`)}
                       alt={slide.title || `Slide ${slide.slide_number}`}
+                      width={264}
+                      height={149}
+                      unoptimized
+                      sizes="132px"
                       className="aspect-[16/9] w-full object-cover"
-                      onError={() => setBrokenSlides((prev) => new Set(prev).add(slide.slide_number))}
+                      onError={() =>
+                        setBrokenSlidesByPreview((prev) => {
+                          const next = { ...prev };
+                          const nextSet = new Set(next[pptPreviewKey] ?? []);
+                          nextSet.add(slide.slide_number);
+                          next[pptPreviewKey] = nextSet;
+                          return next;
+                        })
+                      }
                     />
                   ) : (
                     <div className="mx-2 mb-2 flex aspect-[16/9] items-center justify-center rounded-[10px] bg-slate-100 text-[11px] font-medium text-slate-400">
@@ -836,11 +890,15 @@ function ArtifactPresenter({
                   className="h-full min-h-[420px] min-w-0 flex-1 cursor-grab touch-none select-none overflow-auto rounded-[14px] bg-white active:cursor-grabbing data-[dragging=true]:cursor-grabbing"
                 >
                   <div className="flex min-h-full min-w-full items-start justify-center p-4">
-                    <img
+                    <Image
                       src={effectiveBoardPreviewUrl}
                       alt={title}
+                      width={1920}
+                      height={1080}
+                      unoptimized
+                      sizes="100vw"
                       draggable={false}
-                      style={{ width: `${boardZoom * 100}%`, minWidth: `${Math.round(580 * boardZoom)}px` }}
+                      style={{ width: `${boardZoom * 100}%`, minWidth: `${Math.round(580 * boardZoom)}px`, height: "auto" }}
                       className="pointer-events-none max-w-none object-contain"
                     />
                   </div>
@@ -933,22 +991,7 @@ function ArtifactPresenter({
       )}
 
       <div className="absolute bottom-5 right-5 flex items-center gap-2">
-        {artifact?.errorMessage ? <span className="rounded-full bg-rose-50 px-3 py-2 text-[12px] font-semibold text-rose-700">{artifact.errorMessage}</span> : null}
-        {kind === "ppt" && artifactSharingUrl ? (
-          <>
-            <button type="button" onClick={handleCopyArtifactLink} className="inline-flex h-9 items-center justify-center rounded-[12px] border border-slate-200 bg-white px-3 text-[13px] font-semibold text-slate-600 shadow-[0_8px_18px_rgba(15,23,42,0.06)] hover:border-blue-200 hover:text-blue-600">
-              复制链接
-            </button>
-            <a href={artifactSharingUrl} target="_blank" rel="noreferrer" className="inline-flex h-9 items-center justify-center rounded-[12px] bg-slate-900 px-3 text-[13px] font-semibold text-white shadow-[0_10px_20px_rgba(15,23,42,0.14)] hover:bg-blue-600">
-              打开飞书
-            </a>
-          </>
-        ) : null}
-        {kind === "ppt" && artifact?.downloadUrl ? (
-          <a href={artifact.downloadUrl} target="_blank" rel="noreferrer" className="inline-flex h-9 items-center justify-center rounded-[12px] bg-blue-600 px-3 text-[13px] font-semibold text-white shadow-[0_10px_20px_rgba(37,99,235,0.18)]">
-            下载 PPT
-          </a>
-        ) : null}
+        {artifact?.errorMessage && kind !== "ppt" ? <span className="rounded-full bg-rose-50 px-3 py-2 text-[12px] font-semibold text-rose-700">{artifact.errorMessage}</span> : null}
         {kind === "board" ? (
           <Link href={artifact?.sharingUrl || `/canvas?session=${encodeURIComponent(sessionId)}`} prefetch={false} className="inline-flex h-9 items-center justify-center rounded-[12px] bg-blue-600 px-3 text-[13px] font-semibold text-white shadow-[0_10px_20px_rgba(37,99,235,0.18)]">
             打开画布
@@ -1227,10 +1270,17 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
   const [permissionStatus, setPermissionStatus] = useState(isCanvasMode ? "可同步" : "已验证");
   const [canvasNotice, setCanvasNotice] = useState<string | null>(null);
   const contextMessages = data.contextMessages ?? [];
+  const hasActiveRealtimeConversationRef = useRef(false);
+
+  hasActiveRealtimeConversationRef.current =
+    agentSlice?.phase === "ANALYZING" ||
+    agentSlice?.phase === "RETRIEVING" ||
+    agentSlice?.phase === "GENERATING" ||
+    agentSlice?.phase === "SYNCING";
 
   useEffect(() => {
     setMessages((current) => {
-      if (data.messages.length < current.length) return current;
+      if (hasActiveRealtimeConversationRef.current && data.messages.length < current.length) return current;
       return data.messages;
     });
   }, [data.messages]);
@@ -1569,7 +1619,7 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
       const streamMessageId = `eko-stream-${requestId}`;
       const store = useAgentRuntimeStore.getState();
       const isExistingDocumentEdit = resourceKind === "docx" && Boolean(currentDocumentMarkdown.trim()) && !wantsNewDocument(text);
-      store.patchSession(data.id, { phase: "ANALYZING", lastError: null });
+      store.patchSession(data.id, { phase: "ANALYZING", lastError: null, useMockFallback: false });
 
       setSending(true);
       try {
@@ -1667,6 +1717,7 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
           },
           (event: AgentChatStreamEvent) => {
             const payload = event.payload ?? {};
+            store.patchSession(data.id, { useMockFallback: false });
             if (event.event === "turn.started") {
               const planningEnabled = payload.planning_enabled !== false;
               updateStreamMessage(isExistingDocumentEdit ? "好的，直接修改当前文档。" : event.message || "收到。我开始处理。", {

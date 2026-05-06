@@ -1,32 +1,49 @@
-# Feishu_demo_Eko
+# 飞书 Demo Eko
 
-2026 飞书 AI 校园挑战赛小组作品。
+飞书 Demo Eko 是一个前后端一体的工作台演示项目。前端使用 Next.js，后端使用 FastAPI，包含飞书登录与集成、文档工作区、智能体会话、RAG 相关服务、团队与工作区接口，以及 AI PPT 导出流程。
 
-## 快速启动
+## 目录结构
 
-后端配置模板在 `backend/.env.example`。拉取项目后复制一份到 `backend/.env`，填好飞书、LLM、AIPPT 等 API Key 即可运行；PostgreSQL 和 Redis 默认指向远端 `<YOUR_SERVER_IP>`。
+```text
+frontend/          Next.js 前端应用
+backend/           FastAPI 后端应用与 Python 服务
+vendor/ppt-master/ AI PPT 模块使用的内置 PPT 转换运行时
+```
 
-```bash
+运行数据、生成的 PPT 文件、本地依赖、缓存、测试产物和内部计划文档均不保留在仓库中。
+
+## 环境要求
+
+- Node.js 20+
+- Python 3.12+
+- PostgreSQL，并启用 pgvector
+- Redis
+
+## 启动后端
+
+```sh
 cd backend
-cp .env.example .env
+python -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
+cp .env.example .env
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+启动前请根据实际环境修改 `backend/.env`，包括数据库、Redis、飞书、LLM 和 AI PPT 相关配置。
+
+## 启动前端
+
+```sh
+cd frontend
 npm install
-uvicorn app.main:app --host 0.0.0.0 --port 8000
+npm run dev
 ```
 
-前端静态调试页在 `frontend/`，后端启动后默认挂载到 `/frontend`。
+前端开发服务默认运行在 `3002` 端口。
 
-## 配置与提交约定
+## 仓库约定
 
-- 提交配置模板：`backend/.env.example`
-- 不提交真实密钥：`backend/.env`、根目录 `.env`
-- 不提交运行产物：`backend/storage/`、`backend/dump.rdb`、`frontend/dist/`、缓存目录
-- 大型 PPT 运行产物由服务运行时重新生成
-
-## 常用验证
-
-```bash
-cd backend
-.venv/bin/python -m pytest -q -k 'not login'
-node --test tests/services/test_export_deck_to_pptx.mjs
-```
+- 不提交 `.env`、`.env.local`、虚拟环境、`node_modules`、`.next`、`backend/storage`、`backend/runtime`、生成的 PPT 或媒体文件。
+- 保留 `backend/.env.example`、包声明文件、lockfile、Docker 和基础配置文件，确保克隆后可以安装和启动。
+- 清理后的仓库只保留根目录 `README.md` 作为项目文档。

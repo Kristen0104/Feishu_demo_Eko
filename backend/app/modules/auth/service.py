@@ -13,8 +13,10 @@ from app.modules.auth.provider import FeishuOAuthProviderProtocol
 from app.modules.auth.repository import AuthRepository, FeishuIdentityUpsert
 from app.modules.auth.schemas import (
     AuthLoginRequest,
+    AuthPasswordUpdateRequest,
     AuthRegisterRequest,
     AuthTokenSchema,
+    AuthUserUpdateRequest,
     AuthUserSchema,
     FeishuCallbackRequest,
     FeishuLoginRequest,
@@ -96,6 +98,39 @@ class AuthService:
         account = await self._repository.get_feishu_account_by_user_id(user.id)
         return await self._issue_token_for_user(user, feishu_user_id=account.open_id if account else oauth_result.identity.open_id)
 
+    async def bind_feishu_callback(self, auth_context: AuthContext, payload: FeishuCallbackRequest) -> AuthUserSchema:
+        if auth_context.token_id:
+            await self._ensure_session_active(auth_context.token_id, auth_context.user_id)
+
+        redirect_uri = await self._consume_state(payload.state)
+        oauth_result = await self._provider.exchange_code(payload.code, payload.redirect_uri or redirect_uri)
+        user = await self._repository.get_user_by_id(auth_context.user_id)
+        if user is None:
+            raise HTTPException(status_code=404, detail="Authenticated user was not found")
+
+        try:
+            await self._repository.bind_feishu_identity(
+                user=user,
+                identity=FeishuIdentityUpsert(
+                    open_id=oauth_result.identity.open_id,
+                    union_id=oauth_result.identity.union_id,
+                    name=oauth_result.identity.name,
+                    avatar_url=oauth_result.identity.avatar_url,
+                    tenant_key=oauth_result.identity.tenant_key,
+                    email=oauth_result.identity.email,
+                    access_token=oauth_result.access_token,
+                    refresh_token=oauth_result.refresh_token,
+                    expires_at=self._expires_at(oauth_result.expires_in),
+                    refresh_expires_at=self._expires_at(oauth_result.refresh_expires_in),
+                    token_type=oauth_result.token_type,
+                    scope=oauth_result.scope,
+                ),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+        return await self.get_current_user(auth_context)
+
     async def get_current_user(self, auth_context: AuthContext) -> AuthUserSchema:
         if auth_context.token_id:
             await self._ensure_session_active(auth_context.token_id, auth_context.user_id)
@@ -107,10 +142,55 @@ class AuthService:
         return AuthUserSchema(
             user_id=user.id,
             display_name=user.display_name,
+            name_en=getattr(user, "name_en", None),
             avatar_url=user.avatar_url,
             feishu_user_id=(account.open_id if account else auth_context.feishu_user_id) or "",
+            feishu_bound=account is not None,
+            union_id=account.union_id if account else None,
             email=getattr(user, "email", None),
+            phone=getattr(user, "phone", None),
+            phone_ext=getattr(user, "phone_ext", None),
+            location=getattr(user, "location", None),
+            time_zone=getattr(user, "time_zone", None),
+            employee_id=getattr(user, "employee_id", None),
+            job_title=getattr(user, "job_title", None),
+            department=getattr(user, "department", None),
+            team=getattr(user, "team", None),
+            reports_to=getattr(user, "reports_to", None),
+            joined_at=getattr(user, "joined_at", None),
+            bio=getattr(user, "bio", None),
+            languages=self._parse_languages(getattr(user, "languages", None)),
         )
+
+    async def update_current_user(self, auth_context: AuthContext, payload: AuthUserUpdateRequest) -> AuthUserSchema:
+        if auth_context.token_id:
+            await self._ensure_session_active(auth_context.token_id, auth_context.user_id)
+
+        if payload.email:
+            email = self._normalize_email(payload.email)
+            existing = await self._repository.get_user_by_email(email)
+            if existing is not None and existing.id != auth_context.user_id:
+                raise HTTPException(status_code=409, detail="Email already registered")
+
+        user = await self._repository.get_user_by_id(auth_context.user_id)
+        if user is None:
+            raise HTTPException(status_code=404, detail="Authenticated user was not found")
+        await self._repository.update_user_profile(user, payload)
+        return await self.get_current_user(auth_context)
+
+    async def update_current_password(self, auth_context: AuthContext, payload: AuthPasswordUpdateRequest) -> AuthUserSchema:
+        if auth_context.token_id:
+            await self._ensure_session_active(auth_context.token_id, auth_context.user_id)
+
+        user = await self._repository.get_user_by_id(auth_context.user_id)
+        if user is None:
+            raise HTTPException(status_code=404, detail="Authenticated user was not found")
+        if not user.password_hash:
+            raise HTTPException(status_code=400, detail="Current account does not have a password")
+        if not verify_password(payload.current_password, user.password_hash):
+            raise HTTPException(status_code=401, detail="Current password is incorrect")
+        await self._repository.update_password_hash(user, hash_password(payload.new_password))
+        return await self.get_current_user(auth_context)
 
     async def _issue_token_for_user(self, user, feishu_user_id: str | None = None) -> AuthTokenSchema:
         token_id = secrets.token_urlsafe(24)
@@ -128,9 +208,23 @@ class AuthService:
             user=AuthUserSchema(
                 user_id=user.id,
                 display_name=user.display_name,
+                name_en=getattr(user, "name_en", None),
                 avatar_url=user.avatar_url,
                 feishu_user_id=feishu_user_id or "",
+                feishu_bound=bool(feishu_user_id),
                 email=getattr(user, "email", None),
+                phone=getattr(user, "phone", None),
+                phone_ext=getattr(user, "phone_ext", None),
+                location=getattr(user, "location", None),
+                time_zone=getattr(user, "time_zone", None),
+                employee_id=getattr(user, "employee_id", None),
+                job_title=getattr(user, "job_title", None),
+                department=getattr(user, "department", None),
+                team=getattr(user, "team", None),
+                reports_to=getattr(user, "reports_to", None),
+                joined_at=getattr(user, "joined_at", None),
+                bio=getattr(user, "bio", None),
+                languages=self._parse_languages(getattr(user, "languages", None)),
             ),
         )
 
@@ -201,3 +295,8 @@ class AuthService:
         if not normalized or "@" not in normalized:
             raise HTTPException(status_code=400, detail="Invalid email")
         return normalized
+
+    def _parse_languages(self, raw: str | None) -> list[str]:
+        if not raw:
+            return []
+        return [item for item in raw.split("||") if item]

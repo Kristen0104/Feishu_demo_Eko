@@ -685,9 +685,46 @@ class AgentService:
                 messages=await self._build_merged_sync_messages(request, response),
                 error=response.error,
             )
+            await self._echo_feishu_chat_reply_if_needed(request, response, artifact=artifact)
             return
 
         await self._sync_service.publish_error(response.session_id, response.message, response.error)
+
+    async def _echo_feishu_chat_reply_if_needed(
+        self,
+        request: AgentChatRequest,
+        response: AgentChatResponse,
+        *,
+        artifact: dict[str, Any] | None,
+    ) -> None:
+        if response.status != "completed" or response.intent != AgentIntent.CHAT.value:
+            return
+        if not response.message.strip():
+            return
+        if self._sync_service is None or not hasattr(self._sync_service, "get_session"):
+            return
+        session = await self._sync_service.get_session(request.session_id)
+        if session is None:
+            return
+        if getattr(session, "source", None) != "feishu":
+            return
+        if getattr(session, "reply_echo_sent", False):
+            return
+        if bool((artifact or {}).get("feishu_chat_reply_echo_sent")):
+            return
+        session_artifact = getattr(session, "artifact", None)
+        if isinstance(session_artifact, dict) and session_artifact.get("feishu_chat_reply_echo_sent") is True:
+            return
+        chat_id = getattr(session, "chat_id", None) or self._extract_feishu_chat_id(request.session_id)
+        if not isinstance(chat_id, str) or not chat_id:
+            return
+        try:
+            await self._feishu.send_text_message_to_chat(chat_id, response.message)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Echo final chat reply to Feishu failed session=%s: %s", request.session_id, exc)
+            return
+        if hasattr(self._sync_service, "update_session_reply_echo_state"):
+            await self._sync_service.update_session_reply_echo_state(request.session_id, sent=True)
 
     async def _create_plan_with_timeout(
         self,
