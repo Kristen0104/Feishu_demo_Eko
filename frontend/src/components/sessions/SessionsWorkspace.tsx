@@ -116,8 +116,14 @@ function makeLiveSessionItem(session: {
   const status = mapRemoteStatus(session.status);
   const updatedAt = formatUpdatedAt(session.updated_at);
   const collaborator: SessionParticipant = { id: "eko-bot", name: "Eko Bot", initials: "EK" };
-  const signal = (session.artifact?.kind || session.artifact?.intent || session.intent || "").trim().toLowerCase();
-  const kind: SessionItem["kind"] = signal === "board" ? "canvas" : signal === "ppt" || signal === "docx" || signal === "presentation" ? "doc" : "chat";
+  const intent = (session.artifact?.intent || session.intent || "").trim().toLowerCase();
+  const artifactKind = (session.artifact?.kind || "").trim().toLowerCase();
+  const kind: SessionItem["kind"] =
+    intent === "board" || artifactKind === "board"
+      ? "canvas"
+      : artifactKind === "ppt" || artifactKind === "docx" || intent === "ppt" || intent === "docx" || intent === "presentation"
+        ? "doc"
+        : "chat";
   const kindLabel: SessionItem["kindLabel"] = kind === "canvas" ? "画布" : kind === "doc" ? "文稿" : "聊天";
   return {
     id: session.session_id,

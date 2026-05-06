@@ -4,7 +4,9 @@
   "private": true,
   "scripts": {
     "predev": "node scripts/clean-next-cache.mjs",
-    "dev": "node scripts/dev-stable.mjs",
+    "doctor": "node scripts/doctor.mjs",
+    "dev:clean": "rm -rf .next && rm -f tsconfig.tsbuildinfo",
+    "dev": "npm run doctor && NEXT_TELEMETRY_DISABLED=1 WATCHPACK_POLLING=true WATCHPACK_POLLING_INTERVAL=1000 next dev --webpack -H 0.0.0.0 -p 3001",
     "dev:unlock": "rm -rf .next/dev",
     "dev:3000": "NEXT_TELEMETRY_DISABLED=1 next dev --webpack -H :: -p 3000",
     "build": "rm -f tsconfig.tsbuildinfo && next build",
@@ -21,6 +23,7 @@
     "react-dom": "^19.0.0",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
+    "styled-jsx": "5.1.7",
     "tldraw": "^4.5.10",
     "zustand": "^5.0.12"
   },

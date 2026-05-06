@@ -15,7 +15,8 @@ export type CollabSessionPayload = {
   owner_id?: string;
   status?: CollabStatus;
   progress?: number;
-  canvas_data?: Record<string, unknown>;
+  /** Opaque tldraw snapshot or parsed JSON; avoid Record<> so TLEditorSnapshot assigns cleanly. */
+  canvas_data?: unknown;
   sources?: string[];
 };
 

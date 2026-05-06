@@ -28,11 +28,45 @@ export type SyncSession = {
     role: string;
     content: string;
     timestamp?: number | null;
+    sender_open_id?: string | null;
+    sender_union_id?: string | null;
+    sender_name?: string | null;
+    platform_user_id?: string | null;
+    platform_display_name?: string | null;
+    avatar_url?: string | null;
+    mention?: string;
+    sent?: boolean;
+    helperText?: string;
+    fileCard?: {
+      title: string;
+      typeLabel: string;
+      statusLabel: string;
+    };
+    actionCard?: {
+      title: string;
+      description?: string;
+      buttons: Array<{ label: string; tone?: "default" | "primary" | "success" }>;
+    };
+    plannerCard?: {
+      goal: string;
+      intent: string;
+      summary: string;
+      steps: Array<{ id: string; title: string; description?: string; tool?: string }>;
+      needClarification?: boolean;
+      questions?: string[];
+      assumptions?: string[];
+    };
   }>;
   context_messages?: Array<{
     role: string;
     content: string;
     timestamp?: number | null;
+    sender_open_id?: string | null;
+    sender_union_id?: string | null;
+    sender_name?: string | null;
+    platform_user_id?: string | null;
+    platform_display_name?: string | null;
+    avatar_url?: string | null;
   }>;
 };
 
@@ -52,9 +86,13 @@ function mapStatus(status: string): SessionStatus {
 }
 
 function mapKind(session: SyncSession): Pick<SessionItem, "kind" | "kindLabel"> {
-  const signal = (session.artifact?.kind || session.artifact?.intent || session.intent || "").trim().toLowerCase();
-  if (signal === "board") return { kind: "canvas", kindLabel: "画布" };
-  if (signal === "ppt" || signal === "docx" || signal === "presentation") return { kind: "doc", kindLabel: "文稿" };
+  const intent = (session.artifact?.intent || session.intent || "").trim().toLowerCase();
+  const kind = (session.artifact?.kind || "").trim().toLowerCase();
+  if (intent === "board") return { kind: "canvas", kindLabel: "画布" };
+  if (kind === "board") return { kind: "canvas", kindLabel: "画布" };
+  if (kind === "ppt" || kind === "docx" || intent === "ppt" || intent === "docx" || intent === "presentation") {
+    return { kind: "doc", kindLabel: "文稿" };
+  }
   return { kind: "chat", kindLabel: "聊天" };
 }
 
@@ -153,11 +191,12 @@ function groupSessions(sessions: SyncSession[]): SessionSection[] {
 
 async function fetchSyncSessions(): Promise<SyncSession[]> {
   const origin = getBackendOrigin();
-  if (!origin) return [];
+  // If backend origin is not configured, fall back to same-origin mock route.
+  const url = origin ? `${origin}/api/v1/sync/sessions` : "/api/v1/sync/sessions";
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 1500);
   try {
-    const response = await fetch(`${origin}/api/v1/sync/sessions`, {
+    const response = await fetch(url, {
       cache: "no-store",
       signal: controller.signal,
     });

@@ -229,11 +229,21 @@ export function TeamWorkspacePage() {
 }
 
 export function AppsWorkspacePage({ data }: { data: SessionListPageData }) {
+  const demoPreviewQs =
+    "?session=demo-session&owner=demo@eko.local&user=guest@eko.local";
+  const demoCanvasQs =
+    "?session=demo-session&owner=demo@eko.local&user=demo@eko.local";
   const apps = [
     {
-      title: "Tldraw 画布",
-      desc: "全屏故事板与 Agent 生长演示",
-      href: "/canvas",
+      title: "全员预览（只读）",
+      desc: "协同画布预览端 · EkoWorkspace preview 模式",
+      href: `/preview${demoPreviewQs}`,
+      tone: "rose" as const,
+    },
+    {
+      title: "创建者画布（编辑）",
+      desc: "协同画布编辑端 · EkoWorkspace edit 模式",
+      href: `/canvas${demoCanvasQs}`,
       tone: "violet" as const,
     },
     {
@@ -256,12 +266,14 @@ export function AppsWorkspacePage({ data }: { data: SessionListPageData }) {
     },
   ];
   const ring: Record<(typeof apps)[number]["tone"], string> = {
+    rose: "hover:border-rose-200 hover:shadow-[0_12px_28px_rgba(244,63,94,0.12)]",
     violet: "hover:border-violet-200 hover:shadow-[0_12px_28px_rgba(139,92,246,0.12)]",
     blue: "hover:border-blue-200 hover:shadow-[0_12px_28px_rgba(37,99,235,0.1)]",
     sky: "hover:border-sky-200 hover:shadow-[0_12px_28px_rgba(14,165,233,0.1)]",
     emerald: "hover:border-emerald-200 hover:shadow-[0_12px_28px_rgba(16,185,129,0.1)]",
   };
   const cta: Record<(typeof apps)[number]["tone"], string> = {
+    rose: "text-rose-600",
     violet: "text-violet-600",
     blue: "text-blue-600",
     sky: "text-sky-600",

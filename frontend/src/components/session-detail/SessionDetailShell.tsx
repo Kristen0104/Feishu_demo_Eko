@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 
+import { getApiBaseUrl } from "@/config/eko-env";
 import { fetchSyncSession } from "@/lib/sync/fetch-session";
 import type { SyncSession } from "@/lib/sync/fetch-session";
 import { buildSessionDetailData } from "@/lib/sync/session-detail-from-sync";
@@ -22,16 +23,27 @@ export function SessionDetailShell({
 
   useEffect(() => {
     let cancelled = false;
+    const shouldPoll = Boolean(getApiBaseUrl());
+    let lastSignature = "";
     const load = async () => {
       const session = await fetchSyncSession(sessionId);
       if (cancelled) return;
       setLoaded(true);
-      setData(session ? buildSessionDetailData(session) : null);
+      if (!session) {
+        setData(null);
+        return;
+      }
+      // Avoid re-render thrash in mock/offline mode by only updating when something changed.
+      const signature = `${session.session_id}|${session.updated_at}|${session.artifact?.status ?? ""}|${session.artifact?.progress ?? ""}`;
+      if (signature === lastSignature) return;
+      lastSignature = signature;
+      setData(buildSessionDetailData(session));
     };
     void load();
-    const timer = window.setInterval(() => {
-      void load();
-    }, 2000);
+    if (!shouldPoll) return () => {
+      cancelled = true;
+    };
+    const timer = window.setInterval(() => void load(), 5000);
     return () => {
       cancelled = true;
       window.clearInterval(timer);

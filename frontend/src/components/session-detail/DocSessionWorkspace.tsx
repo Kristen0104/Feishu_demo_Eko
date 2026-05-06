@@ -6,9 +6,12 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
+import { getApiBaseUrl } from "@/config/eko-env";
 import { MessageInput } from "@/components/MessageInput";
 import { MoreIcon } from "@/components/Icons";
 import { Stepper } from "@/components/Stepper";
+import { DemoControlPanel } from "@/components/demo/DemoControlPanel";
+import { publishDemoEvent } from "@/lib/demo/demo-bus";
 import { EvidencePill, HeaderBadge, StatusPill } from "@/components/UiPrimitives";
 import { useEkoSessionRealtime } from "@/hooks/useEkoSessionRealtime";
 import { apiUrl, fetchEkoJson } from "@/lib/eko-api";
@@ -692,56 +695,104 @@ function ArtifactPresenter({
     <div className="relative flex h-full min-h-[520px] w-full flex-col bg-white">
       {kind === "ppt" ? (
         <div className="flex min-h-0 flex-1 items-center justify-center px-4 py-4">
-          <div className="flex w-full max-w-[1120px] flex-col gap-3">
-            <div className="aspect-[16/9] w-full overflow-hidden rounded-[16px] border border-slate-200 bg-white shadow-[0_18px_44px_rgba(15,23,42,0.06)]">
-              {selectedSlide && artifact?.jobId ? (
-                <img
-                  src={apiUrl(`/api/v1/ppt/preview/${encodeURIComponent(artifact.jobId)}/slides/${selectedSlide.slide_number}`)}
-                  alt={selectedSlide.title || title}
-                  className="h-full w-full object-cover"
-                />
-              ) : (
-                <div className="flex h-full flex-col p-6">
-                  <div className="flex min-w-0 items-center justify-between gap-3">
-                    <h3 className="truncate text-[18px] font-semibold text-slate-950">{title}</h3>
-                    <span className="rounded-full bg-emerald-50 px-3 py-1 text-[12px] font-semibold text-emerald-700">{state.label}</span>
-                  </div>
-                  <div className="mt-8 space-y-4">
-                    <div className="h-4 w-7/12 rounded-full bg-slate-200" />
-                    <div className="h-3 w-10/12 rounded-full bg-slate-100" />
-                    <div className="h-3 w-8/12 rounded-full bg-slate-100" />
-                    <div className="h-56 rounded-[16px] bg-slate-100" />
+          <div className="flex w-full max-w-[1220px] min-h-[520px] gap-4">
+            <aside className="w-[132px] shrink-0">
+              <div className="h-full overflow-hidden rounded-[16px] border border-slate-200 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.06)]">
+                <div className="border-b border-slate-100 px-3 py-2">
+                  <p className="text-[11px] font-semibold tracking-[0.18em] text-slate-400">PPT</p>
+                </div>
+                <div className="max-h-[520px] overflow-y-auto p-2">
+                  <div className="space-y-2">
+                    {previewSlides.slice(0, 12).map((slide) => (
+                      <button
+                        key={slide.slide_number}
+                        type="button"
+                        onClick={() => setSelectedSlideNumber(slide.slide_number)}
+                        className={[
+                          "w-full overflow-hidden rounded-[12px] border bg-white text-left shadow-[0_8px_20px_rgba(15,23,42,0.04)] transition",
+                          selectedSlide?.slide_number === slide.slide_number
+                            ? "border-blue-500 ring-2 ring-blue-100"
+                            : "border-slate-200 hover:border-blue-300",
+                        ].join(" ")}
+                      >
+                        {pptPreview && artifact?.jobId ? (
+                          <img
+                            src={apiUrl(
+                              `/api/v1/ppt/preview/${encodeURIComponent(artifact.jobId)}/slides/${slide.slide_number}`,
+                            )}
+                            alt={slide.title || `Slide ${slide.slide_number}`}
+                            className="aspect-[16/9] w-full object-cover"
+                          />
+                        ) : (
+                          <div className="aspect-[16/9] w-full bg-slate-100" />
+                        )}
+                        <div className="flex items-center justify-between gap-2 px-2 py-1.5 text-[10px] font-semibold text-slate-400">
+                          <span className="shrink-0">#{slide.slide_number}</span>
+                          <span className="min-w-0 truncate">{slide.title || slide.template || ""}</span>
+                        </div>
+                      </button>
+                    ))}
                   </div>
                 </div>
-              )}
-            </div>
-            <div className="flex min-w-0 gap-2 overflow-x-auto pb-1">
-              {previewSlides.slice(0, 8).map((slide) => (
-                <button
-                  key={slide.slide_number}
-                  type="button"
-                  onClick={() => setSelectedSlideNumber(slide.slide_number)}
-                  className={[
-                    "w-[132px] shrink-0 overflow-hidden rounded-[12px] border bg-white text-left shadow-[0_8px_20px_rgba(15,23,42,0.04)] transition",
-                    selectedSlide?.slide_number === slide.slide_number ? "border-blue-500 ring-2 ring-blue-100" : "border-slate-200 hover:border-blue-300",
-                  ].join(" ")}
-                >
-                  <div className="flex items-center justify-between px-2 py-1.5 text-[10px] font-semibold text-slate-400">
-                    <span>Slide {slide.slide_number}</span>
-                    <span className="truncate">{slide.title || slide.template || ""}</span>
-                  </div>
-                  {pptPreview && artifact?.jobId ? (
+              </div>
+            </aside>
+
+            <section className="min-w-0 flex-1">
+              <div className="flex items-center justify-between gap-3 pb-3">
+                <div className="min-w-0">
+                  <p className="truncate text-[18px] font-semibold text-slate-950">{title}</p>
+                  <p className="mt-0.5 truncate text-[12px] text-slate-500">
+                    {pptPreview?.subtitle || "仅预览 · mock slide renderer"}
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  {sessionId === "demo-canvas" ? (
+                    <Link
+                      href="/canvas?session=demo-canvas"
+                      prefetch={false}
+                      className="inline-flex h-9 items-center justify-center rounded-[12px] bg-violet-600 px-4 text-[13px] font-semibold text-white shadow-[0_10px_22px_rgba(124,58,237,0.22)] transition hover:bg-violet-700"
+                    >
+                      编辑
+                    </Link>
+                  ) : null}
+                  <span className="rounded-full bg-blue-50 px-3 py-1 text-[12px] font-semibold text-blue-700">
+                    进行中
+                  </span>
+                  <span className="rounded-full bg-emerald-50 px-3 py-1 text-[12px] font-semibold text-emerald-700">
+                    {state.label}
+                  </span>
+                </div>
+              </div>
+
+              <div className="overflow-hidden rounded-[18px] border border-slate-200 bg-white shadow-[0_18px_44px_rgba(15,23,42,0.06)]">
+                <div className="aspect-[16/9] w-full bg-white">
+                  {selectedSlide && artifact?.jobId ? (
                     <img
-                      src={apiUrl(`/api/v1/ppt/preview/${encodeURIComponent(artifact.jobId)}/slides/${slide.slide_number}`)}
-                      alt={slide.title || `Slide ${slide.slide_number}`}
-                      className="aspect-[16/9] w-full object-cover"
+                      src={apiUrl(
+                        `/api/v1/ppt/preview/${encodeURIComponent(artifact.jobId)}/slides/${selectedSlide.slide_number}`,
+                      )}
+                      alt={selectedSlide.title || title}
+                      className="h-full w-full object-cover"
                     />
                   ) : (
-                    <div className="mx-2 mb-2 aspect-[16/9] rounded-[10px] bg-slate-100" />
+                    <div className="flex h-full flex-col p-6">
+                      <div className="flex min-w-0 items-center justify-between gap-3">
+                        <h3 className="truncate text-[18px] font-semibold text-slate-950">{title}</h3>
+                        <span className="rounded-full bg-emerald-50 px-3 py-1 text-[12px] font-semibold text-emerald-700">
+                          {state.label}
+                        </span>
+                      </div>
+                      <div className="mt-8 space-y-4">
+                        <div className="h-4 w-7/12 rounded-full bg-slate-200" />
+                        <div className="h-3 w-10/12 rounded-full bg-slate-100" />
+                        <div className="h-3 w-8/12 rounded-full bg-slate-100" />
+                        <div className="h-56 rounded-[16px] bg-slate-100" />
+                      </div>
+                    </div>
                   )}
-                </button>
-              ))}
-            </div>
+                </div>
+              </div>
+            </section>
           </div>
         </div>
       ) : kind === "board" ? (
@@ -948,12 +999,16 @@ function CanvasNodeCard({
   bullets,
   icon,
   status = "default",
+  cardVariant = "default",
+  subtitle,
 }: {
   title: string;
   index: number;
   bullets: string[];
   icon: "trend" | "rocket" | "calendar" | "spark" | "alert" | "check";
   status?: "default" | "draft";
+  cardVariant?: "default" | "segmented-overview";
+  subtitle?: string;
 }) {
   const toneMap = {
     trend: "purple",
@@ -981,6 +1036,32 @@ function CanvasNodeCard({
     alert: "border-rose-200",
     check: "border-violet-200",
   } as const;
+
+  if (cardVariant === "segmented-overview") {
+    return (
+      <div className="relative flex min-h-[168px] min-w-0 flex-col overflow-hidden rounded-[15px] border-2 border-violet-400 bg-white px-2.5 pb-2 pt-2 shadow-[0_10px_26px_rgba(139,92,246,0.12)]">
+        <div className="relative min-h-[108px] rounded-[12px] border border-slate-100 bg-white px-2 pb-2 pt-2">
+          <span
+            className="absolute left-3 top-2 inline-block h-[6px] w-10 rounded-full bg-sky-200"
+            aria-hidden
+          />
+          <div className="flex items-center gap-1.5 pt-5">
+            <div className="h-2 min-h-[8px] flex-1 rounded-[6px] bg-emerald-100" />
+            <div className="h-2 min-h-[8px] flex-1 rounded-[6px] bg-sky-100" />
+            <div className="h-2 min-h-[8px] flex-1 rounded-[6px] bg-violet-100" />
+            <span className="shrink-0 rounded-[6px] bg-violet-600 px-2 py-[3px] text-[10px] font-semibold leading-none text-white shadow-sm">
+              当前
+            </span>
+          </div>
+          <div className="mt-2.5 h-[52px] rounded-[11px] border border-slate-100 bg-slate-50/90" />
+        </div>
+        <div className="mt-2 px-0.5">
+          <p className="text-[13px] font-semibold leading-snug text-slate-950">{title}</p>
+          {subtitle ? <p className="mt-0.5 text-[11px] leading-snug text-slate-500">{subtitle}</p> : null}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -1040,17 +1121,35 @@ function StepperStatusLegend() {
   );
 }
 
-function canonicalWorkflowSteps(kind: "ppt" | "docx" | "board" | "unknown"): WorkflowStep[] {
-  const generateTitle =
-    kind === "ppt" ? "生成 AI PPT" : kind === "board" ? "生成飞书画板" : kind === "docx" ? "生成文稿" : "生成回复 / 文稿";
-  const syncTitle = kind === "board" ? "同步飞书画板" : kind === "ppt" ? "导出 PPT 文件" : kind === "docx" ? "同步飞书文档" : "同步结果";
+function canonicalWorkflowSteps(kind: "ppt" | "docx" | "board" | "unknown", sessionId?: string): WorkflowStep[] {
+  if (sessionId === "demo-canvas") {
+    return [
+      { id: "1", title: "分析 IM 上下文", status: "pending", icon: "chat" },
+      { id: "2", title: "判断当前意图", status: "pending", icon: "intent" },
+      { id: "3", title: "检索检索 RAG", status: "pending", icon: "search" },
+      { id: "4", title: "生成画布结构", status: "pending", icon: "star" },
+      { id: "5", title: "渲染 PPT 页面", status: "pending", icon: "ppt" },
+      { id: "6", title: "同步到 Bitable / 回传飞书群", status: "pending", icon: "sync" },
+    ];
+  }
+
+  if (sessionId === "demo-chat" || sessionId === "demo-word") {
+    return [
+      { id: "1", title: "分析消息上下文", status: "pending", icon: "chat" },
+      { id: "2", title: "判断当前意图", status: "pending", icon: "intent" },
+      { id: "3", title: "按需检索知识库", status: "pending", icon: "search" },
+      { id: "4", title: "生成回复 / 文档 / 画布", status: "pending", icon: kind === "board" ? "star" : "ppt" },
+      { id: "5", title: "回传飞书群", status: "pending", icon: "sync" },
+    ];
+  }
+
   return [
-    { id: "1", title: "分析 IM 上下文", status: "pending" },
-    { id: "2", title: "判断当前意图", status: "pending" },
-    { id: "3", title: "按需检索 RAG", status: "pending" },
-    { id: "4", title: generateTitle, status: "pending" },
-    { id: "5", title: syncTitle, status: "pending" },
-    { id: "6", title: "回传飞书群", status: "pending" },
+    { id: "1", title: "分析消息上下文", status: "pending", icon: "chat" },
+    { id: "2", title: "判断当前意图", status: "pending", icon: "intent" },
+    { id: "3", title: "按需检索知识库", status: "pending", icon: "search" },
+    { id: "4", title: "生成回复 / 文档 / 画布", status: "pending", icon: kind === "board" ? "star" : "ppt" },
+    { id: "5", title: "同步到多维表格", status: "pending", icon: "sync" },
+    { id: "6", title: "回传飞书群", status: "pending", icon: "sync" },
   ];
 }
 
@@ -1060,10 +1159,16 @@ function mergeWorkflowSteps(
   kind: "ppt" | "docx" | "board" | "unknown",
   phase: string,
   artifactStatus?: string | null,
+  sessionId?: string,
 ): WorkflowStep[] {
-  const canonical = canonicalWorkflowSteps(kind);
+  const canonical = canonicalWorkflowSteps(kind, sessionId);
   const source = live.length ? live : canonical;
-  const byPosition = new Map((live.length ? live : base).map((step, index) => [String(index + 1), step.status]));
+  const byPosition = new Map<string, WorkflowStep["status"]>(
+    (live.length ? live : base).map((step, index) => {
+      const status = (step as { status?: unknown }).status;
+      return [String(index + 1), (status as WorkflowStep["status"]) ?? "pending"] as const;
+    }),
+  );
   const normalizedStatus = (artifactStatus ?? "").toLowerCase();
   const terminalDone = normalizedStatus === "done" || normalizedStatus === "completed" || normalizedStatus === "已同步";
   const terminalFailed = normalizedStatus === "failed" || phase === "ERROR";
@@ -1074,12 +1179,22 @@ function mergeWorkflowSteps(
     status: byPosition.get(String(index + 1)) ?? step.status,
   }));
 
+  // Preserve icon/title from canonical for screenshot-accurate Stepper,
+  // while still allowing runtime status overrides.
+  const withCanonicalMeta = withSourceStatus.map((step, index) => ({
+    ...step,
+    title: canonical[index]?.title ?? step.title,
+    icon:
+      canonical[index]?.icon ??
+      ("icon" in step ? (step as { icon?: WorkflowStep["icon"] }).icon : undefined),
+  }));
+
   if (terminalDone) {
-    return withSourceStatus.map((step) => ({ ...step, status: "completed" }));
+    return withCanonicalMeta.map((step) => ({ ...step, status: "completed" }));
   }
 
   if (terminalFailed) {
-    return withSourceStatus.map((step, index) => ({
+    return withCanonicalMeta.map((step, index) => ({
       ...step,
       status: index < 3 ? "completed" : index === 3 ? "warning" : step.status,
     }));
@@ -1103,23 +1218,25 @@ function mergeWorkflowSteps(
             ? 4
             : -1;
   if (activeIndex >= 0) {
-    return withSourceStatus.map((step, index) => ({
+    return withCanonicalMeta.map((step, index) => ({
       ...step,
       status: index < activeIndex ? "completed" : index === activeIndex ? "running" : "pending",
     }));
   }
 
-  return withSourceStatus;
+  return withCanonicalMeta;
 }
 
 function AgentRealtimeRibbon({
   phase,
   wsStatus,
   useMockFallback,
+  sessionId,
 }: {
   phase: string;
   wsStatus: string;
   useMockFallback: boolean;
+  sessionId: string;
 }) {
   const busy = phase === "ANALYZING" || phase === "RETRIEVING" || phase === "GENERATING" || phase === "SYNCING";
   return (
@@ -1128,6 +1245,19 @@ function AgentRealtimeRibbon({
       animate={{ opacity: busy ? 1 : 0.72 }}
       className="flex shrink-0 flex-wrap items-center gap-1.5 text-[9px] text-slate-600"
     >
+      {sessionId === "demo-canvas" ? (
+        <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-slate-700">
+          <span className="text-slate-900">任务流</span>
+          <span className="text-slate-300" aria-hidden>
+            /
+          </span>
+          <span className="text-slate-500">Workflow</span>
+          <span className="text-slate-300" aria-hidden>
+            ·
+          </span>
+          <span className="text-slate-600">正在生成画布</span>
+        </span>
+      ) : null}
       <span className="rounded-full bg-slate-900 px-2 py-0.5 font-semibold tracking-tight text-white">{phase}</span>
       <span className="text-slate-500">
         实时链路 {wsStatus}
@@ -1149,8 +1279,12 @@ function AgentRealtimeRibbon({
 }
 
 export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
+  const searchParams = typeof window === "undefined" ? null : new URLSearchParams(window.location.search);
+  const readOnly = Boolean(searchParams?.get("readonly") || searchParams?.get("viewer"));
+  const [mobilePane, setMobilePane] = useState<"workspace" | "chat" | "insights">("workspace");
   const { query: workspaceSearchQuery } = useSessionWorkspaceSearch();
   const setRuntimeSessionPatch = useAppStore((state) => state.setRuntimeSessionPatch);
+  const setSessionDetailChatOpen = useAppStore((state) => state.setSessionDetailChatOpen);
   const conversationOpen = useAppStore((s) => s.sessionDetailChatOpen);
   const agentSlice = useAgentRuntimeStore((s) => s.sessions[data.id]);
   const [activeTab, setActiveTab] = useState<DetailTabKey>(data.defaultTab);
@@ -1181,6 +1315,11 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
   const [permissionStatus, setPermissionStatus] = useState(isCanvasMode ? "可同步" : "已验证");
   const [canvasNotice, setCanvasNotice] = useState<string | null>(null);
   const contextMessages = data.contextMessages ?? [];
+
+  useEffect(() => {
+    setPlannerEnabled(true);
+    if (data.id.startsWith("demo-")) setSessionDetailChatOpen(true);
+  }, [data.id]);
 
   useEffect(() => {
     setMessages((current) => {
@@ -1345,13 +1484,28 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
   const currentDocumentMarkdown = documentMarkdown || renderedDocumentMarkdown;
   const showDocumentSections = !detailArtifact;
   const canvasSurfaceArtifact = localArtifact ?? data.canvas.artifact ?? data.artifact;
-  const showCanvasScaffold = normalizeArtifactKind(canvasSurfaceArtifact) !== "board";
+  /** 画布布局下默认展示底部故事板；demo-canvas 复刻 PPT 预览版式时需隐藏底部预览区 */
+  const showCanvasScaffold = isCanvasMode && data.id !== "demo-canvas";
   const resourceTab: DetailTabKey | null =
-    resourceKind === "board" ? "canvas" : resourceKind === "ppt" || resourceKind === "docx" || showDocStream ? "doc" : null;
-  const workspaceExpanded = resourceTab !== null;
+    data.id === "demo-canvas"
+      ? null
+      : resourceKind === "board"
+        ? "canvas"
+        : resourceKind === "ppt" || resourceKind === "docx" || showDocStream
+          ? "doc"
+          : null;
+  const workspaceExpanded = data.id.startsWith("demo-") ? true : resourceTab !== null;
   const displayTab = resourceTab ?? activeTab;
   const mergedWorkflow = useMemo(
-    () => mergeWorkflowSteps(data.workflow, plannerEnabled ? agentSlice?.planningSteps ?? [] : [], resourceKind, phase, detailArtifact?.status),
+    () =>
+      mergeWorkflowSteps(
+        data.workflow,
+        plannerEnabled ? agentSlice?.planningSteps ?? [] : [],
+        resourceKind,
+        phase,
+        detailArtifact?.status,
+        data.id,
+      ),
     [agentSlice?.planningSteps, data.workflow, detailArtifact?.status, phase, plannerEnabled, resourceKind],
   );
 
@@ -1467,6 +1621,8 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
     const kind = normalizeArtifactKind(localArtifact);
     if (!localArtifact || status === "done" || status === "completed" || status === "failed") return;
     if (kind === "docx") return;
+    // In pure-frontend / mock mode we do not poll backend artifact status.
+    if (!getApiBaseUrl()) return;
 
     let cancelled = false;
     const poll = async () => {
@@ -1799,17 +1955,121 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
     prependCanvasActivity("新增画布节点", "route");
   }
 
-  function handleConfirmSave() {
-    setBitableStatus("completed");
-    setArchiveStatus("已归档");
-    setPermissionStatus("已确认");
-    setCanvasNotice("已确认保存，Bitable 同步状态已更新。");
-    prependCanvasActivity("画布已确认保存", "data");
+  async function handleConfirmSave() {
+    setCanvasNotice("正在确认保存...");
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.actionCard?.buttons?.some((b) => b.label === "确认保存")
+          ? {
+              ...m,
+              actionCard: {
+                ...m.actionCard,
+                title: "归档中…",
+                buttons: m.actionCard.buttons.map((b) =>
+                  b.label === "确认保存" ? { ...b, label: "确认保存中…", disabled: true } : { ...b, disabled: true },
+                ),
+              },
+            }
+          : m,
+      ),
+    );
+    try {
+      const res = await fetch(`/api/v1/sync/sessions/${encodeURIComponent(data.id)}/archive`, { method: "POST" });
+      const body = (await res.json().catch(() => null)) as
+        | { code?: number; data?: { session?: any; rag_file?: any }; message?: string }
+        | null;
+      if (!res.ok || !body || body.code !== 0) {
+        throw new Error(body?.message || "确认保存失败");
+      }
+
+      setBitableStatus("completed");
+      setArchiveStatus("已归档");
+      setPermissionStatus("已确认");
+      setCanvasNotice("已确认保存：群内状态已更新，知识库已新增归档条目。");
+      prependCanvasActivity("画布已确认保存", "data");
+      publishDemoEvent({ type: "ARCHIVED", sessionId: data.id, docTitle: data.title });
+
+      // Update “会话列表/顶部状态”展示（mock 列表来自 Next route handler，会跟着变）
+      setRuntimeSessionPatch(data.id, { status: "已同步", updatedAt: "刚刚" });
+
+      // Simulate Feishu card state update by appending a system-style message.
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `eko-archive-${Date.now()}`,
+          author: "Eko",
+          role: "eko",
+          time: "刚刚",
+          body: "✅ 已确认保存：会话状态已更新为「已完成」，内容已回流到知识库（mock）。",
+          avatar: "E",
+          sent: true,
+        },
+      ]);
+    } catch (error) {
+      setCanvasNotice(error instanceof Error ? error.message : "确认保存失败");
+    }
+  }
+
+  async function handleExportPptx() {
+    setCanvasNotice("正在导出 PPTX...");
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.actionCard?.buttons?.some((b) => b.label === "导出 PPTX")
+          ? {
+              ...m,
+              actionCard: {
+                ...m.actionCard,
+                title: "导出中…",
+                buttons: m.actionCard.buttons.map((b) =>
+                  b.label === "导出 PPTX" ? { ...b, label: "导出中…", disabled: true } : b,
+                ),
+              },
+            }
+          : m,
+      ),
+    );
+    try {
+      const filename = `Eko-${data.id}-export.pptx`;
+      const blob = new Blob([`Eko PPTX export placeholder (mock)\nsession=${data.id}\n`], {
+        type: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+      publishDemoEvent({ type: "PPT_EXPORTED", sessionId: data.id, filename });
+      setCanvasNotice("已导出 PPTX（mock）：已触发下载。");
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.actionCard?.title?.includes("导出")
+            ? {
+                ...m,
+                actionCard: {
+                  ...m.actionCard,
+                  title: "PPTX 已导出",
+                  description: "已生成下载文件（mock）。你可以继续确认保存归档回流。",
+                  buttons: m.actionCard.buttons.map((b) =>
+                    b.label.includes("导出") ? { ...b, label: "已导出", disabled: true } : b,
+                  ),
+                },
+              }
+            : m,
+        ),
+      );
+    } catch (e) {
+      setCanvasNotice("导出失败");
+    }
   }
 
   function handleConversationAction(label: string) {
+    if (label === "导出 PPTX") {
+      void handleExportPptx();
+      return;
+    }
     if (label === "确认保存") {
-      handleConfirmSave();
+      void handleConfirmSave();
       return;
     }
     if (label === "打开工作台") {
@@ -1830,8 +2090,41 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden overflow-x-hidden bg-[#FAFBFC] text-slate-900">
+      <DemoControlPanel sessionId={data.id} />
       <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
         <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-5 pb-5 pt-2 sm:px-6 sm:pb-6 sm:pt-3">
+          <div className="mb-3 flex items-center gap-2 lg:hidden">
+            <button
+              type="button"
+              onClick={() => setMobilePane("workspace")}
+              className={[
+                "inline-flex h-9 flex-1 items-center justify-center rounded-[12px] border text-[13px] font-semibold transition",
+                mobilePane === "workspace" ? "border-blue-200 bg-blue-50 text-blue-700" : "border-slate-200 bg-white text-slate-600",
+              ].join(" ")}
+            >
+              工作台
+            </button>
+            <button
+              type="button"
+              onClick={() => setMobilePane("chat")}
+              className={[
+                "inline-flex h-9 flex-1 items-center justify-center rounded-[12px] border text-[13px] font-semibold transition",
+                mobilePane === "chat" ? "border-blue-200 bg-blue-50 text-blue-700" : "border-slate-200 bg-white text-slate-600",
+              ].join(" ")}
+            >
+              对话
+            </button>
+            <button
+              type="button"
+              onClick={() => setMobilePane("insights")}
+              className={[
+                "inline-flex h-9 flex-1 items-center justify-center rounded-[12px] border text-[13px] font-semibold transition",
+                mobilePane === "insights" ? "border-blue-200 bg-blue-50 text-blue-700" : "border-slate-200 bg-white text-slate-600",
+              ].join(" ")}
+            >
+              信息源
+            </button>
+          </div>
           <div className="flex h-full min-h-0 min-w-0 gap-4 overflow-hidden lg:gap-5">
               <div
                 className={[
@@ -1841,12 +2134,25 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                       ? "w-[260px] opacity-100"
                       : "pointer-events-none w-0 -translate-x-4 opacity-0"
                     : "w-full flex-1 opacity-100",
+                  mobilePane === "chat" ? "block" : "hidden",
+                  "lg:block",
                 ].join(" ")}
               >
                 <section className="flex h-full min-h-0 flex-col overflow-hidden rounded-[28px] border border-slate-200/90 bg-white px-5 py-4 shadow-[0_14px_32px_rgba(148,163,184,0.08)]">
                   <div className="flex items-center justify-between">
                     <h2 className="text-[17px] font-semibold text-slate-950">{data.conversationTitle}</h2>
                     <div className="flex items-center gap-1.5">
+                      {workspaceExpanded ? (
+                        <button
+                          type="button"
+                          onClick={() => useAppStore.getState().toggleSessionDetailChatOpen()}
+                          className="rounded-full border border-transparent p-1.5 text-slate-500 hover:bg-slate-50"
+                          aria-label={conversationOpen ? "收起对话区" : "展开对话区"}
+                          title={conversationOpen ? "收起对话区" : "展开对话区"}
+                        >
+                          <SmallIcon type="chat" tone="slate" />
+                        </button>
+                      ) : null}
                       <button
                         type="button"
                         onClick={() => setConversationFilter((current) => (current === "all" ? "eko" : "all"))}
@@ -1893,7 +2199,7 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                           tone={conversationTone}
                           placeholder="继续让 Eko 处理…"
                           onSend={handleChatSend}
-                          disabled={sending}
+                          disabled={sending || readOnly}
                         />
                       </div>
                     </div>
@@ -1902,12 +2208,12 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
               </div>
 
               {workspaceExpanded ? (
-                <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
+                <div className={["flex min-h-0 min-w-0 flex-1 overflow-hidden", mobilePane === "workspace" ? "flex" : "hidden", "lg:flex"].join(" ")}>
                     <section className="min-h-0 flex flex-1 flex-col overflow-hidden rounded-[18px] border border-slate-200 bg-white shadow-[0_10px_22px_rgba(148,163,184,0.05)]">
                       <div className="shrink-0 border-b border-slate-100 bg-white px-3 py-1">
                           <div className="flex min-h-[70px] min-w-0 flex-col overflow-hidden rounded-[14px] border border-slate-200 bg-white px-3 py-1.5 shadow-[0_4px_12px_rgba(15,23,42,0.03)]">
                             <div className="flex shrink-0 items-center justify-between gap-3">
-                              <AgentRealtimeRibbon phase={phase} wsStatus={wsStatus} useMockFallback={useMockFb} />
+                              <AgentRealtimeRibbon phase={phase} wsStatus={wsStatus} useMockFallback={useMockFb} sessionId={data.id} />
                               {lastErr ? (
                                 <p className="shrink-0 text-[10px] font-medium text-rose-600">生成失败：{lastErr}</p>
                               ) : (
@@ -1918,16 +2224,21 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                                     aria-checked={plannerEnabled}
                                     onClick={() => handlePlannerToggle(!plannerEnabled)}
                                     className={[
-                                      "inline-flex h-7 shrink-0 items-center gap-2 rounded-full border px-2 text-[10px] font-semibold transition-colors",
+                                      "inline-flex h-7 shrink-0 flex-nowrap items-center rounded-full border px-2.5 text-[10px] font-semibold whitespace-nowrap transition-colors",
                                       plannerEnabled
                                         ? "border-blue-200 bg-blue-50 text-blue-700"
                                         : "border-slate-200 bg-slate-50 text-slate-500",
                                     ].join(" ")}
                                   >
-                                    <span className={`relative h-3.5 w-6 rounded-full transition-colors ${plannerEnabled ? "bg-blue-600" : "bg-slate-300"}`} aria-hidden>
-                                      <span className={`absolute top-0.5 h-2.5 w-2.5 rounded-full bg-white transition-transform ${plannerEnabled ? "translate-x-3" : "translate-x-0.5"}`} />
+                                    <span className="whitespace-nowrap">任务理解与规划</span>
+                                    <span
+                                      className={`relative ml-2 h-3.5 w-6 shrink-0 rounded-full transition-colors ${plannerEnabled ? "bg-blue-600" : "bg-slate-300"}`}
+                                      aria-hidden
+                                    >
+                                      <span
+                                        className={`absolute left-0.5 top-0.5 h-2.5 w-2.5 rounded-full bg-white transition-transform ${plannerEnabled ? "translate-x-3" : "translate-x-0"}`}
+                                      />
                                     </span>
-                                    任务理解与规划
                                   </button>
                                   <StepperStatusLegend />
                                 </div>
@@ -2069,6 +2380,8 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                                       bullets={node.bullets}
                                       icon={node.icon}
                                       status={node.status}
+                                      cardVariant={node.cardVariant}
+                                      subtitle={node.subtitle}
                                     />
                                     {idx < topRowNodes.length - 1 ? (
                                       <div className="flex justify-center text-slate-300">
@@ -2094,6 +2407,8 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                                       bullets={node.bullets}
                                       icon={node.icon}
                                       status={node.status}
+                                      cardVariant={node.cardVariant}
+                                      subtitle={node.subtitle}
                                     />
                                     {idx < bottomRowNodes.length - 1 ? (
                                       <div className="flex justify-center text-slate-300">
@@ -2110,7 +2425,16 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                               {canvasNodes.length > 6 ? (
                                 <div className="mt-2 grid gap-2 md:grid-cols-3">
                                   {canvasNodes.slice(6).map((node) => (
-                                    <CanvasNodeCard key={node.id} index={node.index} title={node.title} bullets={node.bullets} icon={node.icon} status={node.status} />
+                                    <CanvasNodeCard
+                                      key={node.id}
+                                      index={node.index}
+                                      title={node.title}
+                                      bullets={node.bullets}
+                                      icon={node.icon}
+                                      status={node.status}
+                                      cardVariant={node.cardVariant}
+                                      subtitle={node.subtitle}
+                                    />
                                   ))}
                                   {canvasNodes.length === 7 ? (
                                     <button
@@ -2149,7 +2473,13 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                 </div>
               ) : null}
 
-              <aside className="min-h-0 w-[250px] shrink-0 space-y-3 overflow-y-auto pr-1 lg:w-[270px]">
+              <aside
+                className={[
+                  "min-h-0 w-full shrink-0 space-y-3 overflow-y-auto pr-0",
+                  mobilePane === "insights" ? "block" : "hidden",
+                  "lg:block lg:w-[270px] lg:pr-1",
+                ].join(" ")}
+              >
                     {isCanvasMode ? (
                       <>
                         <SectionCard title="上下文与同步" action={<MoreIcon />}>

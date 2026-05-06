@@ -24,6 +24,12 @@ type SyncSessionMessage = {
   platform_user_id?: string | null;
   platform_display_name?: string | null;
   avatar_url?: string | null;
+  mention?: string;
+  sent?: boolean;
+  helperText?: string;
+  fileCard?: DetailMessage["fileCard"];
+  actionCard?: DetailMessage["actionCard"];
+  plannerCard?: DetailMessage["plannerCard"];
 };
 
 type SyncSessionArtifact = {
@@ -121,6 +127,7 @@ function resolveDefaultTab(session: SyncSession): "chat" | "doc" | "canvas" {
   const artifactKind = normalizeSignal(session.artifact?.kind);
   const intent = normalizeSignal(session.artifact?.intent ?? session.intent);
 
+  if (normalizeSignal(session.session_id) === "demo-canvas") return "canvas";
   if (artifactKind === "board" || intent === "board") return "canvas";
   if (artifactKind === "ppt" || artifactKind === "docx" || intent === "ppt" || intent === "docx" || intent === "presentation") {
     return "doc";
@@ -197,7 +204,12 @@ function buildMessageEntries(messages: SyncSessionMessage[]): DetailMessage[] {
       time: formatMessageTime(message.timestamp),
       body: message.content,
       avatar: isEko ? "E" : author.slice(0, 1).toUpperCase(),
-      sent: true,
+      mention: message.mention,
+      sent: message.sent ?? true,
+      helperText: message.helperText,
+      fileCard: message.fileCard,
+      actionCard: message.actionCard,
+      plannerCard: message.plannerCard,
     };
   });
 }
@@ -328,15 +340,42 @@ function buildArtifact(session: SyncSession): SyncSessionArtifact | null {
   };
 }
 
-function buildCanvasNodes(): DetailCanvasNode[] {
+function buildCanvasNodes(session: SyncSession): DetailCanvasNode[] {
+  const id = normalizeSignal(session.session_id);
+  if (id === "demo-canvas") {
+    return [
+      { id: "ppt-1", index: 1, title: "项目背景", bullets: ["讨论发生在飞书群", "结论需要沉淀为可复用产物"], icon: "trend" },
+      { id: "ppt-2", index: 2, title: "目标与原则", bullets: ["从聊完到产出 0 搬运", "意图驱动：文档 / PPT / 闲聊"], icon: "rocket" },
+      { id: "ppt-3", index: 3, title: "执行计划（时间线）", bullets: ["T+0 生成初稿", "T+1 补齐里程碑与负责人", "T+2 导出 PPTX"], icon: "calendar" },
+      { id: "ppt-4", index: 4, title: "关键数据总览", subtitle: "生成与同步进度", bullets: [], icon: "trend", cardVariant: "segmented-overview" },
+      { id: "ppt-5", index: 5, title: "风险与对策", bullets: ["信息遗漏：双源补齐", "口径不一致：模板约束", "协作冲突：只读观摩"], icon: "alert" },
+      { id: "ppt-6", index: 6, title: "归档与回流", bullets: ["确认保存 → 知识库", "下次创作自动复用"], icon: "check" },
+    ];
+  }
+
+  if (id === "demo-word") {
+    return [
+      { id: "doc-1", index: 1, title: "需求", bullets: ["梳理运营方案", "结合知识库模板", "输出文档"], icon: "rocket" },
+      { id: "doc-2", index: 2, title: "来源", bullets: ["飞书群聊最近讨论", "RAG 模板 Top-5"], icon: "spark" },
+      { id: "doc-3", index: 3, title: "执行计划", bullets: ["生成初稿", "补齐时间节点", "二次迭代优化"], icon: "calendar" },
+      { id: "doc-4", index: 4, title: "结果", bullets: ["Markdown 实时渲染", "可继续追问微调"], icon: "spark" },
+      { id: "doc-5", index: 5, title: "关键数据总览", subtitle: "上下文与模板命中", bullets: [], icon: "trend", cardVariant: "segmented-overview" },
+      { id: "doc-6", index: 6, title: "下一步", bullets: ["切换 PPT/Canvas", "导出", "归档回流"], icon: "check" },
+    ];
+  }
+
   return [
-    { id: "n1", index: 1, title: "消息触发", bullets: ["@机器人", "message"], icon: "rocket" },
-    { id: "n2", index: 2, title: "上下文提取", bullets: ["近期群聊", "语义窗口"], icon: "trend" },
-    { id: "n3", index: 3, title: "结果回写", bullets: ["WS 事件", "会话目录"], icon: "check" },
+    { id: "n1", index: 1, title: "投放背景", bullets: ["目标人群", "投放周期"], icon: "rocket" },
+    { id: "n2", index: 2, title: "渠道拆解", bullets: ["搜索 / 信息流", "达人合作"], icon: "trend" },
+    { id: "n3", index: 3, title: "预算分配", bullets: ["分渠道占比", "弹性预算"], icon: "calendar" },
+    { id: "n4", index: 4, title: "用户洞察", bullets: ["兴趣标签", "转化路径"], icon: "spark" },
+    { id: "n5", index: 5, title: "关键数据总览", subtitle: "核心指标与渠道表现", bullets: [], icon: "trend", cardVariant: "segmented-overview" },
+    { id: "n6", index: 6, title: "复盘结论", bullets: ["亮点总结", "改进项"], icon: "check" },
   ];
 }
 
 export function buildSessionDetailData(session: SyncSession): SessionDetailData {
+  const normalizedId = normalizeSignal(session.session_id);
   const contextSize = session.context_size ?? 0;
   const badges = [statusBadge(session.source === "feishu" ? "飞书" : "IM"), statusBadge(session.status)] as HeaderBadge[];
   const sessionCompleted = session.status === "已同步" || session.status === "completed" || session.status === "done";
@@ -364,12 +403,42 @@ export function buildSessionDetailData(session: SyncSession): SessionDetailData 
     missionSubtitle: session.summary,
     confidence: contextSize > 0 ? "已获取上下文" : "暂无上下文",
     contextQuality: contextSize > 0 ? "高" : "低",
-    workflow: [
-      { id: "1", title: "创建会话", status: "completed" },
-      { id: "2", title: "读取上下文", status: contextSize > 0 || sessionCompleted ? "completed" : "running" },
-      { id: "3", title: "生成回复", status: session.status.includes("失败") ? "warning" : sessionCompleted ? "completed" : "running" },
-      { id: "4", title: "同步结果", status: sessionCompleted ? "completed" : "pending" },
-    ],
+    workflow:
+      normalizedId === "demo-canvas"
+        ? [
+            { id: "1", title: "分析 IM 上下文", status: "completed", icon: "chat" },
+            { id: "2", title: "判断当前意图", status: "completed", icon: "intent" },
+            { id: "3", title: "检索检索 RAG", status: "completed", icon: "search" },
+            { id: "4", title: "生成画布结构", status: sessionCompleted ? "completed" : "running", icon: "star" },
+            { id: "5", title: "渲染 PPT 页面", status: sessionCompleted ? "completed" : "pending", icon: "ppt" },
+            { id: "6", title: "同步 Bitable | 回传飞书群", status: sessionCompleted ? "completed" : "pending", icon: "sync" },
+          ]
+        : normalizedId === "demo-chat" || normalizedId === "demo-word"
+        ? [
+            { id: "1", title: "分析消息上下文", status: "completed", icon: "chat" },
+            { id: "2", title: "判断当前意图", status: "completed", icon: "intent" },
+            { id: "3", title: "按需检索知识库", status: "completed", icon: "search" },
+            {
+              id: "4",
+              title: "生成回复 / 文档 / 画布",
+              status: sessionCompleted ? "completed" : "running",
+              icon: artifact?.kind === "ppt" || session.intent === "ppt" || session.intent === "board" ? "star" : "ppt",
+            },
+            { id: "5", title: "回传飞书群", status: sessionCompleted ? "completed" : "pending", icon: "sync" },
+          ]
+        : [
+            { id: "1", title: "分析消息上下文", status: "completed", icon: "chat" },
+            { id: "2", title: "判断当前意图", status: "completed", icon: "intent" },
+            { id: "3", title: "按需检索知识库", status: "completed", icon: "search" },
+            {
+              id: "4",
+              title: "生成回复 / 文档 / 画布",
+              status: sessionCompleted ? "completed" : "running",
+              icon: artifact?.kind === "ppt" || session.intent === "ppt" || session.intent === "board" ? "star" : "ppt",
+            },
+            { id: "5", title: "同步到多维表格", status: sessionCompleted ? "completed" : "pending", icon: "sync" },
+            { id: "6", title: "回传飞书群", status: sessionCompleted ? "completed" : "pending", icon: "sync" },
+          ],
     outputTabs,
     defaultTab,
     chatReply: {
@@ -403,7 +472,7 @@ export function buildSessionDetailData(session: SyncSession): SessionDetailData 
     },
     canvas: {
       title: artifact?.kind === "board" ? "画板预览" : "画布视图",
-      nodes: buildCanvasNodes(),
+      nodes: buildCanvasNodes(session),
       artifact:
         artifact?.kind === "board"
           ? {

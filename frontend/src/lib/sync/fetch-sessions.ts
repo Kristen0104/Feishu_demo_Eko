@@ -29,6 +29,34 @@ export type SyncSession = {
     role: string;
     content: string;
     timestamp?: number | null;
+    sender_open_id?: string | null;
+    sender_union_id?: string | null;
+    sender_name?: string | null;
+    platform_user_id?: string | null;
+    platform_display_name?: string | null;
+    avatar_url?: string | null;
+    mention?: string;
+    sent?: boolean;
+    helperText?: string;
+    fileCard?: {
+      title: string;
+      typeLabel: string;
+      statusLabel: string;
+    };
+    actionCard?: {
+      title: string;
+      description?: string;
+      buttons: Array<{ label: string; tone?: "default" | "primary" | "success" }>;
+    };
+    plannerCard?: {
+      goal: string;
+      intent: string;
+      summary: string;
+      steps: Array<{ id: string; title: string; description?: string; tool?: string }>;
+      needClarification?: boolean;
+      questions?: string[];
+      assumptions?: string[];
+    };
   }>;
   context_messages?: Array<{
     role: string;

@@ -24,6 +24,8 @@ export type WorkflowStep = {
   id: string;
   title: string;
   status: WorkflowStatus;
+  /** Optional icon key for Stepper UI. */
+  icon?: "chat" | "intent" | "search" | "star" | "ppt" | "sync";
 };
 
 export type ContextItem = {

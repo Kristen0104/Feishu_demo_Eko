@@ -90,6 +90,10 @@ export function HomeDashboardView({ data }: { data: SessionListPageData }) {
   const feishuCount = allSessions.filter((item) => item.source === "飞书").length;
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "早上好" : hour < 18 ? "下午好" : "晚上好";
+  const demoPreviewHref =
+    "/preview?session=demo-session&owner=demo@eko.local&user=guest@eko.local";
+  const demoCanvasHref =
+    "/canvas?session=demo-session&owner=demo@eko.local&user=demo@eko.local";
 
   return (
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-white">
@@ -126,7 +130,7 @@ export function HomeDashboardView({ data }: { data: SessionListPageData }) {
             <div className="flex items-center justify-between gap-3">
               <h2 className="text-[15px] font-semibold text-slate-950">快速开始</h2>
             </div>
-            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
               <Link
                 href="/sessions"
                 prefetch={false}
@@ -137,18 +141,27 @@ export function HomeDashboardView({ data }: { data: SessionListPageData }) {
                 <span className="mt-4 text-[12px] font-semibold text-blue-600">打开 →</span>
               </Link>
               <Link
-                href="/canvas"
+                href={demoPreviewHref}
+                prefetch={false}
+                className="flex flex-col rounded-[20px] border border-slate-200/90 bg-[linear-gradient(145deg,#ffffff_0%,#fff1f2_100%)] p-5 transition hover:border-rose-200 hover:shadow-md"
+              >
+                <span className="text-[13px] font-semibold text-slate-900">全员预览（只读）</span>
+                <span className="mt-1 text-[12px] leading-relaxed text-slate-500">协同画布预览端 demo：`owner≠user` 时为观摩。</span>
+                <span className="mt-4 text-[12px] font-semibold text-rose-600">进入 →</span>
+              </Link>
+              <Link
+                href={demoCanvasHref}
                 prefetch={false}
                 className="flex flex-col rounded-[20px] border border-slate-200/90 bg-[linear-gradient(145deg,#ffffff_0%,#faf5ff_100%)] p-5 transition hover:border-violet-200 hover:shadow-md"
               >
-                <span className="text-[13px] font-semibold text-slate-900">Tldraw 画布</span>
-                <span className="mt-1 text-[12px] leading-relaxed text-slate-500">全屏故事板与 Agent 生长演示。</span>
+                <span className="text-[13px] font-semibold text-slate-900">协同画布（编辑）</span>
+                <span className="mt-1 text-[12px] leading-relaxed text-slate-500">创建者编辑端：与预览共用同一 session。</span>
                 <span className="mt-4 text-[12px] font-semibold text-violet-600">进入 →</span>
               </Link>
               <Link
                 href="/profile"
                 prefetch={false}
-                className="flex flex-col rounded-[20px] border border-slate-200/90 bg-[linear-gradient(145deg,#ffffff_0%,#f0fdf4_100%)] p-5 transition hover:border-emerald-200 hover:shadow-md sm:col-span-2 lg:col-span-1"
+                className="flex flex-col rounded-[20px] border border-slate-200/90 bg-[linear-gradient(145deg,#ffffff_0%,#f0fdf4_100%)] p-5 transition hover:border-emerald-200 hover:shadow-md"
               >
                 <span className="text-[13px] font-semibold text-slate-900">账户与偏好</span>
                 <span className="mt-1 text-[12px] leading-relaxed text-slate-500">个人资料、通知与安全设置。</span>

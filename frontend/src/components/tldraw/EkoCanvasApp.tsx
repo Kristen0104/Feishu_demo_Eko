@@ -9,6 +9,7 @@ import "tldraw/tldraw.css";
 
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 import { fetchCanvasSessionMeta } from "@/lib/canvas/fetch-session-meta";
+import { publishDemoEvent } from "@/lib/demo/demo-bus";
 import { runGrowthDemo } from "@/lib/tldraw/growth-storyboard";
 import { storyCardsFromSessionQuery } from "@/lib/tldraw/story-cards-from-session";
 
@@ -29,6 +30,7 @@ export function EkoCanvasApp() {
 
   const editorRef = useRef<Editor | null>(null);
   const [busy, setBusy] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [hintVisible, setHintVisible] = useState(false);
   const [apiSessionTitle, setApiSessionTitle] = useState<string | null>(null);
@@ -148,6 +150,24 @@ export function EkoCanvasApp() {
     }
   }, [sessionId, showToast]);
 
+  const onConfirmSave = useCallback(async () => {
+    if (!sessionId || saving) return;
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/v1/sync/sessions/${encodeURIComponent(sessionId)}/archive`, { method: "POST" });
+      const body = (await res.json().catch(() => null)) as { code?: number; message?: string } | null;
+      if (!res.ok || !body || body.code !== 0) {
+        throw new Error(body?.message || "确认保存失败");
+      }
+      publishDemoEvent({ type: "ARCHIVED", sessionId, docTitle: apiSessionTitle ?? sessionId });
+      showToast("已确认保存：知识库已新增归档条目（mock）");
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "确认保存失败");
+    } finally {
+      setSaving(false);
+    }
+  }, [apiSessionTitle, saving, sessionId, showToast]);
+
   return (
     <div className="flex h-dvh max-h-dvh flex-col overflow-hidden bg-[#0b1220]">
       <header className="relative z-50 flex shrink-0 flex-wrap items-center gap-3 border-b border-white/10 bg-[#0b1220]/95 px-4 py-3 text-white shadow-[0_8px_32px_rgba(0,0,0,0.35)] backdrop-blur-md">
@@ -181,6 +201,14 @@ export function EkoCanvasApp() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            disabled={!sessionId || saving}
+            onClick={() => void onConfirmSave()}
+            className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-[14px] font-semibold text-white shadow-[0_10px_28px_rgba(16,185,129,0.28)] transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {saving ? "确认保存中…" : "确认保存"}
+          </button>
           <button
             type="button"
             disabled={busy}

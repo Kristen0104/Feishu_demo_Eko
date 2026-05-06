@@ -11,11 +11,14 @@ function getBackendOrigin(): string {
 
 async function fetchInitialSession(sessionId: string): Promise<SyncSession | null> {
   const origin = getBackendOrigin();
-  if (!origin) return null;
+  const isDemo = sessionId.startsWith("demo-");
+  const url = !isDemo && origin
+    ? `${origin}/api/v1/sync/sessions/${encodeURIComponent(sessionId)}`
+    : `/api/v1/sync/sessions/${encodeURIComponent(sessionId)}`;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 1500);
   try {
-    const response = await fetch(`${origin}/api/v1/sync/sessions/${encodeURIComponent(sessionId)}`, {
+    const response = await fetch(url, {
       cache: "no-store",
       signal: controller.signal,
     });

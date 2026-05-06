@@ -41,6 +41,7 @@ function run() {
 
   // Bind IPv4 all interfaces so http://127.0.0.1:PORT and http://localhost:PORT both work.
   // (-H localhost alone often binds only ::1 on macOS → browser IPv4 gets ERR_CONNECTION_REFUSED.)
+  console.log(`[eko] next command: ${command}`);
   console.log(`[eko] Starting Next on 0.0.0.0:${PORT} → open http://localhost:${PORT} or http://127.0.0.1:${PORT}`);
 
   const child = spawn(
@@ -54,6 +55,11 @@ function run() {
       },
     },
   );
+
+  child.on("error", (err) => {
+    console.error("[eko] failed to start next dev:", err);
+    process.exit(1);
+  });
 
   child.on("exit", (code) => {
     process.exit(code ?? 0);

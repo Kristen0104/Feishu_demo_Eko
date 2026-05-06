@@ -71,9 +71,9 @@ export function EkoWorkspace({ mode }: EkoWorkspaceProps) {
     return `/canvas?${q.toString()}`;
   }, [sessionId, currentUserId, ownerId]);
 
-  const applyCanvasSnapshot = useCallback((snapshot: Record<string, unknown> | undefined) => {
+  const applyCanvasSnapshot = useCallback((snapshot: unknown) => {
     const editor = editorRef.current;
-    if (!editor || !snapshot) return;
+    if (!editor || snapshot === undefined || snapshot === null) return;
     try {
       editor.loadSnapshot(snapshot as never);
       const nextText = JSON.stringify(snapshot);
@@ -186,11 +186,11 @@ export function EkoWorkspace({ mode }: EkoWorkspaceProps) {
         const snapshotText = JSON.stringify(snapshot);
         if (snapshotText === syncedSnapshotTextRef.current) return;
         syncedSnapshotTextRef.current = snapshotText;
-        const payload = {
+        const payload: CollabSessionPayload & { session_id: string } = {
           session_id: sessionId,
           canvas_data: snapshot,
           owner_id: ownerId || currentUserId || "local-owner",
-        } as CollabSessionPayload & { session_id: string };
+        };
         emitLocalEvent({
           event: COLLAB_EVENTS.MANUAL_UPDATE,
           payload,
@@ -233,7 +233,7 @@ export function EkoWorkspace({ mode }: EkoWorkspaceProps) {
     emitLocalEvent({ event: COLLAB_EVENTS.STATUS_BUSY, payload });
     persistLocalState(payload);
     window.setTimeout(() => {
-      const snapshot = (editorRef.current?.getSnapshot() ?? payload.canvas_data) as Record<string, unknown> | undefined;
+      const snapshot = editorRef.current?.getSnapshot() ?? payload.canvas_data;
       const syncPayload = {
         ...payload,
         canvas_data: snapshot,
@@ -260,7 +260,7 @@ export function EkoWorkspace({ mode }: EkoWorkspaceProps) {
   const triggerMockEvent = useCallback(
     (eventName: CollabEventName) => {
       if (eventName === COLLAB_EVENTS.CANVAS_SYNC) {
-        const snapshot = editorRef.current?.getSnapshot() as Record<string, unknown> | undefined;
+        const snapshot = editorRef.current?.getSnapshot();
         handleCollabEvent(eventName, { canvas_data: snapshot });
         return;
       }
@@ -429,6 +429,17 @@ export function EkoWorkspace({ mode }: EkoWorkspaceProps) {
           <Link href={previewHref}>/preview</Link>
         </div>
       )}
+
+      {mode === "preview" ? (
+        <div className="pointer-events-none absolute inset-0 z-10">
+          <div className="absolute right-[-120px] top-[22%] rotate-[-24deg] select-none text-[64px] font-semibold tracking-[0.22em] text-white/5">
+            PREVIEW
+          </div>
+          <div className="absolute left-6 bottom-5 rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-[12px] text-white/70 backdrop-blur">
+            只读观摩 · user={currentUserId || "viewer"} · owner={ownerId || "unknown"}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

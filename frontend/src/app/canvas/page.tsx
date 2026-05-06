@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
 
-import { EkoWorkspace } from "@/components/collab/EkoWorkspace";
+import { CanvasEntry } from "./canvas-entry";
 
 export const metadata: Metadata = {
   title: "画布 · Eko",
@@ -20,7 +20,7 @@ function CanvasFallback() {
 export default function CanvasPage() {
   return (
     <Suspense fallback={<CanvasFallback />}>
-      <EkoWorkspace mode="edit" />
+      <CanvasEntry />
     </Suspense>
   );
 }

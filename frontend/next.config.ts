@@ -17,10 +17,38 @@ const ngrokDevOrigins = [
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   allowedDevOrigins: ngrokDevOrigins,
+  // Keep Turbopack config explicit.
+  turbopack: {},
   // 避免与家目录中其他 package-lock.json 冲突，消除多 lockfile 警告
   outputFileTracingRoot: path.join(__dirname),
-  // Keep dev startup fast and stable on local machines.
-  transpilePackages: [],
+  webpack(config) {
+    /**
+     * Defensive normalization:
+     * Some environments end up with an invalid `resolve.alias` shape (seen as a ResolveOptions object),
+     * which makes webpack schema validation fail on `styled-jsx/style$`.
+     */
+    config.resolve ??= {};
+
+    const maybeResolveOptions = config.resolve.alias as unknown;
+    if (
+      maybeResolveOptions &&
+      typeof maybeResolveOptions === "object" &&
+      !Array.isArray(maybeResolveOptions) &&
+      ("extensions" in maybeResolveOptions || "modules" in maybeResolveOptions || "mainFields" in maybeResolveOptions)
+    ) {
+      config.resolve = maybeResolveOptions as typeof config.resolve;
+    }
+
+    const alias = config.resolve.alias;
+    if (!alias || typeof alias !== "object" || Array.isArray(alias)) {
+      config.resolve.alias = {};
+    }
+
+    (config.resolve.alias as Record<string, string | false | string[]>)["styled-jsx/style$"] =
+      require.resolve("styled-jsx/style");
+
+    return config;
+  },
   async rewrites() {
     if (!backendRewriteOrigin) return [];
     return [

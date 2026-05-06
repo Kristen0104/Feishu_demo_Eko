@@ -18,6 +18,7 @@ export type DetailMessageFileCard = {
 export type DetailMessageActionButton = {
   label: string;
   tone?: "default" | "primary" | "success";
+  disabled?: boolean;
 };
 
 export type DetailMessageActionCard = {
@@ -148,6 +149,9 @@ export type DetailCanvasNode = {
   bullets: string[];
   icon: "trend" | "rocket" | "calendar" | "spark" | "alert" | "check";
   status?: "default" | "draft";
+  /** 画布故事板特殊卡片样式（如底部「关键数据总览」分段进度） */
+  cardVariant?: "default" | "segmented-overview";
+  subtitle?: string;
 };
 
 export type DetailPhaseCard = {
