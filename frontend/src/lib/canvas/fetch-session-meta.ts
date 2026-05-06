@@ -3,8 +3,13 @@ import { readAccessToken } from "@/lib/auth-token";
 
 export type CanvasSessionMeta = {
   session_id: string;
-  title: string;
-  mode: string;
+  title?: string;
+  mode?: string;
+  owner_id?: string;
+  status?: "idle" | "ai_generating";
+  progress?: number;
+  canvas_data?: Record<string, unknown>;
+  sources?: string[];
 };
 
 export async function fetchCanvasSessionMeta(sessionId: string): Promise<CanvasSessionMeta | null> {

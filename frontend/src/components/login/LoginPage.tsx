@@ -7,6 +7,13 @@ import { useMemo, useState } from "react";
 import { BrandMark, FeishuLogo, GoogleLogo } from "@/components/login/brand-icons";
 import { apiUrl } from "@/lib/eko-api";
 import { saveAccessToken } from "@/lib/auth-token";
+import {
+  EKO_MOCK_ACCESS_TOKEN,
+  EKO_MOCK_EMAIL,
+  EKO_MOCK_PASSWORD,
+  isMockLoginEnabled,
+  matchesMockCredentials,
+} from "@/lib/mock-login";
 import { useAppStore } from "@/store/app-store";
 
 function FeatureIcon({
@@ -56,8 +63,9 @@ function FloatingIcon({
 export function LoginPage({ justRegistered = false }: { justRegistered?: boolean }) {
   const router = useRouter();
   const setLogin = useAppStore((state) => state.setLogin);
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  /** 默认填入演示凭证（界面不展示）；避免「登录」因空字段一直处于 disabled */
+  const [email, setEmail] = useState(() => (isMockLoginEnabled() ? EKO_MOCK_EMAIL : ""));
+  const [password, setPassword] = useState(() => (isMockLoginEnabled() ? EKO_MOCK_PASSWORD : ""));
   const [remember, setRemember] = useState(true);
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -78,6 +86,14 @@ export function LoginPage({ justRegistered = false }: { justRegistered?: boolean
     if (!trimmedEmail || !password.trim()) {
       setSubmitting(false);
       setError("请输入邮箱和密码。");
+      return;
+    }
+
+    if (isMockLoginEnabled() && matchesMockCredentials(trimmedEmail, password)) {
+      saveAccessToken(EKO_MOCK_ACCESS_TOKEN, remember);
+      setLogin(trimmedEmail, { remember });
+      router.push("/home");
+      setSubmitting(false);
       return;
     }
 
@@ -128,9 +144,8 @@ export function LoginPage({ justRegistered = false }: { justRegistered?: boolean
               </div>
 
               <div className="mt-5 sm:mt-6">
-                <h1 className="flex max-w-[760px] items-center gap-3 text-[34px] font-semibold leading-[1.12] tracking-[-0.05em] text-slate-950 sm:text-[44px] xl:text-[52px]">
-                  <BrandMark className="h-[34px] w-[34px] shrink-0 sm:h-[42px] sm:w-[42px]" />
-                  <span>AI，让对话快速转化为工作产出</span>
+                <h1 className="max-w-[760px] text-[26px] font-semibold leading-[1.15] tracking-[-0.05em] text-slate-950 sm:text-[32px] xl:text-[36px]">
+                  AI，让对话快速转化为工作产出
                 </h1>
                 <p className="mt-3 max-w-[620px] text-[14px] leading-[1.7] text-slate-500 sm:text-[15px]">
                   将聊天或 IM 输入自动路由为聊天、文稿和画布输出，帮助团队更高效协作。
@@ -306,7 +321,7 @@ export function LoginPage({ justRegistered = false }: { justRegistered?: boolean
             </div>
           </section>
 
-          <section className="flex min-h-0 items-start justify-center pl-0 pr-0 lg:items-center lg:pl-3 lg:pr-1">
+          <section className="relative z-20 flex min-h-0 items-start justify-center pl-0 pr-0 lg:items-center lg:pl-3 lg:pr-1">
             <div className="w-full max-w-[500px] rounded-[28px] border border-white/85 bg-white/93 px-6 pb-6 pt-7 shadow-[0_24px_80px_rgba(15,23,42,0.10)] backdrop-blur-sm sm:px-8 sm:pb-7 sm:pt-8 lg:px-11">
               <div className="flex items-center justify-center gap-4">
                 <BrandMark className="h-[32px] w-[32px] sm:h-[36px] sm:w-[36px]" />

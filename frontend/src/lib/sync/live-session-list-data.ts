@@ -40,7 +40,7 @@ function getBackendOrigin(): string {
   const raw =
     process.env.BACKEND_PROXY?.trim() ||
     process.env.NEXT_PUBLIC_EKO_API_BASE?.trim() ||
-    "http://39.104.87.235:8000";
+    "";
   return raw.replace(/\/$/, "");
 }
 
@@ -153,9 +153,13 @@ function groupSessions(sessions: SyncSession[]): SessionSection[] {
 
 async function fetchSyncSessions(): Promise<SyncSession[]> {
   const origin = getBackendOrigin();
+  if (!origin) return [];
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 1500);
   try {
     const response = await fetch(`${origin}/api/v1/sync/sessions`, {
       cache: "no-store",
+      signal: controller.signal,
     });
     const body = (await response.json().catch(() => null)) as { code?: number; data?: SyncSession[] } | null;
     if (!response.ok || !body || body.code !== 0 || !Array.isArray(body.data)) {
@@ -164,6 +168,8 @@ async function fetchSyncSessions(): Promise<SyncSession[]> {
     return body.data;
   } catch {
     return [];
+  } finally {
+    clearTimeout(timeout);
   }
 }
 

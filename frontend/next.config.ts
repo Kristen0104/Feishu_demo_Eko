@@ -5,7 +5,7 @@ import type { NextConfig } from "next";
 const backendRewriteOrigin =
   process.env.BACKEND_PROXY?.replace(/\/$/, "") ||
   process.env.NEXT_PUBLIC_EKO_API_BASE?.replace(/\/$/, "") ||
-  "http://39.104.87.235:8000";
+  "";
 
 const ngrokDevOrigins = [
   "*.ngrok-free.dev",
@@ -19,7 +19,8 @@ const nextConfig: NextConfig = {
   allowedDevOrigins: ngrokDevOrigins,
   // 避免与家目录中其他 package-lock.json 冲突，消除多 lockfile 警告
   outputFileTracingRoot: path.join(__dirname),
-  transpilePackages: ["tldraw", "@tldraw/editor", "@tldraw/store", "@tldraw/tlschema", "@tldraw/state", "@tldraw/utils"],
+  // Keep dev startup fast and stable on local machines.
+  transpilePackages: [],
   async rewrites() {
     if (!backendRewriteOrigin) return [];
     return [

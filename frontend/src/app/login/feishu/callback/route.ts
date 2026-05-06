@@ -23,7 +23,7 @@ function getBackendOrigin(): string {
   const raw =
     process.env.BACKEND_PROXY?.trim() ||
     process.env.NEXT_PUBLIC_EKO_API_BASE?.trim() ||
-    "http://39.104.87.235:8000";
+    "";
   return raw.replace(/\/$/, "");
 }
 
@@ -94,6 +94,7 @@ export async function GET(request: NextRequest) {
 
   try {
     const backendOrigin = getBackendOrigin();
+    if (!backendOrigin) throw new Error("Backend unavailable");
     const response = await fetch(`${backendOrigin}/api/v1/auth/feishu/login`, {
       method: "POST",
       cache: "no-store",

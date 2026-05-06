@@ -3,10 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "predev": "node scripts/clean-next-cache.mjs && node scripts/free-dev-port.mjs",
-    "dev": "WATCHPACK_POLLING=true next dev --webpack -p 3002",
+    "predev": "node scripts/clean-next-cache.mjs",
+    "dev": "node scripts/dev-stable.mjs",
     "dev:unlock": "rm -rf .next/dev",
-    "dev:3000": "WATCHPACK_POLLING=true next dev --webpack -p 3000",
+    "dev:3000": "NEXT_TELEMETRY_DISABLED=1 next dev --webpack -H :: -p 3000",
     "build": "rm -f tsconfig.tsbuildinfo && next build",
     "start": "next start",
     "lint": "eslint . --ext .js,.jsx,.ts,.tsx"

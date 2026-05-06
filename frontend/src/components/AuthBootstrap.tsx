@@ -12,6 +12,8 @@ export function AuthBootstrap() {
   const ran = useRef(false);
 
   useEffect(() => {
+    const shouldValidateToken = process.env.NEXT_PUBLIC_EKO_VALIDATE_TOKEN === "true";
+
     const syncAuth = () => {
       if (ran.current) return;
       ran.current = true;
@@ -25,8 +27,15 @@ export function AuthBootstrap() {
 
         queueMicrotask(() => {
           const token = readAccessToken();
-          if (!token) return;
-          void fetch(apiUrl("/api/v1/auth/me"), { headers: { Authorization: `Bearer ${token}` } })
+          if (!token || !shouldValidateToken) return;
+
+          const controller = new AbortController();
+          const timeout = window.setTimeout(() => controller.abort(), 1500);
+
+          void fetch(apiUrl("/api/v1/auth/me"), {
+            headers: { Authorization: `Bearer ${token}` },
+            signal: controller.signal,
+          })
             .then((res) => {
               if (res.status === 401) {
                 clearAccessToken();
@@ -35,6 +44,9 @@ export function AuthBootstrap() {
             })
             .catch(() => {
               /* 离线或后端未起：保留本地会话 */
+            })
+            .finally(() => {
+              window.clearTimeout(timeout);
             });
         });
       } catch {

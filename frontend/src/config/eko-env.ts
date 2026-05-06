@@ -53,5 +53,7 @@ export function buildSessionWebSocketUrl(sessionId: string, token: string | null
     }
   }
 
-  return `ws://39.104.87.235:8000/api/v1/sync/ws/session/${encId}${q}`;
+  const protocol = window.location.protocol === "https:" ? "wss" : "ws";
+  const host = window.location.host;
+  return `${protocol}://${host}/api/v1/sync/ws/session/${encId}${q}`;
 }
