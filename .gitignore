@@ -1,0 +1,77 @@
+# Environment and secrets
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+!.env.example
+!**/.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+eggs/
+.eggs/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+*.log
+logs/
+tmp/
+
+# Node / frontend
+node_modules/
+.npm
+.yarn
+*.log
+frontend/.vite/
+frontend/dist/
+**/.vite/
+frontend/.next/
+frontend/tsconfig.tsbuildinfo
+
+# Test
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+
+# Docker
+*.dockerignore
+
+# Runtime data and generated artifacts
+backend/dump.rdb
+backend/runtime/
+backend/generated/
+backend/storage/
+generated/
+storage/
+
+# Generated PPT/media artifacts
+*.pptx
+*.ppt
+
+# Misc
+*.bak
+*.tmp
+*.swp
