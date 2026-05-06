@@ -147,6 +147,33 @@ _ARTIFACT_CREATE_KEYWORDS = (
     "新画板",
 )
 
+_PPT_FREE_DESIGN_KEYWORDS = (
+    "自由设计",
+    "自由模式",
+    "自由版式",
+    "自由布局",
+    "自由排版",
+    "不要模板",
+    "不用模板",
+    "非模板",
+    "创意设计",
+    "强视觉",
+    "视觉表现",
+    "free_design",
+    "free design",
+    "free-design",
+    "freeform",
+    "creative_freeform",
+)
+
+_PPT_TEMPLATE_KEYWORDS = (
+    "模板模式",
+    "模板生成",
+    "使用模板",
+    "用模板",
+    "template",
+)
+
 
 class RouterAgent:
     """路由 Agent - 意图识别"""
@@ -576,6 +603,20 @@ class AgentService:
             return 6
         return max(1, min(20, int(match.group(1))))
 
+    def _resolve_ppt_design_mode(self, *, requested: object = None, message: str = "") -> str:
+        normalized = str(requested or "").strip().lower().replace("-", "_").replace(" ", "_")
+        if normalized in {"free", "freeform", "free_design", "creative_freeform", "ppt_master_free_design"}:
+            return "free_design"
+        if normalized in {"template", "templated", "renderer", "ppt_master_template"}:
+            return "template"
+
+        message_lower = message.lower()
+        if any(keyword in message or keyword in message_lower for keyword in _PPT_FREE_DESIGN_KEYWORDS):
+            return "free_design"
+        if any(keyword in message or keyword in message_lower for keyword in _PPT_TEMPLATE_KEYWORDS):
+            return "template"
+        return "template"
+
     def _build_sync_messages(
         self,
         request: AgentChatRequest,
@@ -811,7 +852,7 @@ class AgentService:
             message=instruction,
             planning_enabled=False,
         )
-        resolved_design_mode = design_mode or "template"
+        resolved_design_mode = self._resolve_ppt_design_mode(requested=design_mode, message=instruction)
         job = self._aippt_service.create_job_from_request(
             PPTGenerationRequest(
                 topic=self._build_ppt_topic(request, session_artifact=None),
@@ -1761,7 +1802,13 @@ class AgentService:
             return False
         if raw.get("chat_id") != chat_id:
             return False
-        return FeishuEventProcessor.message_mentions_app(raw, settings.FEISHU_APP_ID)
+        bot_open_id = None
+        if hasattr(self._feishu, "get_bot_open_id"):
+            try:
+                bot_open_id = self._feishu.get_bot_open_id()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Load Feishu bot open_id for source mention check failed session=%s: %s", session_id, exc)
+        return FeishuEventProcessor.message_mentions_app(raw, settings.FEISHU_APP_ID, bot_open_id=bot_open_id)
 
     def _build_feishu_doc_title(self, request: AgentChatRequest, prefix: str) -> str:
         normalized = " ".join(request.message.split())

@@ -36,6 +36,11 @@ class FeishuService:
     def get_card(self, card_id: str) -> FeishuCardSchema:
         return self._client.get_card(card_id)
 
+    def get_bot_open_id(self) -> str | None:
+        info = self._client.get_bot_info()
+        open_id = info.get("open_id")
+        return open_id if isinstance(open_id, str) and open_id else None
+
     def import_diagram(self, payload: FeishuBoardImportRequest) -> FeishuBoardImportSchema:
         return self._client.import_diagram(payload)
 

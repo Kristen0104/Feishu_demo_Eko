@@ -35,6 +35,7 @@ class FeishuEventProcessor:
         self._feishu_service = feishu_service
         self._agent_service = agent_service
         self._sync_service = sync_service
+        self._bot_open_id: str | None = None
 
     async def handle(self, payload: dict[str, Any]) -> dict[str, str]:
         envelope = self._unwrap_payload(payload)
@@ -117,7 +118,7 @@ class FeishuEventProcessor:
                 await self._sync_service.publish_agent_message(
                     session_id,
                     role="assistant",
-                    content="收到。我先理解你的任务，并拆成可以执行的步骤。",
+                    content="收到。正在读取候选消息，请先在会话中选择消息记录后再生成。",
                 )
             self._schedule_new_session_bootstrap(
                 session_id=session_id,
@@ -194,11 +195,24 @@ class FeishuEventProcessor:
                 continue
             if mention.get("id_type") == "app_id" and mention.get("id") == app_id:
                 return True
+            mention_open_id = self._mention_open_id(mention)
+            bot_open_id = self._get_bot_open_id() if mention_open_id else None
+            if mention_open_id and mention_open_id == bot_open_id:
+                return True
+            logger.info(
+                "Feishu mention did not match bot app_id=%s mention_id_type=%s mention_id=%s mentioned_type=%s mention_open_id=%s bot_open_id=%s",
+                app_id,
+                mention.get("id_type"),
+                mention.get("id"),
+                mention.get("mentioned_type"),
+                mention_open_id,
+                bot_open_id,
+            )
         return False
 
     @staticmethod
-    def message_mentions_app(message: dict[str, Any], app_id: str) -> bool:
-        if not app_id:
+    def message_mentions_app(message: dict[str, Any], app_id: str, bot_open_id: str | None = None) -> bool:
+        if not app_id and not bot_open_id:
             return False
         mentions = message.get("mentions")
         if not isinstance(mentions, list):
@@ -206,9 +220,39 @@ class FeishuEventProcessor:
         for mention in mentions:
             if not isinstance(mention, dict):
                 continue
-            if mention.get("id_type") == "app_id" and mention.get("id") == app_id:
+            if app_id and mention.get("id_type") == "app_id" and mention.get("id") == app_id:
                 return True
+            if bot_open_id:
+                mention_id = mention.get("id")
+                if isinstance(mention_id, str) and mention.get("id_type") == "open_id" and mention_id == bot_open_id:
+                    return True
+                if isinstance(mention_id, dict) and mention_id.get("open_id") == bot_open_id:
+                    return True
         return False
+
+    def _get_bot_open_id(self) -> str | None:
+        if self._bot_open_id:
+            return self._bot_open_id
+        if hasattr(self._feishu_service, "get_bot_open_id"):
+            try:
+                bot_open_id = self._feishu_service.get_bot_open_id()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Feishu bot open_id lookup failed: %s", exc)
+                return None
+            if isinstance(bot_open_id, str) and bot_open_id:
+                self._bot_open_id = bot_open_id
+        return self._bot_open_id
+
+    def _mention_open_id(self, mention: dict[str, Any]) -> str | None:
+        mention_id = mention.get("id")
+        if isinstance(mention_id, str) and mention.get("id_type") == "open_id":
+            return mention_id
+        if isinstance(mention_id, dict):
+            open_id = mention_id.get("open_id")
+            if isinstance(open_id, str) and open_id:
+                return open_id
+        open_id = mention.get("open_id")
+        return open_id if isinstance(open_id, str) and open_id else None
 
     def _extract_command_text(self, message: dict[str, Any]) -> str:
         body = message.get("content")
@@ -337,7 +381,7 @@ class FeishuEventProcessor:
                 self._feishu_service.get_chat_context_candidates,
                 chat_id,
                 before_time_ms=before_time_ms,
-                limit=50,
+                limit=15,
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning(
@@ -352,37 +396,14 @@ class FeishuEventProcessor:
                 session_id,
                 context_size=len(context_candidates),
                 context_messages=context_candidates,
+                status="等待选择",
+                summary=f"已读取 {len(context_candidates)} 条候选消息，请先选择消息记录再生成。",
             )
             logger.info(
-                "Feishu direct mention loaded session=%s with %s context candidates",
+                "Feishu direct mention loaded session=%s with %s context candidates; waiting for user selection",
                 session_id,
                 len(context_candidates),
             )
-        current_artifact = await self._resolve_current_artifact_for_followup(chat_id, session_id, instruction)
-        request = AgentChatRequest(
-            session_id=session_id,
-            message=instruction,
-            current_document=current_artifact,
-            context=AgentContext(
-                chat_history=[
-                    ChatMessage(
-                        role=str(message.get("role") or "user"),
-                        content=str(message.get("content") or ""),
-                        timestamp=self._coerce_int(message.get("timestamp")),
-                        sender_open_id=self._coerce_str(message.get("sender_open_id")),
-                        sender_union_id=self._coerce_str(message.get("sender_union_id")),
-                        sender_name=self._coerce_str(message.get("sender_name")),
-                        platform_user_id=self._coerce_str(message.get("platform_user_id")),
-                        platform_display_name=self._coerce_str(message.get("platform_display_name")),
-                        avatar_url=self._coerce_str(message.get("avatar_url")),
-                    )
-                    for message in context_candidates
-                    if str(message.get("content") or "").strip()
-                ]
-            ),
-            sender=sender_profile,
-        )
-        await self._run_agent_stream_to_session(request)
 
     async def _resolve_current_artifact_for_followup(
         self,

@@ -142,6 +142,13 @@ class FeishuClient:
             platform="feishu",
         )
 
+    def get_bot_info(self) -> dict[str, Any]:
+        if not settings.FEISHU_APP_ID or not settings.FEISHU_APP_SECRET:
+            return {}
+        payload = self._request_json("GET", "/open-apis/bot/v3/info")
+        bot = payload.get("bot")
+        return bot if isinstance(bot, dict) else {}
+
     def import_diagram(self, payload: FeishuBoardImportRequest) -> FeishuBoardImportSchema:
         result = self._board_client.import_diagram(
             payload.whiteboard_id,

@@ -100,8 +100,8 @@ class SyncService:
             session_id,
             source=source,
             title="飞书群聊新会话",
-            summary="收到 @机器人 消息，正在识别意图并启动任务。",
-            status="进行中",
+            summary="收到 @机器人 消息，正在读取候选消息，请先选择消息记录再生成。",
+            status="等待选择",
             user_id=user_id,
             chat_id=chat_id,
             message_id=message_id,
@@ -270,9 +270,13 @@ class SyncService:
         *,
         context_size: int,
         context_messages: list[dict[str, Any]],
+        status: str | None = None,
+        summary: str | None = None,
     ) -> None:
         await self._manager.update_session(
             session_id,
+            status=status,
+            summary=summary,
             context_size=context_size,
             context_messages=context_messages,
         )
