@@ -47,6 +47,7 @@ from app.modules.document.schemas import (
 from app.modules.document.schemas import ChatMessage as DocumentChatMessage
 from app.modules.document.service import DocumentService
 from app.modules.feishu.client import FeishuClient
+from app.modules.feishu.events import FeishuEventProcessor
 from app.modules.feishu.service import FeishuService
 from app.modules.aippt.schemas import PPTGenerationRequest
 from app.modules.aippt.service import AIPPTService
@@ -717,6 +718,9 @@ class AgentService:
             return
         chat_id = getattr(session, "chat_id", None) or self._extract_feishu_chat_id(request.session_id)
         if not isinstance(chat_id, str) or not chat_id:
+            return
+        if not await self._feishu_session_was_app_mention(request.session_id, chat_id):
+            logger.info("Skip Feishu chat echo because source message did not mention app session=%s", request.session_id)
             return
         try:
             await self._feishu.send_text_message_to_chat(chat_id, response.message)
@@ -1738,6 +1742,27 @@ class AgentService:
             return None
         return parts[1] or None
 
+    def _extract_feishu_message_id(self, session_id: str) -> str | None:
+        parts = session_id.split(":", 2)
+        if len(parts) != 3 or parts[0] != "feishu":
+            return None
+        return parts[2] or None
+
+    async def _feishu_session_was_app_mention(self, session_id: str, chat_id: str) -> bool:
+        message_id = self._extract_feishu_message_id(session_id)
+        if not message_id:
+            return False
+        try:
+            raw = await self._feishu.get_message(message_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Verify Feishu source mention failed session=%s message=%s: %s", session_id, message_id, exc)
+            return False
+        if not isinstance(raw, dict):
+            return False
+        if raw.get("chat_id") != chat_id:
+            return False
+        return FeishuEventProcessor.message_mentions_app(raw, settings.FEISHU_APP_ID)
+
     def _build_feishu_doc_title(self, request: AgentChatRequest, prefix: str) -> str:
         normalized = " ".join(request.message.split())
         return f"{prefix} - {normalized[:24]}" if normalized else prefix
@@ -1830,6 +1855,9 @@ class AgentService:
         chat_id = self._extract_feishu_chat_id(request.session_id)
         if chat_id is None:
             return None
+        if not await self._feishu_session_was_app_mention(request.session_id, chat_id):
+            logger.info("Skip Feishu document link because source message did not mention app session=%s", request.session_id)
+            return None
 
         try:
             result = await self._feishu.publish_markdown_to_feishu(
@@ -1896,6 +1924,9 @@ class AgentService:
                 )
 
         if not sharing_url:
+            return
+        if not await self._feishu_session_was_app_mention(request.session_id, chat_id):
+            logger.info("Skip Feishu board link because source message did not mention app session=%s", request.session_id)
             return
         message = f"Eko 已创建飞书画板文档并完成生成：\n{sharing_url}"
         if whiteboard_id:
@@ -2148,6 +2179,9 @@ class AgentService:
     async def _sync_ppt_to_feishu_document(self, request: AgentChatRequest, job: Any) -> str | None:
         chat_id = self._extract_feishu_chat_id(request.session_id)
         if chat_id is None:
+            return None
+        if not await self._feishu_session_was_app_mention(request.session_id, chat_id):
+            logger.info("Skip Feishu PPT link because source message did not mention app session=%s", request.session_id)
             return None
 
         preview: dict[str, Any] | None = None

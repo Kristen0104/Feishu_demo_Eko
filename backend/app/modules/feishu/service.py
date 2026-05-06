@@ -146,6 +146,9 @@ class FeishuService:
         candidates.sort(key=lambda item: item["timestamp"])
         return candidates[-limit:]
 
+    async def get_message(self, message_id: str) -> dict[str, Any] | None:
+        return await asyncio.to_thread(self._client.get_message, message_id)
+
     async def create_import_ticket(self, markdown_content: str, title: str) -> str:
         return await asyncio.to_thread(self._client.create_import_task, markdown_content, title)
 

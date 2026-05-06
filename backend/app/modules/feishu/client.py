@@ -331,6 +331,17 @@ class FeishuClient:
 
         return items
 
+    def get_message(self, message_id: str) -> dict[str, Any] | None:
+        if not settings.FEISHU_APP_ID or not settings.FEISHU_APP_SECRET:
+            return None
+        payload = self._request_json("GET", f"/open-apis/im/v1/messages/{message_id}")
+        data = payload.get("data") or {}
+        items = data.get("items")
+        if isinstance(items, list) and items and isinstance(items[0], dict):
+            return items[0]
+        item = data.get("item")
+        return item if isinstance(item, dict) else None
+
     def create_import_task(self, markdown_content: str, file_name: str) -> str:
         client = self._require_sdk_client()
         md_bytes = markdown_content.encode("utf-8")

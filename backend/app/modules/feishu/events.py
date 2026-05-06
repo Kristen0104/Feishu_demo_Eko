@@ -56,6 +56,15 @@ class FeishuEventProcessor:
         if not isinstance(message, dict):
             return {"msg": "success"}
 
+        if not self._should_handle_message(message):
+            logger.info(
+                "Feishu event ignored because bot was not mentioned chat_id=%s message_id=%s chat_type=%s",
+                message.get("chat_id"),
+                message.get("message_id"),
+                message.get("chat_type"),
+            )
+            return {"msg": "success"}
+
         command_text = self._extract_command_text(message)
         if not command_text:
             return {"msg": "success"}
@@ -161,6 +170,45 @@ class FeishuEventProcessor:
                 return event_type
         event_type = payload.get("type")
         return event_type if isinstance(event_type, str) else ""
+
+    def _should_handle_message(self, message: dict[str, Any]) -> bool:
+        if self._is_private_chat(message):
+            return True
+        return self._mentions_this_bot(message)
+
+    def _is_private_chat(self, message: dict[str, Any]) -> bool:
+        chat_type = str(message.get("chat_type") or "").strip().lower()
+        return chat_type in {"p2p", "private", "single"}
+
+    def _mentions_this_bot(self, message: dict[str, Any]) -> bool:
+        mentions = message.get("mentions")
+        if not isinstance(mentions, list) or not mentions:
+            return False
+
+        app_id = settings.FEISHU_APP_ID.strip() if isinstance(settings.FEISHU_APP_ID, str) else ""
+        if not app_id:
+            return False
+
+        for mention in mentions:
+            if not isinstance(mention, dict):
+                continue
+            if mention.get("id_type") == "app_id" and mention.get("id") == app_id:
+                return True
+        return False
+
+    @staticmethod
+    def message_mentions_app(message: dict[str, Any], app_id: str) -> bool:
+        if not app_id:
+            return False
+        mentions = message.get("mentions")
+        if not isinstance(mentions, list):
+            return False
+        for mention in mentions:
+            if not isinstance(mention, dict):
+                continue
+            if mention.get("id_type") == "app_id" and mention.get("id") == app_id:
+                return True
+        return False
 
     def _extract_command_text(self, message: dict[str, Any]) -> str:
         body = message.get("content")
