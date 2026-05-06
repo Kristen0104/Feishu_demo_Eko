@@ -534,6 +534,7 @@ function ArtifactPresenter({
    kind === "ppt" ? artifact?.title || "AI PPT" : kind === "board" ? artifact?.title || "飞书画板" : artifact?.title || "文档产物";
   const [pptPreview, setPptPreview] = useState<PPTPreview | null>(null);
   const [selectedSlideNumber, setSelectedSlideNumber] = useState(1);
+  const [brokenSlides, setBrokenSlides] = useState<Set<number>>(new Set());
   const boardViewportRef = useRef<HTMLDivElement | null>(null);
   const boardDragRef = useRef<{
     pointerId: number;
@@ -646,20 +647,29 @@ function ArtifactPresenter({
     }
   }, []);
 
+  const jobId = artifact?.jobId;
   useEffect(() => {
-    if (kind !== "ppt" || !artifact?.jobId) return;
+    if (kind !== "ppt" || !jobId) return;
     let cancelled = false;
-    fetchEkoJson<PPTPreview>(`/api/v1/ppt/preview/${encodeURIComponent(artifact.jobId)}`)
-      .then((preview) => {
-        if (!cancelled) setPptPreview(preview);
-      })
-      .catch(() => {
-        if (!cancelled) setPptPreview(null);
-      });
+    const fetchPreview = () =>
+      fetchEkoJson<PPTPreview>(`/api/v1/ppt/preview/${encodeURIComponent(jobId)}`)
+        .then((preview) => {
+          if (!cancelled) setPptPreview(preview);
+        })
+        .catch(() => {
+          if (!cancelled) setPptPreview(null);
+        });
+    fetchPreview();
+    const interval = setInterval(fetchPreview, 3000);
     return () => {
       cancelled = true;
+      clearInterval(interval);
     };
-  }, [artifact?.jobId, kind]);
+  }, [jobId, kind, artifact?.status]);
+
+  useEffect(() => {
+    setBrokenSlides(new Set());
+  }, [pptPreview]);
 
   useEffect(() => {
     if (kind !== "board") return;
@@ -694,19 +704,32 @@ function ArtifactPresenter({
         <div className="flex min-h-0 flex-1 items-center justify-center px-4 py-4">
           <div className="flex w-full max-w-[1120px] flex-col gap-3">
             <div className="aspect-[16/9] w-full overflow-hidden rounded-[16px] border border-slate-200 bg-white shadow-[0_18px_44px_rgba(15,23,42,0.06)]">
-              {selectedSlide && artifact?.jobId ? (
+              {selectedSlide && artifact?.jobId && !brokenSlides.has(selectedSlide.slide_number) ? (
                 <img
                   src={apiUrl(`/api/v1/ppt/preview/${encodeURIComponent(artifact.jobId)}/slides/${selectedSlide.slide_number}`)}
                   alt={selectedSlide.title || title}
                   className="h-full w-full object-cover"
+                  onError={() => setBrokenSlides((prev) => new Set(prev).add(selectedSlide.slide_number))}
                 />
+              ) : selectedSlide && brokenSlides.has(selectedSlide.slide_number) ? (
+                <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-slate-50 to-white p-8">
+                  <div className="text-center">
+                    <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-100">
+                      <svg className="h-8 w-8 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15" />
+                      </svg>
+                    </div>
+                    <h3 className="text-lg font-semibold text-slate-800">{selectedSlide.title || title}</h3>
+                    <p className="mt-1 text-sm text-slate-400">第 {selectedSlide.slide_number} 页</p>
+                  </div>
+                </div>
               ) : (
                 <div className="flex h-full flex-col p-6">
                   <div className="flex min-w-0 items-center justify-between gap-3">
                     <h3 className="truncate text-[18px] font-semibold text-slate-950">{title}</h3>
                     <span className="rounded-full bg-emerald-50 px-3 py-1 text-[12px] font-semibold text-emerald-700">{state.label}</span>
                   </div>
-                  <div className="mt-8 space-y-4">
+                  <div className="mt-8 animate-pulse space-y-4">
                     <div className="h-4 w-7/12 rounded-full bg-slate-200" />
                     <div className="h-3 w-10/12 rounded-full bg-slate-100" />
                     <div className="h-3 w-8/12 rounded-full bg-slate-100" />
@@ -720,7 +743,10 @@ function ArtifactPresenter({
                 <button
                   key={slide.slide_number}
                   type="button"
-                  onClick={() => setSelectedSlideNumber(slide.slide_number)}
+                  onClick={() => {
+                    setSelectedSlideNumber(slide.slide_number);
+                    setBrokenSlides((prev) => { const next = new Set(prev); next.delete(slide.slide_number); return next; });
+                  }}
                   className={[
                     "w-[132px] shrink-0 overflow-hidden rounded-[12px] border bg-white text-left shadow-[0_8px_20px_rgba(15,23,42,0.04)] transition",
                     selectedSlide?.slide_number === slide.slide_number ? "border-blue-500 ring-2 ring-blue-100" : "border-slate-200 hover:border-blue-300",
@@ -730,14 +756,17 @@ function ArtifactPresenter({
                     <span>Slide {slide.slide_number}</span>
                     <span className="truncate">{slide.title || slide.template || ""}</span>
                   </div>
-                  {pptPreview && artifact?.jobId ? (
+                  {pptPreview && artifact?.jobId && !brokenSlides.has(slide.slide_number) ? (
                     <img
                       src={apiUrl(`/api/v1/ppt/preview/${encodeURIComponent(artifact.jobId)}/slides/${slide.slide_number}`)}
                       alt={slide.title || `Slide ${slide.slide_number}`}
                       className="aspect-[16/9] w-full object-cover"
+                      onError={() => setBrokenSlides((prev) => new Set(prev).add(slide.slide_number))}
                     />
                   ) : (
-                    <div className="mx-2 mb-2 aspect-[16/9] rounded-[10px] bg-slate-100" />
+                    <div className="mx-2 mb-2 flex aspect-[16/9] items-center justify-center rounded-[10px] bg-slate-100 text-[11px] font-medium text-slate-400">
+                      {slide.slide_number}
+                    </div>
                   )}
                 </button>
               ))}
@@ -1155,6 +1184,23 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
   const agentSlice = useAgentRuntimeStore((s) => s.sessions[data.id]);
   const [activeTab, setActiveTab] = useState<DetailTabKey>(data.defaultTab);
   const [messages, setMessages] = useState(data.messages);
+  const selfAuthor = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const msg of messages) {
+      if (msg.role === "member" && msg.author && msg.author !== "我" && msg.author !== "Eko" && msg.author !== "成员") {
+        counts.set(msg.author, (counts.get(msg.author) || 0) + 1);
+      }
+    }
+    let best = "";
+    let bestCount = 0;
+    for (const [author, count] of counts) {
+      if (count > bestCount) {
+        best = author;
+        bestCount = count;
+      }
+    }
+    return best || undefined;
+  }, [messages]);
   const [localArtifact, setLocalArtifact] = useState<DetailDocumentArtifact | undefined>(data.artifact);
   const [manualDocumentMarkdown, setManualDocumentMarkdown] = useState<string | null>(null);
   const [docAutoSyncState, setDocAutoSyncState] = useState<DocumentAutoSyncState>("idle");
@@ -1882,6 +1928,7 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                           <DetailConversationMessage
                             key={message.id ?? `msg-${msgIdx}`}
                             message={message}
+                            selfAuthor={selfAuthor}
                             tone={conversationTone}
                             onActionButtonClick={isCanvasMode ? handleConversationAction : undefined}
                           />

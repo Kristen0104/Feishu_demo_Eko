@@ -7,6 +7,7 @@ export type SyncSession = {
   title: string;
   summary: string;
   status: string;
+  user_id?: string | null;
   opened_at: string;
   updated_at: string;
   chat_id?: string | null;

@@ -35,7 +35,7 @@ class AgentToolRegistry:
             ToolSpec("chat", "普通问答回复", {"message": "string"}),
             ToolSpec("docx", "创建 Markdown 文档", {"instruction": "string", "retrieved_context": "array"}),
             ToolSpec("docx_edit", "修改当前文档", {"instruction": "string", "current_document": "object"}),
-            ToolSpec("ppt", "创建或编辑 AI PPT", {"topic": "string", "design_mode": "template|free_design", "retrieved_context": "array"}),
+            ToolSpec("ppt", "根据用户需求创建或编辑 AI PPT。可指定设计模式：template（模板模式，快速稳定生成）或 free_design（自由设计，更强视觉表现）。如果用户没有明确指定设计模式，你必须在 missing_info 中说明并设置 need_clarification=true，主动询问用户偏好哪种模式。", {"topic": "string", "design_mode": "template|free_design", "retrieved_context": "array"}),
             ToolSpec("ppt_create", "创建新 PPT", {"topic": "string", "page_count": "integer", "design_mode": "string", "retrieved_context": "array"}),
             ToolSpec("ppt_edit", "修改当前 PPT", {"instruction": "string", "current_artifact": "object"}),
             ToolSpec("feishu", "创建或解析飞书文档、画板和分享链接", {"title": "string", "sharing_url": "string"}),

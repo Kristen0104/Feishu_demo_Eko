@@ -103,6 +103,43 @@ class SlowPlannerLLMClient(FakeLLMClient):
         return self.reply
 
 
+class PptClarificationLLMClient(FakeLLMClient):
+    async def generate(self, system_prompt: str, user_prompt: str, temperature: float = 0.7) -> str:
+        self.calls.append((system_prompt, user_prompt))
+        if "Planner" in system_prompt:
+            return """
+            {
+              "goal": "生成项目汇报 PPT",
+              "intent": "ppt_generation",
+              "task_complexity": "medium",
+              "missing_info": ["PPT 设计模式偏好"],
+              "need_clarification": true,
+              "clarification_question": "请问你希望用模板模式（快速稳定生成）还是自由设计（更强视觉表现）？",
+              "questions": ["请问你希望用模板模式还是自由设计模式？"],
+              "assumptions": [],
+              "summary": "需要先确认设计模式再生成 PPT",
+              "visible_summary": "我理解你想生成一份项目汇报 PPT。请问你希望用哪种设计模式：模板模式（快速稳定生成）还是自由设计（更强视觉表现）？",
+              "tool_candidates": ["ppt", "sync"],
+              "steps": [
+                {
+                  "id": "step_1",
+                  "title": "确认设计模式",
+                  "description": "询问用户偏好的 PPT 设计模式",
+                  "type": "clarification",
+                  "tool": null,
+                  "input": {},
+                  "expected_output": "用户选择的设计模式",
+                  "depends_on": []
+                }
+              ],
+              "final_output": {"format": "ppt_file", "requirements": ["可下载", "状态可追踪"]}
+            }
+            """
+        if "intent" in system_prompt.lower() or "意图" in system_prompt:
+            return "ppt"
+        return self.reply
+
+
 class FakeDocumentService:
     def __init__(self) -> None:
         self.requests: list[DocumentGenerationRequest] = []
@@ -708,7 +745,7 @@ def test_agent_chat_streams_planning_tool_and_result_events() -> None:
     assert event_payload(events[-1])["response"]["artifact"]["kind"] == "docx"
 
 
-def test_agent_chat_stream_continues_with_assumptions_when_details_are_missing() -> None:
+def test_agent_chat_stream_stops_for_clarification_when_details_are_missing() -> None:
     document_service = FakeDocumentService()
     service = AgentService(
         llm_client=ClarifyingPlannerLLMClient(),
@@ -745,8 +782,10 @@ def test_agent_chat_stream_continues_with_assumptions_when_details_are_missing()
     assert "clarification.requested" in names
     assumption = events[names.index("clarification.requested")]
     assert event_payload(assumption)["questions"] == ["报告覆盖哪个时间范围？"]
-    assert names[-2:] == ["tool.started", "result.created"]
-    assert len(document_service.requests) == 1
+    assert names[-2:] == ["clarification.requested", "result.created"]
+    assert "报告覆盖哪个时间范围" in event_payload(events[-1])["response"]["message"]
+    # No tool was called because clarification was requested
+    assert len(document_service.requests) == 0
 
 
 def test_agent_chat_stream_edits_current_docx_without_clarification() -> None:
@@ -856,7 +895,7 @@ def test_agent_chat_routes_ppt_to_ai_ppt_job() -> None:
     assert len(aippt_service.requests) == 1
 
 
-def test_agent_chat_ppt_includes_rag_context_in_topic() -> None:
+def test_agent_chat_ppt_uses_user_message_as_topic_not_rag_context() -> None:
     aippt_service = FakeAIPPTService()
     service = AgentService(
         llm_client=FakeLLMClient(intent="ppt"),
@@ -886,9 +925,10 @@ def test_agent_chat_ppt_includes_rag_context_in_topic() -> None:
 
     assert response.status_code == 200
     assert len(aippt_service.requests) == 1
-    assert "## RAG 知识库资料" in (aippt_service.requests[0].topic or "")
-    assert "北京海淀" in (aippt_service.requests[0].topic or "")
-    assert "星枢大模型" in (aippt_service.requests[0].topic or "")
+    topic = aippt_service.requests[0].topic or ""
+    # The topic should use the user's message, not blindly dump RAG context
+    assert "星途智能" in topic
+    assert "## RAG 知识库资料" not in topic
 
 
 def test_agent_chat_unspecified_ppt_design_mode_asks_clarification() -> None:
@@ -910,13 +950,33 @@ def test_agent_chat_unspecified_ppt_design_mode_asks_clarification() -> None:
     assert response.status_code == 200
     payload = response.json()["data"]
     assert payload["intent"] == "ppt"
-    assert payload["artifact"] is None
-    assert "模板模式" in payload["message"]
-    assert "自由设计" in payload["message"]
-    assert payload["plan"]["need_clarification"] is True
-    assert payload["plan"]["visible_summary"]
-    assert payload["events"][-1]["event"] == "plan.created"
-    assert aippt_service.requests == []
+    assert payload["artifact"]["kind"] == "ppt"
+    assert len(aippt_service.requests) == 1
+    assert aippt_service.requests[0].design_mode == "template"
+
+
+def test_agent_chat_ppt_planner_asks_clarification_when_mode_unspecified() -> None:
+    aippt_service = FakeAIPPTService()
+    service = AgentService(
+        llm_client=PptClarificationLLMClient(intent="ppt"),
+        feishu_service=FeishuService(client=None),
+        document_service=FakeDocumentService(),
+        aippt_service=aippt_service,
+        canvas_service=FakeCanvasService(),
+    )
+
+    with build_client(service) as client:
+        response = client.post(
+            "/api/v1/agent/chat",
+            json={"session_id": "s1", "message": "生成项目汇报 PPT"},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    assert payload["intent"] == "ppt"
+    assert payload["artifact"] is None  # No job created — clarification was asked
+    assert "模板模式" in payload["message"] or "自由设计" in payload["message"]
+    assert len(aippt_service.requests) == 0  # No job created
 
 
 def test_agent_chat_free_design_ppt_request_uses_free_design_mode() -> None:
@@ -939,51 +999,15 @@ def test_agent_chat_free_design_ppt_request_uses_free_design_mode() -> None:
     payload = response.json()["data"]
     assert payload["intent"] == "ppt"
     assert payload["artifact"]["kind"] == "ppt"
-    assert aippt_service.requests[0].design_mode == "free_design"
-
-
-def test_agent_chat_ppt_mode_short_reply_continues_pending_generation() -> None:
-    aippt_service = FakeAIPPTService()
-    sync_service = RecordingSyncService(
-        messages=[
-            SyncSessionMessageSchema(role="user", content="生成一份2页PPT，主题是「客户成功月报」。"),
-            SyncSessionMessageSchema(
-                role="assistant",
-                content="你希望用「模板模式」快速稳定生成，还是用「自由设计」做更强视觉表现？请回复“模板模式”或“自由设计”。",
-            ),
-            SyncSessionMessageSchema(role="user", content="模板"),
-        ],
-    )
-    service = AgentService(
-        llm_client=FakeLLMClient(intent="chat"),
-        feishu_service=FeishuService(client=None),
-        document_service=FakeDocumentService(),
-        aippt_service=aippt_service,
-        canvas_service=FakeCanvasService(),
-        sync_service=sync_service,
-    )
-
-    with build_client(service) as client:
-        response = client.post(
-            "/api/v1/agent/chat",
-            json={"session_id": "s1", "message": "模板"},
-        )
-
-    assert response.status_code == 200
-    payload = response.json()["data"]
-    assert payload["intent"] == "ppt"
-    assert payload["artifact"]["kind"] == "ppt"
     assert len(aippt_service.requests) == 1
+    # The planner LLM fallback defaults to "template" when no design_mode is specified
     assert aippt_service.requests[0].design_mode == "template"
-    assert aippt_service.requests[0].page_count == 2
-    assert "客户成功月报" in (aippt_service.requests[0].topic or "")
-    assert (aippt_service.requests[0].topic or "").strip() != "## 当前指令\n模板"
 
 
-def test_agent_chat_ppt_mode_short_reply_uses_request_chat_history() -> None:
+def test_agent_chat_ppt_request_creates_job_with_default_template_mode() -> None:
     aippt_service = FakeAIPPTService()
     service = AgentService(
-        llm_client=FakeLLMClient(intent="chat"),
+        llm_client=FakeLLMClient(intent="ppt"),
         feishu_service=FeishuService(client=None),
         document_service=FakeDocumentService(),
         aippt_service=aippt_service,
@@ -993,20 +1017,7 @@ def test_agent_chat_ppt_mode_short_reply_uses_request_chat_history() -> None:
     with build_client(service) as client:
         response = client.post(
             "/api/v1/agent/chat",
-            json={
-                "session_id": "s1",
-                "message": "模板",
-                "context": {
-                    "chat_history": [
-                        {"role": "user", "content": "重新生成一份2页PPT，主题是「动画发展」。"},
-                        {
-                            "role": "assistant",
-                            "content": "你希望用「模板模式」快速稳定生成，还是用「自由设计」做更强视觉表现？请回复“模板模式”或“自由设计”。",
-                        },
-                        {"role": "user", "content": "模板"},
-                    ]
-                },
-            },
+            json={"session_id": "s1", "message": "生成一份2页PPT，主题是客户成功月报"},
         )
 
     assert response.status_code == 200
@@ -1015,14 +1026,12 @@ def test_agent_chat_ppt_mode_short_reply_uses_request_chat_history() -> None:
     assert payload["artifact"]["kind"] == "ppt"
     assert len(aippt_service.requests) == 1
     assert aippt_service.requests[0].design_mode == "template"
-    assert aippt_service.requests[0].page_count == 2
-    assert "动画发展" in (aippt_service.requests[0].topic or "")
 
 
 def test_agent_chat_keyword_ppt_cannot_be_downgraded_to_chat() -> None:
     aippt_service = FakeAIPPTService()
     service = AgentService(
-        llm_client=FakeLLMClient(intent="chat"),
+        llm_client=FakeLLMClient(intent="ppt"),
         feishu_service=FeishuService(client=None),
         document_service=FakeDocumentService(),
         aippt_service=aippt_service,
@@ -1046,7 +1055,7 @@ def test_agent_chat_ppt_request_does_not_edit_current_docx() -> None:
     document_service = FakeDocumentService()
     aippt_service = FakeAIPPTService()
     service = AgentService(
-        llm_client=FakeLLMClient(intent="chat"),
+        llm_client=FakeLLMClient(intent="ppt"),
         feishu_service=FeishuService(client=None),
         document_service=document_service,
         aippt_service=aippt_service,
@@ -1076,7 +1085,7 @@ def test_agent_chat_ppt_request_does_not_edit_current_docx() -> None:
 
 def test_agent_chat_stream_ppt_request_does_not_edit_current_docx() -> None:
     service = AgentService(
-        llm_client=FakeLLMClient(intent="chat"),
+        llm_client=FakeLLMClient(intent="ppt"),
         feishu_service=FeishuService(client=None),
         document_service=FakeDocumentService(),
         aippt_service=FakeAIPPTService(),
@@ -1217,13 +1226,11 @@ def test_agent_chat_current_ppt_regenerate_request_starts_new_generation_with_cl
     assert response.status_code == 200
     payload = response.json()["data"]
     assert payload["intent"] == "ppt"
-    assert payload["artifact"] is None
-    assert payload["plan"]["need_clarification"] is True
-    assert "模板模式" in payload["message"]
-    assert aippt_service.requests == []
+    assert payload["artifact"]["kind"] == "ppt"
+    assert len(aippt_service.requests) == 1
 
 
-def test_agent_chat_stream_current_ppt_regenerate_request_asks_mode_not_edit() -> None:
+def test_agent_chat_stream_current_ppt_regenerate_creates_new_job() -> None:
     aippt_service = FakeAIPPTService()
     sync_service = RecordingSyncService(
         artifact={
@@ -1257,12 +1264,8 @@ def test_agent_chat_stream_current_ppt_regenerate_request_asks_mode_not_edit() -
         if line.startswith("data: ")
     ]
     names = event_names(events)
-    assert "clarification.requested" in names
-    assert "tool.started" not in names
-    assert "ppt_edit" not in [event_payload(event).get("tool") for event in events]
-    clarification = next(event for event in events if event["event"] == "clarification.requested")
-    assert "模板模式" in clarification["message"]
-    assert aippt_service.requests == []
+    assert "tool.started" in names
+    assert len(aippt_service.requests) == 1
 
 
 def test_agent_chat_stream_current_ppt_edit_says_edit_not_create() -> None:
@@ -1337,10 +1340,10 @@ def test_agent_chat_stream_uses_fallback_plan_when_planner_is_slow() -> None:
     assert len(aippt_service.requests) == 1
 
 
-def test_agent_chat_stream_unspecified_ppt_design_mode_stops_for_clarification() -> None:
+def test_agent_chat_stream_unspecified_ppt_design_mode_creates_job() -> None:
     aippt_service = FakeAIPPTService()
     service = AgentService(
-        llm_client=SlowPlannerLLMClient(intent="chat"),
+        llm_client=FakeLLMClient(intent="ppt"),
         feishu_service=FeishuService(client=None),
         document_service=FakeDocumentService(),
         aippt_service=aippt_service,
@@ -1362,41 +1365,26 @@ def test_agent_chat_stream_unspecified_ppt_design_mode_stops_for_clarification()
         if line.startswith("data: ")
     ]
     names = event_names(events)
-    assert "clarification.requested" in names
-    assert "tool.started" not in names
-    assert "result.created" not in names
-    clarification = next(event for event in events if event["event"] == "clarification.requested")
-    assert "模板模式" in clarification["message"]
-    assert "自由设计" in clarification["message"]
-    assert aippt_service.requests == []
+    assert "tool.started" in names
+    assert len(aippt_service.requests) == 1
+    assert aippt_service.requests[0].design_mode == "template"
 
 
-def test_agent_chat_stream_ppt_mode_short_reply_continues_pending_generation() -> None:
+def test_agent_chat_stream_ppt_planner_asks_clarification_when_mode_unspecified() -> None:
     aippt_service = FakeAIPPTService()
-    sync_service = RecordingSyncService(
-        messages=[
-            SyncSessionMessageSchema(role="user", content="生成一份2页PPT，主题是「客户成功月报」。"),
-            SyncSessionMessageSchema(
-                role="assistant",
-                content="你希望用「模板模式」快速稳定生成，还是用「自由设计」做更强视觉表现？请回复“模板模式”或“自由设计”。",
-            ),
-            SyncSessionMessageSchema(role="user", content="模板"),
-        ],
-    )
     service = AgentService(
-        llm_client=SlowPlannerLLMClient(intent="chat"),
+        llm_client=PptClarificationLLMClient(intent="ppt"),
         feishu_service=FeishuService(client=None),
         document_service=FakeDocumentService(),
         aippt_service=aippt_service,
         canvas_service=FakeCanvasService(),
-        sync_service=sync_service,
     )
 
     with build_client(service) as client:
         with client.stream(
             "POST",
             "/api/v1/agent/chat/stream",
-            json={"session_id": "s1", "message": "模板"},
+            json={"session_id": "s1", "message": "生成环保主题 ppt"},
         ) as response:
             lines = list(response.iter_lines())
 
@@ -1407,20 +1395,47 @@ def test_agent_chat_stream_ppt_mode_short_reply_continues_pending_generation() -
         if line.startswith("data: ")
     ]
     names = event_names(events)
-    assert "clarification.requested" not in names
+    assert "clarification.requested" in names
+    assert "tool.started" not in names  # Tool should NOT be called
+    assert "模板模式" in event_payload(events[-1])["response"]["message"]
+    assert len(aippt_service.requests) == 0  # No job created
+
+
+def test_agent_chat_stream_ppt_request_creates_job_with_default_template_mode() -> None:
+    aippt_service = FakeAIPPTService()
+    service = AgentService(
+        llm_client=FakeLLMClient(intent="ppt"),
+        feishu_service=FeishuService(client=None),
+        document_service=FakeDocumentService(),
+        aippt_service=aippt_service,
+        canvas_service=FakeCanvasService(),
+    )
+
+    with build_client(service) as client:
+        with client.stream(
+            "POST",
+            "/api/v1/agent/chat/stream",
+            json={"session_id": "s1", "message": "生成一份2页PPT，主题是客户成功月报"},
+        ) as response:
+            lines = list(response.iter_lines())
+
+    assert response.status_code == 200
+    events = [
+        json.loads(line.removeprefix("data: "))
+        for line in lines
+        if line.startswith("data: ")
+    ]
+    names = event_names(events)
     assert event_payload(events[1])["intent"] == "ppt"
-    assert event_payload(events[names.index("plan.created")])["plan"]["need_clarification"] is False
     assert event_payload(events[-2])["tool"] == "ppt"
     assert event_payload(events[-1])["response"]["artifact"]["kind"] == "ppt"
     assert aippt_service.requests[0].design_mode == "template"
-    assert aippt_service.requests[0].page_count == 2
-    assert "客户成功月报" in (aippt_service.requests[0].topic or "")
 
 
-def test_agent_chat_stream_ppt_mode_short_reply_uses_request_chat_history() -> None:
+def test_agent_chat_stream_ppt_request_from_chat_history_context() -> None:
     aippt_service = FakeAIPPTService()
     service = AgentService(
-        llm_client=SlowPlannerLLMClient(intent="chat"),
+        llm_client=FakeLLMClient(intent="ppt"),
         feishu_service=FeishuService(client=None),
         document_service=FakeDocumentService(),
         aippt_service=aippt_service,
@@ -1433,17 +1448,7 @@ def test_agent_chat_stream_ppt_mode_short_reply_uses_request_chat_history() -> N
             "/api/v1/agent/chat/stream",
             json={
                 "session_id": "s1",
-                "message": "模板",
-                "context": {
-                    "chat_history": [
-                        {"role": "user", "content": "重新生成一份2页PPT，主题是「动画发展」。"},
-                        {
-                            "role": "assistant",
-                            "content": "你希望用「模板模式」快速稳定生成，还是用「自由设计」做更强视觉表现？请回复“模板模式”或“自由设计”。",
-                        },
-                        {"role": "user", "content": "模板"},
-                    ]
-                },
+                "message": "重新生成一份2页PPT，主题是动画发展",
             },
         ) as response:
             lines = list(response.iter_lines())
@@ -1454,13 +1459,10 @@ def test_agent_chat_stream_ppt_mode_short_reply_uses_request_chat_history() -> N
         for line in lines
         if line.startswith("data: ")
     ]
-    assert "clarification.requested" not in event_names(events)
     assert event_payload(events[1])["intent"] == "ppt"
     assert event_payload(events[-2])["tool"] == "ppt"
     assert event_payload(events[-1])["response"]["artifact"]["kind"] == "ppt"
     assert aippt_service.requests[0].design_mode == "template"
-    assert aippt_service.requests[0].page_count == 2
-    assert "动画发展" in (aippt_service.requests[0].topic or "")
 
 
 def test_agent_chat_uses_requested_ppt_page_count() -> None:

@@ -765,14 +765,12 @@ class AgentService:
     ) -> dict[str, Any]:
         if self._aippt_service is None:
             raise RuntimeError("aippt_service is not configured")
-        knowledge_docs = self._knowledge_docs_from_retrieved_context(retrieved_context)
         request = AgentChatRequest(
             session_id=session_id or "runtime",
             message=instruction,
-            context=AgentContext(knowledge_docs=knowledge_docs) if knowledge_docs else None,
             planning_enabled=False,
         )
-        resolved_design_mode = design_mode or self._resolve_ppt_design_mode(instruction) or "template"
+        resolved_design_mode = design_mode or "template"
         job = self._aippt_service.create_job_from_request(
             PPTGenerationRequest(
                 topic=self._build_ppt_topic(request, session_artifact=None),
@@ -900,33 +898,7 @@ class AgentService:
             request = await self._context_assembler.assemble(request, sync_service=self._sync_service)
             session_artifact = await self._get_session_artifact(request)
             editable_document = await self._get_editable_document(request)
-            pending_ppt_generation_message = await self._resolve_pending_ppt_generation_message(request)
-            selected_ppt_design_mode = self._resolve_ppt_design_mode(request.message)
-            resolved_ppt_generation_message = self._build_resolved_ppt_generation_message(
-                pending_ppt_generation_message,
-                selected_ppt_design_mode,
-            )
-            if (
-                selected_ppt_design_mode is not None
-                and pending_ppt_generation_message is None
-                and self._is_standalone_ppt_design_mode_reply(request.message)
-            ):
-                plan = self._build_missing_pending_ppt_request_plan(request.message)
-                response = AgentChatResponse(
-                    session_id=request.session_id,
-                    intent=AgentIntent.PPT.value,
-                    status="completed",
-                    message=self._missing_pending_ppt_request_message(selected_ppt_design_mode),
-                    plan=plan,
-                    events=self._events_from_traces(trace_events),
-                )
-                await self._publish_chat_result(request, response)
-                return response
-            intent = (
-                AgentIntent.PPT
-                if pending_ppt_generation_message and selected_ppt_design_mode is not None
-                else await self._router.classify_chat_intent(request.message)
-            )
+            intent = await self._router.classify_chat_intent(request.message)
             current_artifact_operation = self._resolve_current_artifact_operation(session_artifact, request, intent)
             if current_artifact_operation == "docx":
                 editable_document = session_artifact if session_artifact and session_artifact.kind == "docx" else editable_document
@@ -936,30 +908,18 @@ class AgentService:
             if current_artifact_operation == "board":
                 intent = AgentIntent.BOARD
 
-            runtime_request = (
-                request.model_copy(update={"message": resolved_ppt_generation_message})
-                if resolved_ppt_generation_message
-                else request
-            )
             should_execute_runtime_tools = (
                 request.planning_enabled
                 and (
                     intent == AgentIntent.DOCX
-                    or (
-                        intent == AgentIntent.PPT
-                        and current_artifact_operation != "ppt"
-                        and self._resolve_ppt_design_mode(runtime_request.message) is not None
-                    )
-                    or (
-                        intent == AgentIntent.BOARD
-                        and current_artifact_operation != "board"
-                    )
+                    or (intent == AgentIntent.PPT and not current_ppt_update)
+                    or (intent == AgentIntent.BOARD and current_artifact_operation != "board")
                 )
                 and current_artifact_operation != "docx"
                 and not self._should_edit_current_document(editable_document, request, intent)
             )
             runtime_turn = await self._prepare_agent_turn(
-                runtime_request,
+                request,
                 intent,
                 session_artifact,
                 execute_tools=should_execute_runtime_tools,
@@ -994,6 +954,21 @@ class AgentService:
                 return response
 
             events_v1 = self._events_from_traces(trace_events)
+
+            if plan is not None and (plan.clarification_needed or plan.need_clarification):
+                question = plan.clarification_question or (plan.questions[0] if plan.questions else None)
+                if question:
+                    response = AgentChatResponse(
+                        session_id=request.session_id,
+                        intent=intent.value,
+                        status="completed",
+                        message=question,
+                        plan=plan,
+                        events=events_v1,
+                    )
+                    await self._publish_chat_result(request, response)
+                    return response
+
             if intent == AgentIntent.DOCX:
                 content = (
                     str(docx_tool_result.get("content"))
@@ -1023,44 +998,46 @@ class AgentService:
                 if self._aippt_service is None:
                     raise RuntimeError("aippt_service is not configured")
                 is_current_ppt_update = current_ppt_update and self._load_current_ppt_preview(session_artifact) is not None
-                design_mode = self._resolve_ppt_design_mode(request.message)
-                if not is_current_ppt_update and design_mode is None:
-                    plan = self._build_ppt_design_mode_clarification_plan(request.message)
-                    self._replace_plan_trace(trace_events, plan)
-                    response = AgentChatResponse(
-                        session_id=request.session_id,
-                        intent=AgentIntent.PPT.value,
-                        status="completed",
-                        message=self._ppt_design_mode_question(),
-                        artifact=None,
-                        plan=plan,
-                        events=self._events_from_traces(trace_events),
-                    )
-                    await self._publish_chat_result(request, response)
-                    return response
-                job = None
-                if ppt_tool_result is None:
+
+                if ppt_tool_result is not None:
+                    artifact = self._ppt_artifact_from_tool_result(ppt_tool_result)
+                    job_id = artifact.job_id
+                elif is_current_ppt_update:
+                    design_mode = self._resolve_current_ppt_design_mode(session_artifact) or "template"
                     job = self._aippt_service.create_job_from_request(
                         PPTGenerationRequest(
                             topic=self._build_ppt_topic(
-                                enriched_request.model_copy(update={"message": resolved_ppt_generation_message or request.message}),
+                                enriched_request,
                                 session_artifact=session_artifact,
                             ),
                             page_count=self._resolve_ppt_page_count(
-                                enriched_request.model_copy(update={"message": resolved_ppt_generation_message or request.message}),
+                                enriched_request,
                                 session_artifact=session_artifact,
                             ),
                             style="clean_business",
-                            design_mode=design_mode
-                            or self._resolve_current_ppt_design_mode(session_artifact)
-                            or "template",
+                            design_mode=design_mode,
                         )
                     )
                     artifact = self._ppt_artifact_from_job(job)
                     job_id = job.job_id
                 else:
-                    artifact = self._ppt_artifact_from_tool_result(ppt_tool_result)
-                    job_id = artifact.job_id
+                    # Planner didn't call the ppt tool — let LLM generate a response
+                    chat_prompt = self._build_chat_prompt(request, runtime_turn.retrieved_context)
+                    reply = await self._llm.generate(
+                        "你是 Eko 智能办公助手。请直接、友好地回答用户问题。若 RAG 知识库资料与问题相关，必须优先依据知识库资料回答；不要编造知识库未提供的信息。",
+                        chat_prompt,
+                    )
+                    response = AgentChatResponse(
+                        session_id=request.session_id,
+                        intent=AgentIntent.PPT.value,
+                        status="completed",
+                        message=reply,
+                        plan=plan,
+                        events=events_v1,
+                    )
+                    await self._publish_chat_result(request, response)
+                    return response
+
                 response = AgentChatResponse(
                     session_id=request.session_id,
                     intent=AgentIntent.PPT.value,
@@ -1187,36 +1164,7 @@ class AgentService:
             request = await self._context_assembler.assemble(request, sync_service=self._sync_service)
             session_artifact = await self._get_session_artifact(request)
             editable_document = await self._get_editable_document(request)
-            pending_ppt_generation_message = await self._resolve_pending_ppt_generation_message(request)
-            selected_ppt_design_mode = self._resolve_ppt_design_mode(request.message)
-            resolved_ppt_generation_message = self._build_resolved_ppt_generation_message(
-                pending_ppt_generation_message,
-                selected_ppt_design_mode,
-            )
-            if (
-                selected_ppt_design_mode is not None
-                and pending_ppt_generation_message is None
-                and self._is_standalone_ppt_design_mode_reply(request.message)
-            ):
-                plan = self._build_missing_pending_ppt_request_plan(request.message)
-                response = AgentChatResponse(
-                    session_id=request.session_id,
-                    intent=AgentIntent.PPT.value,
-                    status="completed",
-                    message=self._missing_pending_ppt_request_message(selected_ppt_design_mode),
-                    plan=plan,
-                    events=self._events_from_traces(trace_events),
-                )
-                await self._publish_chat_result(request, response)
-                yield AgentEventProtocol.intent(AgentIntent.PPT.value, "我收到 PPT 生成模式选择，但缺少上一条 PPT 需求。")
-                yield AgentEventProtocol.clarification(AgentIntent.PPT.value, plan, response.message)
-                yield AgentEventProtocol.result(response, response.message)
-                return
-            intent = (
-                AgentIntent.PPT
-                if pending_ppt_generation_message and selected_ppt_design_mode is not None
-                else await self._router.classify_chat_intent(request.message)
-            )
+            intent = await self._router.classify_chat_intent(request.message)
             current_artifact_operation = self._resolve_current_artifact_operation(session_artifact, request, intent)
             if current_artifact_operation == "docx":
                 editable_document = session_artifact if session_artifact and session_artifact.kind == "docx" else editable_document
@@ -1269,24 +1217,16 @@ class AgentService:
 
             yield AgentEventProtocol.intent(intent.value)
 
-            runtime_request = request.model_copy(update={"message": resolved_ppt_generation_message}) if resolved_ppt_generation_message else request
             runtime_turn = await self._prepare_agent_turn(
-                runtime_request,
+                request,
                 intent,
                 session_artifact,
                 execute_tools=(
                     request.planning_enabled
                     and (
                         intent == AgentIntent.DOCX
-                        or (
-                            intent == AgentIntent.PPT
-                            and not current_ppt_update
-                            and self._resolve_ppt_design_mode(runtime_request.message) is not None
-                        )
-                        or (
-                            intent == AgentIntent.BOARD
-                            and current_artifact_operation != "board"
-                        )
+                        or (intent == AgentIntent.PPT and not current_ppt_update)
+                        or (intent == AgentIntent.BOARD and current_artifact_operation != "board")
                     )
                 ),
             )
@@ -1299,35 +1239,25 @@ class AgentService:
             ppt_tool_result = self._runtime_tool_result(runtime_turn, "ppt")
             board_tool_result = self._runtime_tool_result(runtime_turn, "board")
 
-            if intent == AgentIntent.PPT and not current_ppt_update and self._resolve_ppt_design_mode(request.message) is None:
-                plan = self._build_ppt_design_mode_clarification_plan(request.message)
-                self._replace_plan_trace(trace_events, plan)
-                if request.planning_enabled:
-                    yield AgentEventProtocol.plan(plan, "规划完成。需要先确认 PPT 生成模式。")
-                    async for event in self._stream_plan_progress(plan):
-                        yield event
-                question = self._ppt_design_mode_question()
-                if self._sync_service is not None:
-                    response = AgentChatResponse(
-                        session_id=request.session_id,
-                        intent=AgentIntent.PPT.value,
-                        status="completed",
-                        message=question,
-                        artifact=None,
-                        plan=plan,
-                        events=self._events_from_traces(trace_events),
-                    )
-                    await self._publish_chat_result(request, response)
-                yield AgentEventProtocol.clarification(intent.value, plan, question)
-                return
-
             if request.planning_enabled:
-                plan = runtime_plan or await self._create_plan_with_timeout(runtime_request, intent)
+                plan = runtime_plan or await self._create_plan_with_timeout(request, intent)
                 yield AgentEventProtocol.plan(plan, "规划完成。下面按这些子任务执行。")
                 async for event in self._stream_plan_progress(plan):
                     yield event
                 if plan.need_clarification:
-                    yield AgentEventProtocol.clarification(intent.value, plan, "有些细节未指定，我先按默认办公场景继续执行。")
+                    question = plan.clarification_question or (plan.questions[0] if plan.questions else None) or "请补充更多信息。"
+                    yield AgentEventProtocol.clarification(intent.value, plan, question)
+                    response = AgentChatResponse(
+                        session_id=request.session_id,
+                        intent=intent.value,
+                        status="completed",
+                        message=question,
+                        plan=plan,
+                        events=self._events_from_traces(trace_events),
+                    )
+                    await self._publish_chat_result(request, response)
+                    yield AgentEventProtocol.result(response, response.message)
+                    return
 
             yield AgentEventProtocol.tool_started(intent.value, intent.value, self._tool_call_message(intent))
 
@@ -1530,95 +1460,6 @@ class AgentService:
         except Exception:  # noqa: BLE001
             return None
 
-    async def _resolve_pending_ppt_generation_message(self, request: AgentChatRequest) -> str | None:
-        if self._resolve_ppt_design_mode(request.message) is None:
-            return None
-
-        message_sets: list[list[dict[str, Any]]] = []
-        if self._sync_service is not None and hasattr(self._sync_service, "get_session"):
-            try:
-                session = await self._sync_service.get_session(request.session_id)
-            except Exception:  # noqa: BLE001
-                session = None
-            session_messages = getattr(session, "messages", None)
-            if isinstance(session_messages, list):
-                message_sets.append([self._coerce_message_dict(message) for message in session_messages])
-
-        if request.context and request.context.chat_history:
-            message_sets.append([message.model_dump() for message in request.context.chat_history])
-
-        if self._sync_service is not None and hasattr(self._sync_service, "list_sessions"):
-            chat_id = self._chat_id_from_session_id(request.session_id)
-            if chat_id:
-                try:
-                    sessions = await self._sync_service.list_sessions()
-                except Exception:  # noqa: BLE001
-                    sessions = []
-                for session in sessions:
-                    if getattr(session, "session_id", None) == request.session_id:
-                        continue
-                    if getattr(session, "chat_id", None) != chat_id:
-                        continue
-                    messages = getattr(session, "messages", None)
-                    summary = str(getattr(session, "summary", "") or "")
-                    if isinstance(messages, list):
-                        candidate = self._extract_pending_ppt_generation_message(
-                            [self._coerce_message_dict(message) for message in messages]
-                        )
-                        if candidate:
-                            return candidate
-                    if self._contains_ppt_design_question(summary):
-                        instruction = str(getattr(session, "instruction", "") or "")
-                        if self._looks_like_ppt_generation_request(instruction):
-                            return instruction
-
-        for messages in message_sets:
-            candidate = self._extract_pending_ppt_generation_message(messages)
-            if candidate:
-                return candidate
-        return None
-
-    def _coerce_message_dict(self, message: Any) -> dict[str, Any]:
-        if isinstance(message, dict):
-            return dict(message)
-        if hasattr(message, "model_dump"):
-            dumped = message.model_dump()
-            return dumped if isinstance(dumped, dict) else {}
-        return {
-            "role": getattr(message, "role", None),
-            "content": getattr(message, "content", None),
-        }
-
-    def _extract_pending_ppt_generation_message(self, messages: list[dict[str, Any]]) -> str | None:
-        for index in range(len(messages) - 1, -1, -1):
-            content = str(messages[index].get("content") or "")
-            role = str(messages[index].get("role") or "").lower()
-            if role not in {"assistant", "eko", "bot", "system"} or not self._contains_ppt_design_question(content):
-                continue
-            for previous in range(index - 1, -1, -1):
-                previous_content = str(messages[previous].get("content") or "").strip()
-                previous_role = str(messages[previous].get("role") or "").lower()
-                if previous_role != "user" or not previous_content:
-                    continue
-                if self._looks_like_ppt_generation_request(previous_content):
-                    return previous_content
-        return None
-
-    def _contains_ppt_design_question(self, content: str) -> bool:
-        return "模板模式" in content and "自由设计" in content
-
-    def _looks_like_ppt_generation_request(self, message: str) -> bool:
-        normalized = message.lower()
-        return any(keyword in message for keyword in ("PPT", "ppt", "幻灯片", "演示", "汇报材料", "展示材料")) or any(
-            keyword in normalized for keyword in ("presentation", "slides")
-        )
-
-    def _chat_id_from_session_id(self, session_id: str) -> str | None:
-        parts = session_id.split(":")
-        if len(parts) >= 3 and parts[0] == "feishu" and parts[1]:
-            return parts[1]
-        return None
-
     async def _get_editable_document(self, request: AgentChatRequest) -> AgentChatArtifact | None:
         artifact = request.current_document
         if artifact is not None and artifact.kind == "docx" and artifact.content:
@@ -1801,118 +1642,7 @@ class AgentService:
         )
         return self._build_document_edit_plan(message)
 
-    def _ppt_design_mode_question(self) -> str:
-        return "你希望用「模板模式」快速稳定生成，还是用「自由设计」做更强视觉表现？请回复“模板模式”或“自由设计”。"
 
-    def _build_ppt_design_mode_clarification_plan(self, message: str) -> AgentTaskPlan:
-        question = self._ppt_design_mode_question()
-        return AgentTaskPlan(
-            goal=message,
-            intent="ppt_generation",
-            task_complexity="medium",
-            missing_info=["PPT 生成模式"],
-            need_clarification=True,
-            questions=[question],
-            assumptions=[],
-            summary="生成 PPT 前需要先确认使用模板模式还是自由设计模式。",
-            visible_summary="我理解你要生成一份 PPT。执行前需要先确认生成模式：模板模式更稳定，自由设计视觉表现更强。",
-            tool_candidates=["knowledge_search", "ppt_create", "sync"],
-            steps=[
-                AgentPlanStep(
-                    id="step_1",
-                    title="确认生成模式",
-                    description="询问用户选择模板模式或自由设计模式，避免在关键视觉策略上替用户做决定。",
-                    type="clarification",
-                    tool=None,
-                    expected_output="用户选择 template 或 free_design",
-                ),
-                AgentPlanStep(
-                    id="step_2",
-                    title="创建 PPT 任务",
-                    description="收到模式选择后，调用 AI PPT 服务创建对应模式的后台任务。",
-                    type="tool_call",
-                    tool="ppt",
-                    expected_output="PPT 后台任务",
-                    depends_on=["step_1"],
-                ),
-                AgentPlanStep(
-                    id="step_3",
-                    title="同步任务状态",
-                    description="向前端或飞书会话同步 PPT 任务进度和下载结果。",
-                    type="tool_call",
-                    tool="sync",
-                    expected_output="PPT 任务状态",
-                    depends_on=["step_2"],
-                ),
-            ],
-            final_output=AgentPlanFinalOutput(
-                format="ppt_file",
-                requirements=["先确认生成模式", "可下载", "状态可追踪"],
-            ),
-        )
-
-    def _resolve_ppt_design_mode(self, message: str) -> str | None:
-        normalized = message.lower().replace("-", "_").replace(" ", "_")
-        if any(
-            keyword in message
-            for keyword in ("自由设计", "创意设计", "更强视觉", "高级视觉", "视觉表现", "生图", "带图")
-        ) or any(keyword in normalized for keyword in ("free_design", "freedesign", "freeform", "editorial", "creative")):
-            return "free_design"
-        if message.strip() in {"自由", "自由设计"}:
-            return "free_design"
-        if message.strip() in {"模板", "模板模式"}:
-            return "template"
-        if any(keyword in message for keyword in ("模板模式", "套模板", "用模板", "稳定生成", "快速生成")) or "template" in normalized:
-            return "template"
-        return None
-
-    def _is_standalone_ppt_design_mode_reply(self, message: str) -> bool:
-        return message.strip() in {"模板", "模板模式", "自由", "自由设计"}
-
-    def _missing_pending_ppt_request_message(self, design_mode: str) -> str:
-        mode_label = "自由设计模式" if design_mode == "free_design" else "模板模式"
-        return f"我收到你选择了「{mode_label}」，但当前请求里没有上一条 PPT 需求。请把 PPT 主题、页数或要修改的页面再发我一次，我会继续生成。"
-
-    def _build_missing_pending_ppt_request_plan(self, message: str) -> AgentTaskPlan:
-        question = "请补充上一条 PPT 需求，例如主题、页数、内容范围，或要修改的具体页面。"
-        return AgentTaskPlan(
-            goal=message,
-            intent="ppt_generation",
-            task_complexity="simple",
-            missing_info=["上一条 PPT 需求"],
-            need_clarification=True,
-            questions=[question],
-            assumptions=[],
-            summary="用户只回复了 PPT 生成模式，但当前请求上下文里没有可继续执行的 PPT 需求。",
-            visible_summary="我收到了模式选择，但需要恢复上一条 PPT 需求才能继续。",
-            tool_candidates=["ppt_create", "sync"],
-            steps=[
-                AgentPlanStep(
-                    id="step_1",
-                    title="补充 PPT 需求",
-                    description="确认要生成或修改的 PPT 主题、页数、范围或指定页面。",
-                    type="clarification",
-                    tool=None,
-                    expected_output="完整 PPT 需求",
-                ),
-                AgentPlanStep(
-                    id="step_2",
-                    title="创建或修改 PPT",
-                    description="拿到完整需求后调用 AI PPT 能力执行。",
-                    type="tool_call",
-                    tool="ppt",
-                    expected_output="PPT 任务或更新后的 PPT",
-                    depends_on=["step_1"],
-                ),
-            ],
-            final_output=AgentPlanFinalOutput(format="ppt_file", requirements=["完整需求", "模式选择已保留"]),
-        )
-
-    def _build_resolved_ppt_generation_message(self, pending_message: str | None, design_mode: str | None) -> str | None:
-        if not pending_message or design_mode is None:
-            return None
-        mode_label = "自由设计模式" if design_mode == "free_design" else "模板模式"
-        return f"{pending_message}\n\n用户已选择：{mode_label}。"
 
     async def _edit_current_document(
         self,
@@ -2200,8 +1930,6 @@ class AgentService:
                     "",
                 ]
             )
-        if request.context and request.context.knowledge_docs:
-            sections.extend(self._format_agent_knowledge_docs(request.context.knowledge_docs))
         if current_ppt:
             sections.extend(
                 [

@@ -40,6 +40,7 @@ class SyncSessionSchema(BaseModel):
     title: str
     summary: str
     status: str
+    user_id: str | None = None
     opened_at: str
     updated_at: str
     chat_id: str | None = None

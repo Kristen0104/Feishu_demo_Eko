@@ -70,6 +70,7 @@ class PlannerAgent:
 6. step.status 默认 pending，执行中由运行时更新为 in_progress、completed、blocked 或 failed。
 7. tool 可为空；需要工具时使用可用工具名，例如 chat、docx、ppt、ppt_create、ppt_edit、board、docx_edit、knowledge_search、artifact_lookup、sync。
 8. visible_summary 必须是给用户看的中文摘要，风格接近 Claude Code / Codex：先说理解，再说计划，再说当前需要什么。
+9. 重要：当用户请求生成 PPT 但没有明确指定设计模式（template/free_design）时，属于信息不足，必须在 missing_info 中注明，设置 need_clarification=true，并在 questions 中询问用户希望使用模板模式（快速稳定生成）还是自由设计（更强视觉表现）。
 
 输出格式：
 {

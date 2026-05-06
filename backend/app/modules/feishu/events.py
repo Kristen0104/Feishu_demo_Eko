@@ -83,6 +83,7 @@ class FeishuEventProcessor:
         if command_name == "new":
             instruction = self._normalize_instruction(command_prompt)
             sender_profile = self._build_fast_sender_profile(event.get("sender"))
+            resolved_profile = await self._resolve_sender_profile(event.get("sender"))
             trigger_message = self._build_user_message(
                 instruction,
                 timestamp=create_time,
@@ -92,6 +93,7 @@ class FeishuEventProcessor:
                 await self._sync_service.publish_session_opened(
                     session_id,
                     source="feishu",
+                    user_id=resolved_profile.get("platform_user_id"),
                     chat_id=chat_id,
                     message_id=message_id,
                     context_size=0,

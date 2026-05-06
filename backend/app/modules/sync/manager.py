@@ -27,6 +27,7 @@ class SessionRecord:
     title: str
     summary: str
     status: str
+    user_id: str | None = None
     chat_id: str | None = None
     message_id: str | None = None
     context_size: int = 0
@@ -96,6 +97,7 @@ class SyncConnectionManager:
             title=str(data.get("title", "")),
             summary=str(data.get("summary", "")),
             status=str(data.get("status", "")),
+            user_id=data.get("user_id") if isinstance(data.get("user_id"), str) else None,
             chat_id=data.get("chat_id") if isinstance(data.get("chat_id"), str) else None,
             message_id=data.get("message_id") if isinstance(data.get("message_id"), str) else None,
             context_size=int(data.get("context_size") or 0),
@@ -288,6 +290,7 @@ class SyncConnectionManager:
         title: str,
         summary: str,
         status: str = "进行中",
+        user_id: str | None = None,
         chat_id: str | None = None,
         message_id: str | None = None,
         context_size: int = 0,
@@ -304,6 +307,7 @@ class SyncConnectionManager:
             title=title,
             summary=summary,
             status=status,
+            user_id=user_id,
             chat_id=chat_id,
             message_id=message_id,
             context_size=context_size,
@@ -358,11 +362,12 @@ class SyncConnectionManager:
         self._schedule_redis_write(self._persist_session(record), label="session update")
         return record
 
-    async def list_sessions(self) -> list[SessionRecord]:
+    async def list_sessions(self, user_id: str | None = None) -> list[SessionRecord]:
         async with self._lock:
             memory_records = {
                 record.session_id: record
                 for record in self._sessions.values()
+                if user_id is None or record.user_id == user_id
             }
         redis_client = redis_module.redis_client
         if redis_client is not None:
@@ -371,6 +376,8 @@ class SyncConnectionManager:
                 for session_id in session_ids:
                     record = await asyncio.wait_for(self._load_session_from_redis(session_id), timeout=1.0)
                     if record is None:
+                        continue
+                    if user_id is not None and record.user_id != user_id:
                         continue
                     existing = memory_records.get(record.session_id)
                     if existing is None or record.updated_at >= existing.updated_at:
@@ -382,11 +389,13 @@ class SyncConnectionManager:
                 logger.warning("Sync Redis session list skipped: %s", exc)
         return sorted(memory_records.values(), key=lambda record: record.updated_at, reverse=True)
 
-    async def get_session(self, session_id: str) -> SessionRecord | None:
+    async def get_session(self, session_id: str, user_id: str | None = None) -> SessionRecord | None:
         async with self._lock:
             memory_record = self._sessions.get(session_id)
         redis_record: SessionRecord | None = None
         if memory_record is not None:
+            if user_id is not None and memory_record.user_id != user_id:
+                return None
             try:
                 redis_record = await asyncio.wait_for(self._load_session_from_redis(session_id), timeout=1.0)
             except Exception as exc:  # noqa: BLE001
@@ -394,6 +403,8 @@ class SyncConnectionManager:
                 return memory_record
             if redis_record is None or redis_record.updated_at <= memory_record.updated_at:
                 return memory_record
+            if user_id is not None and redis_record.user_id != user_id:
+                return None
             async with self._lock:
                 self._sessions[session_id] = redis_record
             return redis_record
@@ -403,6 +414,8 @@ class SyncConnectionManager:
             logger.warning("Sync Redis session load skipped: %s", exc)
             return None
         if record is not None:
+            if user_id is not None and record.user_id != user_id:
+                return None
             async with self._lock:
                 self._sessions[session_id] = record
             return record

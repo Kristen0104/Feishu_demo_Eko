@@ -6,14 +6,16 @@ import { ChatModeIcon } from "@/components/Icons";
 export function DetailConversationMessage({
   message,
   tone = "doc",
+  selfAuthor,
   onActionButtonClick,
 }: {
   message: DetailMessage;
   tone?: AccentTone;
+  selfAuthor?: string;
   onActionButtonClick?: (label: string) => void;
 }) {
   const isEko = message.role === "eko";
-  const isSelf = !isEko && message.author === "我";
+  const isSelf = !isEko && (message.author === "我" || (selfAuthor && message.author === selfAuthor));
   const ekoBubbleClass =
     tone === "canvas"
       ? "border-violet-200 bg-gradient-to-br from-violet-50 to-fuchsia-50/80 shadow-[0_8px_16px_rgba(139,92,246,0.06)]"
@@ -57,10 +59,10 @@ export function DetailConversationMessage({
         <div
           className={
             isEko
-              ? `mt-1.5 ml-0.5 max-w-full rounded-[18px] border px-3 py-2.5 ${ekoBubbleClass}`
+              ? `mt-1.5 ml-0.5 max-w-[80%] rounded-[18px] border px-3 py-2.5 ${ekoBubbleClass}`
               : isSelf
-                ? `mt-1.5 ml-auto max-w-full rounded-[18px] border px-3 py-2.5 ${selfBubbleClass}`
-                : "mt-1.5 ml-0.5 max-w-full rounded-[18px] border border-slate-200 bg-slate-50/80 px-3 py-2.5 shadow-[0_6px_14px_rgba(15,23,42,0.03)]"
+                ? `mt-1.5 ml-auto max-w-[80%] rounded-[18px] border px-3 py-2.5 ${selfBubbleClass}`
+                : "mt-1.5 ml-0.5 max-w-[80%] rounded-[18px] border border-slate-200 bg-slate-50/80 px-3 py-2.5 shadow-[0_6px_14px_rgba(15,23,42,0.03)]"
           }
         >
           {message.mention && <span className={`inline-flex rounded-xl bg-white px-2 py-1 text-[12px] font-semibold ${mentionClass} shadow-[0_3px_8px_rgba(15,23,42,0.05)]`}>{message.mention}</span>}

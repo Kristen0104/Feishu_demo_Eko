@@ -25,6 +25,7 @@ class SyncService:
         title: str,
         summary: str,
         status: str = "进行中",
+        user_id: str | None = None,
         chat_id: str | None = None,
         message_id: str | None = None,
         context_size: int = 0,
@@ -40,6 +41,7 @@ class SyncService:
             title=title,
             summary=summary,
             status=status,
+            user_id=user_id,
             chat_id=chat_id,
             message_id=message_id,
             context_size=context_size,
@@ -51,14 +53,14 @@ class SyncService:
         )
         return self._to_schema(record)
 
-    async def list_sessions(self) -> list[SyncSessionSchema]:
+    async def list_sessions(self, user_id: str | None = None) -> list[SyncSessionSchema]:
         return [
             self._to_schema(record, compact_artifact=True)
-            for record in await self._manager.list_sessions()
+            for record in await self._manager.list_sessions(user_id=user_id)
         ]
 
-    async def get_session(self, session_id: str) -> SyncSessionSchema | None:
-        record = await self._manager.get_session(session_id)
+    async def get_session(self, session_id: str, user_id: str | None = None) -> SyncSessionSchema | None:
+        record = await self._manager.get_session(session_id, user_id=user_id)
         return self._to_schema(record) if record is not None else None
 
     async def delete_session(self, session_id: str) -> bool:
@@ -75,6 +77,7 @@ class SyncService:
         session_id: str,
         *,
         source: str,
+        user_id: str | None = None,
         chat_id: str | None = None,
         message_id: str | None = None,
         context_size: int | None = None,
@@ -83,6 +86,8 @@ class SyncService:
         messages: list[dict[str, Any]] | None = None,
     ) -> None:
         payload: dict[str, Any] = {"source": source}
+        if user_id:
+            payload["user_id"] = user_id
         if chat_id:
             payload["chat_id"] = chat_id
         if message_id:
@@ -97,6 +102,7 @@ class SyncService:
             title="飞书群聊新会话",
             summary="收到 @机器人 消息，正在识别意图并启动任务。",
             status="进行中",
+            user_id=user_id,
             chat_id=chat_id,
             message_id=message_id,
             context_size=context_size or 0,
@@ -291,6 +297,7 @@ class SyncService:
             title=record.title,
             summary=record.summary,
             status=record.status,
+            user_id=record.user_id,
             opened_at=record.opened_at,
             updated_at=record.updated_at,
             chat_id=record.chat_id,

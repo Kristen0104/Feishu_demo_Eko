@@ -4,6 +4,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket
 
+from app.core.security import AuthContext, get_auth_context
 from app.modules.sync.dependencies import get_sync_service
 from app.modules.sync.schemas import SyncChannelSchema, SyncContextSelectionRequest
 from app.modules.sync.service import SyncService
@@ -29,9 +30,10 @@ async def get_sync_channel(
     summary="会话列表",
 )
 async def list_sync_sessions(
+    auth_context: Annotated[AuthContext, Depends(get_auth_context)],
     sync_service: Annotated[SyncService, Depends(get_sync_service)],
 ) -> dict[str, object]:
-    return ApiResponse.success(await sync_service.list_sessions()).model_dump()
+    return ApiResponse.success(await sync_service.list_sessions(user_id=auth_context.user_id)).model_dump()
 
 
 @router.get(
@@ -40,9 +42,12 @@ async def list_sync_sessions(
 )
 async def get_sync_session(
     session_id: str,
+    auth_context: Annotated[AuthContext, Depends(get_auth_context)],
     sync_service: Annotated[SyncService, Depends(get_sync_service)],
 ) -> dict[str, object]:
-    session = await sync_service.get_session(session_id)
+    session = await sync_service.get_session(session_id, user_id=auth_context.user_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="session not found")
     return ApiResponse.success(session).model_dump()
 
 
