@@ -50,9 +50,11 @@ class SyncSessionSchema(BaseModel):
     intent: str | None = None
     artifact: dict[str, Any] | None = None
     context_messages: list[SyncContextMessageSchema] = Field(default_factory=list)
+    selected_context_messages: list[SyncContextMessageSchema] = Field(default_factory=list)
     messages: list[SyncSessionMessageSchema] = Field(default_factory=list)
 
 
 class SyncContextSelectionRequest(BaseModel):
     start_index: int = Field(ge=0)
     end_index: int = Field(ge=0)
+    skip_context: bool = False

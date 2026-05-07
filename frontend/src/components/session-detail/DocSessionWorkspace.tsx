@@ -308,6 +308,12 @@ type AgentChatResponseWire = {
   intent: "chat" | "docx" | "ppt" | "board";
   status: "completed" | "failed";
   message: string;
+  events?: Array<{
+    event?: string | null;
+    status?: string | null;
+    message?: string | null;
+    payload?: Record<string, unknown> | null;
+  }> | null;
   artifact?: {
     kind?: string | null;
     content?: string | null;
@@ -334,6 +340,7 @@ type AgentChatResponseWire = {
     clarification_needed?: boolean | null;
     clarification_question?: string | null;
     summary?: string | null;
+    visible_summary?: string | null;
     final_output?: {
       format?: string | null;
       requirements?: string[] | null;
@@ -422,7 +429,10 @@ function toPlanningSteps(plan?: AgentChatResponseWire["plan"]): PlanningStepWire
 
 function toPlanningPlan(plan?: AgentChatResponseWire["plan"]): PlanningPlanWire | null {
   const steps = toPlanningSteps(plan);
-  if (!plan || steps.length === 0) return null;
+  const hasSummary = Boolean(plan?.visible_summary || plan?.summary || plan?.goal);
+  const hasClarification = Boolean(plan?.clarification_question) || Boolean(plan?.questions?.length) || Boolean(plan?.missing_info?.length);
+  const hasFinalOutput = Boolean(plan?.final_output?.format) || Boolean(plan?.final_output?.requirements?.length);
+  if (!plan || (!steps.length && !hasSummary && !hasClarification && !hasFinalOutput)) return null;
   return {
     goal: plan.goal || "",
     intent: plan.intent || "",
@@ -433,7 +443,7 @@ function toPlanningPlan(plan?: AgentChatResponseWire["plan"]): PlanningPlanWire 
     assumptions: plan.assumptions || [],
     clarificationNeeded: Boolean(plan.clarification_needed),
     clarificationQuestion: plan.clarification_question || null,
-    summary: plan.summary || "",
+    summary: plan.visible_summary || plan.summary || "",
     steps,
     finalOutput: plan.final_output
       ? {
@@ -456,6 +466,18 @@ function agentToolCallText(intent: AgentChatResponseWire["intent"], artifact?: D
   if (kind === "ppt") return "好的，我现在调用 AI PPT 能力，创建生成任务并等待导出。";
   if (kind === "board") return "好的，我现在调用飞书画板能力，把任务落到画板流程里。";
   return "好的，我现在直接回复这个问题。";
+}
+
+function planningMessageBody(plan: PlanningPlanWire) {
+  const clarificationLine =
+    plan.questions?.[0] ||
+    plan.clarificationQuestion ||
+    (plan.missingInfo?.length ? `待补充信息：${plan.missingInfo.join("、")}` : "");
+  const lines = ["任务理解与规划", plan.summary || plan.goal, clarificationLine].filter(Boolean);
+  const steps = plan.steps
+    .slice(0, 6)
+    .map((step, index) => `${index + 1}. ${step.title}${step.description ? `：${step.description}` : ""}`);
+  return [...lines, ...steps].join("\n");
 }
 
 function ragScoreLabel(score: number) {
@@ -1270,6 +1292,7 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
   const [permissionStatus, setPermissionStatus] = useState(isCanvasMode ? "可同步" : "已验证");
   const [canvasNotice, setCanvasNotice] = useState<string | null>(null);
   const contextMessages = data.contextMessages ?? [];
+  const shouldShowContextSelector = contextMessages.length > 0 && data.intent !== "chat";
   const hasActiveRealtimeConversationRef = useRef(false);
 
   hasActiveRealtimeConversationRef.current =
@@ -1284,7 +1307,7 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
       return data.messages;
     });
   }, [data.messages]);
-  const [contextExpanded, setContextExpanded] = useState(contextMessages.length > 0);
+  const [contextExpanded, setContextExpanded] = useState(shouldShowContextSelector);
   const [contextStart, setContextStart] = useState(0);
   const [contextEnd, setContextEnd] = useState(Math.max(0, contextMessages.length - 1));
   const [contextSubmitting, setContextSubmitting] = useState(false);
@@ -1754,7 +1777,7 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                   planningPlan,
                   planningSteps: planningPlan.steps,
                 });
-                updateStreamMessage("大模型已完成任务规划，下面按规划执行。", {
+                updateStreamMessage(planningMessageBody(planningPlan), {
                   plannerCard: planningPlan,
                   sent: true,
                 });
@@ -1830,6 +1853,113 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
 
   const handleContextSelectionRun = useCallback(async () => {
     if (contextMessages.length === 0) return;
+    const replayContextRunEvents = (
+      response: AgentChatResponseWire | undefined,
+      options: { skipContext?: boolean } = {},
+    ) => {
+      const events = Array.isArray(response?.events) ? response.events : [];
+      if (!events.length) return;
+
+      const replayMessageId = `eko-context-run-${Date.now()}`;
+        const updateReplayMessage = (
+          chunk: string,
+          eventOptions: {
+            helperText?: string;
+            sent?: boolean;
+            replace?: boolean;
+          } = {},
+        ) => {
+        setMessages((prev) => {
+          const existingIndex = prev.findIndex((message) => message.id === replayMessageId);
+          if (existingIndex === -1) {
+            return [
+              ...prev,
+                {
+                  id: replayMessageId,
+                  author: "Eko",
+                  role: "eko" as const,
+                  time: "刚刚",
+                  body: chunk,
+                  avatar: "E",
+                  helperText: eventOptions.helperText,
+                  sent: eventOptions.sent,
+                },
+              ];
+            }
+          return prev.map((message, index) => {
+            if (index !== existingIndex) return message;
+              return {
+                ...message,
+                body: eventOptions.replace ? chunk || message.body : chunk ? `${message.body}${message.body ? "\n\n" : ""}${chunk}` : message.body,
+                helperText: eventOptions.helperText,
+                sent: eventOptions.sent ?? message.sent,
+              };
+            });
+          });
+      };
+
+      for (const event of events) {
+        const payload = event.payload ?? {};
+        if (event.event === "turn.started") {
+          const message = options.skipContext
+            ? "收到。本次将忽略群聊消息记录，直接继续处理。"
+            : event.message || "收到。我开始处理。";
+          updateReplayMessage(message, {
+            helperText: payload.planning_enabled !== false ? "理解与规划中" : "直接执行中",
+            replace: true,
+          });
+          continue;
+        }
+        if (event.event === "intent.recognized") {
+          const intent = typeof payload.intent === "string" ? payload.intent : "chat";
+          updateReplayMessage(event.message || `我判断这次要走 ${intent} 能力。`, { sent: true });
+          continue;
+        }
+        if (event.event === "retrieval.started") {
+          updateReplayMessage(event.message || "正在检索 RAG 知识库。", { helperText: "RAG 检索中", replace: true });
+          continue;
+        }
+        if (event.event === "retrieval.completed") {
+          const sources = Array.isArray(payload.sources) ? payload.sources : [];
+          updateReplayMessage(event.message || `已检索到 ${sources.length} 条 RAG 来源。`, { sent: true });
+          continue;
+        }
+          if (event.event === "plan.created") {
+            const planningPlan = toPlanningPlan(payload.plan as AgentChatResponseWire["plan"]);
+            if (planningPlan) {
+              useAgentRuntimeStore.getState().patchSession(data.id, {
+                phase: "RETRIEVING",
+                planningPlan,
+                planningSteps: planningPlan.steps,
+                lastError: null,
+              });
+              updateReplayMessage(planningMessageBody(planningPlan), { sent: true });
+            }
+            continue;
+          }
+        if (event.event === "plan.summary") {
+          updateReplayMessage(event.message ? `计划：${event.message}` : "计划已生成。", { sent: true });
+          continue;
+        }
+        if (event.event === "plan.step") {
+          updateReplayMessage(event.message || "继续执行下一步。", { sent: true });
+          continue;
+        }
+        if (event.event === "clarification.requested") {
+          const questions = Array.isArray(payload.questions) ? payload.questions.filter((item): item is string => typeof item === "string") : [];
+          updateReplayMessage(
+            questions.length
+              ? `执行前还需要补充这些信息：\n${questions.map((question, index) => `${index + 1}. ${question}`).join("\n")}`
+              : event.message || "执行前还需要补充关键信息。",
+            { sent: true },
+          );
+          continue;
+        }
+        if (event.event === "tool.started") {
+          updateReplayMessage(event.message || "好的，我现在调用对应能力。", { sent: true });
+        }
+      }
+    };
     const startIndex = Math.min(contextStart, contextEnd);
     const endIndex = Math.max(contextStart, contextEnd);
     setContextSubmitting(true);
@@ -1840,9 +1970,19 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ start_index: startIndex, end_index: endIndex }),
       });
-      const body = (await response.json().catch(() => null)) as { code?: number; data?: { message?: string } } | null;
+      const body = (await response.json().catch(() => null)) as { code?: number; data?: AgentChatResponseWire } | null;
       if (!response.ok || !body || body.code !== 0) {
         throw new Error("上下文提交失败");
+      }
+      replayContextRunEvents(body.data);
+      const planningPlan = plannerEnabled ? toPlanningPlan(body.data?.plan) : null;
+      if (planningPlan) {
+        useAgentRuntimeStore.getState().patchSession(data.id, {
+          phase: "COMPLETED",
+          planningPlan,
+          planningSteps: planningPlan.steps,
+          lastError: null,
+        });
       }
       setMessages((prev) => [
         ...prev,
@@ -1851,7 +1991,7 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
           author: "Eko",
           role: "eko",
           time: "刚刚",
-          body: body.data?.message || "已基于选中的上下文生成回复。",
+          body: [planningPlan ? planningMessageBody(planningPlan) : "", body.data?.message || "已基于选中的上下文生成回复。"].filter(Boolean).join("\n\n"),
           avatar: "E",
           sent: true,
         },
@@ -1863,7 +2003,150 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
     } finally {
       setContextSubmitting(false);
     }
-  }, [contextEnd, contextMessages.length, contextStart, data.id, setRuntimeSessionPatch]);
+  }, [contextEnd, contextMessages.length, contextStart, data.id, plannerEnabled, setRuntimeSessionPatch]);
+
+  const handleContextSkipRun = useCallback(async () => {
+    setContextSubmitting(true);
+    setContextNotice(null);
+    try {
+      const response = await fetch(`/api/v1/sync/sessions/${encodeURIComponent(data.id)}/context/selection`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ start_index: 0, end_index: 0, skip_context: true }),
+      });
+      const body = (await response.json().catch(() => null)) as { code?: number; data?: AgentChatResponseWire } | null;
+      if (!response.ok || !body || body.code !== 0) {
+        throw new Error("跳过上下文后生成失败");
+      }
+      const events = Array.isArray(body.data?.events) ? body.data.events : [];
+      if (events.length) {
+        const payload = body.data;
+        const replayMessageId = `eko-context-run-${Date.now()}`;
+        const updateReplayMessage = (
+          chunk: string,
+          options: {
+            helperText?: string;
+            sent?: boolean;
+            replace?: boolean;
+          } = {},
+        ) => {
+          setMessages((prev) => {
+            const existingIndex = prev.findIndex((message) => message.id === replayMessageId);
+            if (existingIndex === -1) {
+              return [
+                ...prev,
+                {
+                  id: replayMessageId,
+                  author: "Eko",
+                  role: "eko" as const,
+                  time: "刚刚",
+                  body: chunk,
+                  avatar: "E",
+                  helperText: options.helperText,
+                  sent: options.sent,
+                },
+              ];
+            }
+            return prev.map((message, index) => {
+              if (index !== existingIndex) return message;
+              return {
+                ...message,
+                body: options.replace ? chunk || message.body : chunk ? `${message.body}${message.body ? "\n\n" : ""}${chunk}` : message.body,
+                helperText: options.helperText,
+                sent: options.sent ?? message.sent,
+              };
+            });
+          });
+        };
+        for (const event of events) {
+          const eventPayload = event.payload ?? {};
+          if (event.event === "turn.started") {
+            updateReplayMessage("收到。本次将忽略群聊消息记录，直接继续处理。", {
+              helperText: eventPayload.planning_enabled !== false ? "理解与规划中" : "直接执行中",
+              replace: true,
+            });
+            continue;
+          }
+          if (event.event === "intent.recognized") {
+            const intent = typeof eventPayload.intent === "string" ? eventPayload.intent : "chat";
+            updateReplayMessage(event.message || `我判断这次要走 ${intent} 能力。`, { sent: true });
+            continue;
+          }
+          if (event.event === "retrieval.started") {
+            updateReplayMessage(event.message || "正在检索 RAG 知识库。", { helperText: "RAG 检索中", replace: true });
+            continue;
+          }
+          if (event.event === "retrieval.completed") {
+            const sources = Array.isArray(eventPayload.sources) ? eventPayload.sources : [];
+            updateReplayMessage(event.message || `已检索到 ${sources.length} 条 RAG 来源。`, { sent: true });
+            continue;
+          }
+          if (event.event === "plan.created") {
+            const planningPlan = toPlanningPlan(eventPayload.plan as AgentChatResponseWire["plan"]);
+            if (planningPlan) {
+              useAgentRuntimeStore.getState().patchSession(data.id, {
+                phase: "RETRIEVING",
+                planningPlan,
+                planningSteps: planningPlan.steps,
+                lastError: null,
+              });
+              updateReplayMessage(planningMessageBody(planningPlan), { sent: true });
+            }
+            continue;
+          }
+          if (event.event === "plan.summary") {
+            updateReplayMessage(event.message ? `计划：${event.message}` : "计划已生成。", { sent: true });
+            continue;
+          }
+          if (event.event === "plan.step") {
+            updateReplayMessage(event.message || "继续执行下一步。", { sent: true });
+            continue;
+          }
+          if (event.event === "clarification.requested") {
+            const questions = Array.isArray(eventPayload.questions) ? eventPayload.questions.filter((item): item is string => typeof item === "string") : [];
+            updateReplayMessage(
+              questions.length
+                ? `执行前还需要补充这些信息：\n${questions.map((question, index) => `${index + 1}. ${question}`).join("\n")}`
+                : event.message || "执行前还需要补充关键信息。",
+              { sent: true },
+            );
+            continue;
+          }
+          if (event.event === "tool.started") {
+            updateReplayMessage(event.message || "好的，我现在调用对应能力。", { sent: true });
+          }
+        }
+        const planningPlan = plannerEnabled ? toPlanningPlan(payload?.plan) : null;
+        if (planningPlan) {
+          useAgentRuntimeStore.getState().patchSession(data.id, {
+            phase: "COMPLETED",
+            planningPlan,
+            planningSteps: planningPlan.steps,
+            lastError: null,
+          });
+        }
+      }
+      const finalPlanningPlan = plannerEnabled ? toPlanningPlan(body.data?.plan) : null;
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `eko-context-skip-${Date.now()}`,
+          author: "Eko",
+          role: "eko",
+          time: "刚刚",
+          body: [finalPlanningPlan ? planningMessageBody(finalPlanningPlan) : "", body.data?.message || "已忽略群聊消息记录，直接生成回复。"].filter(Boolean).join("\n\n"),
+          avatar: "E",
+          sent: true,
+        },
+      ]);
+      setContextNotice("已忽略上下文消息记录，直接开始生成");
+      setRuntimeSessionPatch(data.id, { status: "已同步", updatedAt: "刚刚" });
+    } catch (error) {
+      setContextNotice(error instanceof Error ? error.message : "跳过上下文后生成失败");
+    } finally {
+      setContextSubmitting(false);
+    }
+  }, [data.id, plannerEnabled, setRuntimeSessionPatch]);
 
   function prependCanvasActivity(title: string, tone: DetailActivity["tone"]) {
     setCanvasActivities((prev) => [
@@ -2395,7 +2678,12 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                               </div>
                               );
                             })}
-                            {contextMessages.length > 0 ? (
+                            {data.intent === "chat" && data.contextSources.some((item) => item.title.includes("最近群聊上下文")) ? (
+                              <div className="rounded-[14px] border border-emerald-200 bg-emerald-50/70 px-3 py-2.5 text-[12px] leading-5 text-emerald-700">
+                                普通对话已自动使用最近 15 条群聊上下文，无需手动选择消息记录。
+                              </div>
+                            ) : null}
+                            {shouldShowContextSelector ? (
                               <div className="rounded-[14px] border border-slate-200 bg-slate-50/60">
                                 <button
                                   type="button"
@@ -2481,18 +2769,28 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                                         );
                                       })}
                                     </div>
-                                    <div className="mt-3 flex items-center justify-between gap-3">
+                                    <div className="mt-3 flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-between">
                                       <p className="min-w-0 text-[12px] text-slate-500">
                                         选择 {Math.abs(contextEnd - contextStart) + 1} 条消息
                                       </p>
-                                      <button
-                                        type="button"
-                                        onClick={handleContextSelectionRun}
-                                        disabled={contextSubmitting}
-                                        className="inline-flex h-9 shrink-0 items-center rounded-[10px] bg-blue-600 px-3 text-[12px] font-semibold text-white disabled:bg-slate-300"
-                                      >
-                                        {contextSubmitting ? "处理中..." : "用选中上下文生成"}
-                                      </button>
+                                      <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:flex-nowrap">
+                                        <button
+                                          type="button"
+                                          onClick={handleContextSkipRun}
+                                          disabled={contextSubmitting}
+                                          className="inline-flex h-9 items-center justify-center whitespace-nowrap rounded-[10px] border border-slate-200 bg-white px-3 text-[12px] font-semibold text-slate-600 disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
+                                        >
+                                          {contextSubmitting ? "处理中..." : "不使用上下文"}
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={handleContextSelectionRun}
+                                          disabled={contextSubmitting}
+                                          className="inline-flex h-9 items-center justify-center whitespace-nowrap rounded-[10px] bg-blue-600 px-3 text-[12px] font-semibold text-white disabled:bg-slate-300"
+                                        >
+                                          {contextSubmitting ? "处理中..." : "用选中上下文生成"}
+                                        </button>
+                                      </div>
                                     </div>
                                     {contextNotice ? <p className="mt-2 text-[12px] text-slate-500">{contextNotice}</p> : null}
                                   </div>

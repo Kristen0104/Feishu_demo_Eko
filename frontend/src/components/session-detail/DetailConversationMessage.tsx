@@ -91,9 +91,12 @@ export function DetailConversationMessage({
                   ))}
                 </ol>
               ) : null}
-              {message.plannerCard.needClarification && message.plannerCard.questions?.length ? (
+              {message.plannerCard.needClarification &&
+              (message.plannerCard.questions?.length || message.plannerCard.clarificationQuestion || message.plannerCard.missingInfo?.length) ? (
                 <div className="mt-3 rounded-[12px] bg-amber-50 px-3 py-2 text-[12px] leading-5 text-amber-800">
-                  {message.plannerCard.questions[0]}
+                  {message.plannerCard.questions?.[0] ||
+                    message.plannerCard.clarificationQuestion ||
+                    (message.plannerCard.missingInfo?.length ? `待补充信息：${message.plannerCard.missingInfo.join("、")}` : "")}
                 </div>
               ) : null}
             </div>

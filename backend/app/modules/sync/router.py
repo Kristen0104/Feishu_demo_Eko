@@ -84,15 +84,22 @@ async def select_context_and_run(
     if session is None:
         raise HTTPException(status_code=404, detail="session not found")
 
-    start = min(request.start_index, request.end_index)
-    end = max(request.start_index, request.end_index)
     candidates = session.context_messages
-    if not candidates:
+    if request.skip_context:
         selected = []
     else:
-        selected = candidates[start : end + 1]
+        start = min(request.start_index, request.end_index)
+        end = max(request.start_index, request.end_index)
+        if not candidates:
+            selected = []
+        else:
+            selected = candidates[start : end + 1]
 
-    await sync_service.mark_session_running(session_id, context_size=len(selected))
+    await sync_service.mark_session_running(
+        session_id,
+        context_size=len(selected),
+        selected_context_messages=[message.model_dump() for message in selected],
+    )
     llm_client = get_llm_client()
     feishu_service = get_feishu_service()
     agent_service = AgentService(

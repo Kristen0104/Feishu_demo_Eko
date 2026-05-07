@@ -122,6 +122,7 @@ class AgentTaskPlan(BaseModel):
     intent: str
     task_complexity: Literal["simple", "medium", "complex"] = "medium"
     missing_info: list[str] = Field(default_factory=list)
+    requires_context_selection: bool = False
     need_clarification: bool = False
     questions: list[str] = Field(default_factory=list)
     assumptions: list[str] = Field(default_factory=list)

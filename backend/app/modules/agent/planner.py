@@ -71,6 +71,7 @@ class PlannerAgent:
 7. tool 可为空；需要工具时使用可用工具名，例如 chat、docx、ppt、ppt_create、ppt_edit、board、docx_edit、knowledge_search、artifact_lookup、sync。
 8. visible_summary 必须是给用户看的中文摘要，风格接近 Claude Code / Codex：先说理解，再说计划，再说当前需要什么。
 9. 重要：当用户请求生成 PPT 但没有明确指定设计模式（template/free_design）时，属于信息不足，必须在 missing_info 中注明，设置 need_clarification=true，并在 questions 中询问用户希望使用模板模式（快速稳定生成）还是自由设计（更强视觉表现）。
+10. requires_context_selection 由你判断。只有当用户明确要求“基于聊天记录/上下文/刚才讨论/群聊消息”等历史消息来生成时，才设为 true；否则必须设为 false。
 
 输出格式：
 {
@@ -78,6 +79,7 @@ class PlannerAgent:
   "intent": "具体任务意图，例如 report_generation/travel_planning/doc_generation/ppt_generation/board_generation/chat",
   "task_complexity": "simple|medium|complex",
   "missing_info": [],
+  "requires_context_selection": false,
   "need_clarification": false,
   "questions": [],
   "assumptions": [],
@@ -146,6 +148,7 @@ class PlannerAgent:
     def _normalize_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
         payload.setdefault("task_complexity", "medium")
         payload.setdefault("missing_info", [])
+        payload.setdefault("requires_context_selection", False)
         payload.setdefault("need_clarification", bool(payload.get("clarification_needed", False)))
         if "questions" not in payload:
             question = payload.get("clarification_question")
@@ -182,6 +185,7 @@ class PlannerAgent:
                 goal=message,
                 intent="doc_generation",
                 task_complexity="medium",
+                requires_context_selection=False,
                 summary="整理上下文并生成文档。",
                 visible_summary="我理解你要生成一份文档。我会先梳理写作目标，再调用文档生成能力，最后同步结果。",
                 tool_candidates=["docx", "sync"],
@@ -221,6 +225,7 @@ class PlannerAgent:
                 goal=message,
                 intent="ppt_generation",
                 task_complexity="medium",
+                requires_context_selection=False,
                 summary="整理展示目标并创建 AI PPT 任务。",
                 visible_summary="我理解你要生成一份 PPT。我会先梳理展示需求，再确认必要参数，然后创建 PPT 任务并同步状态。",
                 tool_candidates=["knowledge_search", "ppt", "sync"],
@@ -260,6 +265,7 @@ class PlannerAgent:
                 goal=message,
                 intent="board_generation",
                 task_complexity="medium",
+                requires_context_selection=False,
                 summary="解析飞书目标并生成画板内容。",
                 visible_summary="我理解你要处理飞书画板。我会先确认可写入目标，再生成画板内容，并同步结果。",
                 tool_candidates=["feishu", "board", "sync"],
@@ -298,6 +304,7 @@ class PlannerAgent:
             goal=message,
             intent="chat",
             task_complexity="simple",
+            requires_context_selection=False,
             summary="直接回答用户问题。",
             visible_summary="我理解这是一次普通问答，会结合当前上下文直接回复。",
             tool_candidates=["chat"],

@@ -231,11 +231,13 @@ class RouterAgent:
 
 选择原则：
 1. 先理解用户想要的产物或动作，再选择最合适的工具。
-2. 不要因为出现“生成”就默认 docx；“生成思路图/脑图/流程图/架构图/导图”应选择 board。
+2. 不要因为出现“生成”就默认 docx；“生成思路图/脑图/流程图/架构图/导图/时序图/序列图”应选择 board。
 3. 如果用户要演示文稿、幻灯片、PPT、路演或汇报材料，选择 ppt。
-4. 如果用户要报告、方案、文案、纪要、文章、介绍等文字文档，选择 docx。
-5. 如果用户只是问问题，不需要创建办公产物，选择 chat。
-6. 如果需要修改已有产物，优先选择对应 edit 工具。
+4. 只有用户明确要求“创建/生成/写成/起草/整理/导出/同步”文字产物时，才选择 docx。
+5. 只有用户明确要求“创建/生成/制作/更新”PPT、幻灯片、演示文稿时，才选择 ppt。
+6. 只有用户明确要求“创建/生成/绘制/制作”画板、白板、流程图、脑图、架构图、时序图、序列图等可视化产物时，才选择 board。
+7. 用户只输入主题、标题、名词短语或想讨论一个方案/策略/问题时，选择 chat；不要替用户默认创建文档。
+8. 如果需要修改已有产物，优先选择对应 edit 工具。
 
 只返回 JSON，不要 Markdown，不要解释。格式：
 {"primary_tool":"chat|docx|docx_edit|ppt|ppt_create|ppt_edit|board|knowledge_search|artifact_lookup|sync","intent":"chat|docx|ppt|board","confidence":0.0到1.0,"reason":"不超过20字"}"""
@@ -252,57 +254,13 @@ class RouterAgent:
             logger.warning("Agent chat intent classification failed: %s", exc)
             result = ""
 
-        model_intent = self._parse_model_intent(result)
+        model_intent = self._parse_model_intent(result, message=message)
         if model_intent is not None:
             return model_intent
 
-        deterministic_intent = self._deterministic_chat_intent(message)
-        if deterministic_intent is not None:
-            return deterministic_intent
         return AgentIntent.CHAT
 
-    def _deterministic_chat_intent(self, message: str) -> AgentIntent | None:
-        normalized = message.lower()
-        if any(
-            keyword in message
-            for keyword in ["画板", "白板", "流程图", "架构图", "思维导图", "思路图", "脑图", "导图", "泳道图"]
-        ) or "board" in normalized:
-            return AgentIntent.BOARD
-        if any(keyword in message for keyword in ["ppt", "PPT", "演示", "幻灯片", "路演", "汇报材料", "展示材料", "项目展示"]) or re.search(r"\bpresentation\b|\bslides?\b", normalized):
-            return AgentIntent.PPT
-        if (
-            any(
-                keyword in message
-                for keyword in [
-                    "文档",
-                    "方案",
-                    "报告",
-                    "纪要",
-                    "总结",
-                    "草稿",
-                    "文案",
-                    "文字",
-                    "说明",
-                    "介绍",
-                    "分析",
-                    "提纲",
-                    "大纲",
-                    "写一份",
-                    "写一段",
-                    "生成一段",
-                    "生成一篇",
-                    "起草",
-                    "整理成",
-                    "输出",
-                ]
-            )
-            or re.search(r"\bdocx?\b|\breport\b", normalized)
-            or re.search(r"\d+\s*字", message)
-        ):
-            return AgentIntent.DOCX
-        return None
-
-    def _parse_model_intent(self, result: str) -> AgentIntent | None:
+    def _parse_model_intent(self, result: str, *, message: str = "") -> AgentIntent | None:
         normalized = result.strip().lower()
         if not normalized:
             return None
@@ -330,12 +288,20 @@ class RouterAgent:
             return None
         tool_intent = self._intent_from_tool(tool_value)
         if tool_intent is not None:
+            if not self._tool_intent_has_explicit_user_action(message, tool_intent):
+                return AgentIntent.CHAT
             return tool_intent
         if intent_value == "board":
+            if not self._tool_intent_has_explicit_user_action(message, AgentIntent.BOARD):
+                return AgentIntent.CHAT
             return AgentIntent.BOARD
         if intent_value == "docx" or intent_value == "document":
+            if not self._tool_intent_has_explicit_user_action(message, AgentIntent.DOCX):
+                return AgentIntent.CHAT
             return AgentIntent.DOCX
         if intent_value == "ppt" or intent_value == "presentation":
+            if not self._tool_intent_has_explicit_user_action(message, AgentIntent.PPT):
+                return AgentIntent.CHAT
             return AgentIntent.PPT
         if intent_value == "chat":
             return AgentIntent.CHAT
@@ -351,6 +317,23 @@ class RouterAgent:
         if tool_name in {"chat", "knowledge_search", "artifact_lookup"}:
             return AgentIntent.CHAT
         return None
+
+    def _tool_intent_has_explicit_user_action(self, message: str, intent: AgentIntent) -> bool:
+        if intent == AgentIntent.CHAT:
+            return True
+        normalized = message.lower()
+        action_pattern = r"(请|帮我|帮忙|需要|我要|想要|生成|创建|新建|制作|做一份|做个|写|写成|起草|整理|整理成|输出|导出|同步|更新|修改|改|画|绘制|来一份)"
+        if not re.search(action_pattern, message):
+            return False
+        if intent == AgentIntent.DOCX:
+            return bool(
+                re.search(r"(文档|报告|纪要|文章|文案|草稿|提纲|大纲|总结|说明|介绍|方案|策略|材料|一份|一篇|一段|docx?|document|report)", normalized)
+            )
+        if intent == AgentIntent.PPT:
+            return bool(re.search(r"(ppt|演示|幻灯片|路演|汇报材料|展示材料|presentation|slides?)", normalized))
+        if intent == AgentIntent.BOARD:
+            return bool(re.search(r"(画板|白板|流程图|架构图|思维导图|思路图|脑图|导图|泳道图|时序图|序列图|sequence\\s*diagram|board)", normalized))
+        return False
 
 
 class CollectorSubagent:
@@ -826,13 +809,25 @@ class AgentService:
         self,
         instruction: str,
         session_id: str | None = None,
+        chat_history: list[dict[str, Any]] | None = None,
         retrieved_context: list[dict[str, Any]] | None = None,
     ) -> dict[str, str]:
         knowledge_docs = self._knowledge_docs_from_retrieved_context(retrieved_context)
+        context = AgentContext(
+            chat_history=[
+                ChatMessage(
+                    role=str(message.get("role") or ""),
+                    content=str(message.get("content") or ""),
+                )
+                for message in (chat_history or [])
+                if str(message.get("role") or "").strip() and str(message.get("content") or "").strip()
+            ],
+            knowledge_docs=knowledge_docs,
+        )
         request = AgentChatRequest(
             session_id=session_id or "runtime",
             message=instruction,
-            context=AgentContext(knowledge_docs=knowledge_docs) if knowledge_docs else None,
+            context=context if context.chat_history or context.knowledge_docs else None,
             planning_enabled=False,
         )
         content = await self._generate_document_with_realtime_stream(request)
@@ -877,10 +872,22 @@ class AgentService:
         instruction: str,
         session_id: str | None = None,
         sharing_url: str | None = None,
+        chat_history: list[dict[str, Any]] | None = None,
         retrieved_context: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         knowledge_docs = self._knowledge_docs_from_retrieved_context(retrieved_context)
-        grounded_instruction = self._append_knowledge_context_to_instruction(instruction, knowledge_docs)
+        context = AgentContext(
+            chat_history=[
+                ChatMessage(
+                    role=str(message.get("role") or ""),
+                    content=str(message.get("content") or ""),
+                )
+                for message in (chat_history or [])
+                if str(message.get("role") or "").strip() and str(message.get("content") or "").strip()
+            ],
+            knowledge_docs=knowledge_docs,
+        )
+        grounded_instruction = self._build_board_instruction_with_context(instruction, context)
         created_board_document: dict[str, str] | None = None
         if not sharing_url:
             created_board_document = await self._feishu.create_board_document(
@@ -898,6 +905,20 @@ class AgentService:
         if created_board_document is not None:
             result["created_board_document"] = created_board_document
         return result
+
+    def _build_board_instruction_with_context(self, instruction: str, context: AgentContext) -> str:
+        sections = ["## 用户需求", instruction]
+        if context.chat_history:
+            sections.extend(
+                [
+                    "",
+                    "## 飞书群聊上下文",
+                    *[f"{message.role}: {message.content}" for message in context.chat_history],
+                ]
+            )
+        if context.knowledge_docs:
+            sections.extend(["", *self._format_agent_knowledge_docs(context.knowledge_docs)])
+        return "\n".join(sections)
 
     def _knowledge_docs_from_retrieved_context(
         self,
@@ -1857,16 +1878,6 @@ class AgentService:
             message="文档生成已启动。",
             status="进行中",
             artifact=started_artifact.model_dump(),
-            messages=await self._build_merged_sync_messages(
-                request,
-                AgentChatResponse(
-                    session_id=request.session_id,
-                    intent=AgentIntent.DOCX.value,
-                    status="completed",
-                    message="文档生成已启动。",
-                    artifact=started_artifact,
-                ),
-            ),
         )
         chunks: list[str] = []
         async for chunk in self._document_service.generate_document_stream(document_request):

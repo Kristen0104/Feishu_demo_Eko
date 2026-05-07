@@ -100,8 +100,8 @@ function coerceWorkflowStatus(s: string | undefined): WorkflowStatus {
 
 function parsePlanningPayload(payload: Record<string, unknown>): PlanningPlanWire | null {
   const steps = payload.steps;
-  if (!Array.isArray(steps)) return null;
-  const parsedSteps = steps.map((step, index) => {
+  const parsedSteps = Array.isArray(steps)
+    ? steps.map((step, index) => {
     if (step && typeof step === "object" && "title" in step) {
       const o = step as {
         id?: string;
@@ -143,8 +143,16 @@ function parsePlanningPayload(payload: Record<string, unknown>): PlanningPlanWir
       title: String(step),
       status: "pending" as const,
     };
-  });
+  })
+    : [];
   const finalOutput = payload.final_output;
+  const hasSummary = typeof payload.goal === "string" || typeof payload.summary === "string";
+  const hasClarification =
+    Array.isArray(payload.missing_info) ||
+    Array.isArray(payload.questions) ||
+    typeof payload.clarification_question === "string";
+  const hasFinalOutput = finalOutput && typeof finalOutput === "object";
+  if (!parsedSteps.length && !hasSummary && !hasClarification && !hasFinalOutput) return null;
   return {
     goal: typeof payload.goal === "string" ? payload.goal : "",
     intent: typeof payload.intent === "string" ? payload.intent : "",
