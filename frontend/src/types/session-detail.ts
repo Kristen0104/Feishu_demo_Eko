@@ -211,6 +211,7 @@ export type SessionDetailData = {
     artifact?: DetailDocumentArtifact;
   };
   artifact?: DetailDocumentArtifact;
+  intent?: string | null;
   disabledCards: Array<{ title: string; subtitle: string }>;
   contextSources: DetailSourceItem[];
   contextMessages?: DetailContextMessage[];

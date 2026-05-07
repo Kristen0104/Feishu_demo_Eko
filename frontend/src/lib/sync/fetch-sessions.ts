@@ -36,6 +36,11 @@ export type SyncSession = {
     content: string;
     timestamp?: number | null;
   }>;
+  selected_context_messages?: Array<{
+    role: string;
+    content: string;
+    timestamp?: number | null;
+  }>;
 };
 
 export async function fetchSyncSessions(): Promise<SyncSession[]> {

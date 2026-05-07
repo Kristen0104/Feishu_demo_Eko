@@ -119,12 +119,13 @@ class FeishuService:
         lookback_minutes: int = 120,
         limit: int = 50,
     ) -> list[dict[str, Any]]:
+        fetch_page_size = max(limit * 3, 50)
         raw_messages = self._client.list_recent_chat_messages(
             chat_id,
             before_time_ms=before_time_ms,
             lookback_minutes=lookback_minutes,
-            page_size=limit,
-            max_pages=1,
+            page_size=fetch_page_size,
+            max_pages=3,
         )
         candidates: list[dict[str, Any]] = []
         cutoff = before_time_ms or None

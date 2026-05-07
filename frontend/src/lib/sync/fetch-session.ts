@@ -47,6 +47,17 @@ export type SyncSession = {
     platform_display_name?: string | null;
     avatar_url?: string | null;
   }>;
+  selected_context_messages?: Array<{
+    role: string;
+    content: string;
+    timestamp?: number | null;
+    sender_open_id?: string | null;
+    sender_union_id?: string | null;
+    sender_name?: string | null;
+    platform_user_id?: string | null;
+    platform_display_name?: string | null;
+    avatar_url?: string | null;
+  }>;
 };
 
 export async function fetchSyncSession(sessionId: string): Promise<SyncSession | null> {

@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from unittest import TestCase
+from unittest import IsolatedAsyncioTestCase, TestCase
 
 from app.modules.document.schemas import ChatMessage
 from app.modules.document.service import DocumentService
 
 
 class DocumentMeetingContextPromptTest(TestCase):
-    def test_meeting_summary_prompt_excludes_assistant_messages_and_forbids_fabrication(self) -> None:
+    def test_chat_history_prompt_passes_selected_messages_without_summary_template_constraints(self) -> None:
         service = DocumentService.__new__(DocumentService)
 
         prompt = service._get_user_prompt(
@@ -23,42 +23,15 @@ class DocumentMeetingContextPromptTest(TestCase):
             bitable_records=[],
         )
 
-        self.assertIn("只能依据下面保留的用户聊天记录", prompt)
-        self.assertIn("没有出现的会议时间、参会人、责任人、日期、数字、项目名，一律写“聊天记录未提供”", prompt)
+        self.assertIn("## 飞书群聊上下文", prompt)
         self.assertIn("团队知识助手", prompt)
         self.assertIn("RAG 一定要放在第一优先级", prompt)
-        self.assertNotIn("智能工作流引擎", prompt)
-        self.assertNotIn("2024 年 5 月 20 日", prompt)
+        self.assertIn("智能工作流引擎", prompt)
+        self.assertIn("2024 年 5 月 20 日", prompt)
+        self.assertNotIn("聊天记录纪要约束", prompt)
+        self.assertNotIn("只能依据下面保留的用户聊天记录", prompt)
 
-    def test_meeting_record_request_is_grounded_to_source_chat_messages(self) -> None:
-        service = DocumentService.__new__(DocumentService)
-
-        content = service.ground_document_if_needed(
-            type(
-                "Request",
-                (),
-                {
-                    "session_id": "test",
-                    "topic": "根据上完会议记录总结出文档",
-                    "requirement": "根据上完会议记录总结出文档",
-                    "chat_history": [
-                        ChatMessage(role="user", content="这周想把团队知识助手的方案收一下，目标是先服务 20 到 50 人的小团队。"),
-                        ChatMessage(role="eko", content="建议做智能工作流引擎。"),
-                        ChatMessage(role="user", content="销售侧最常被问的是能不能把公司文档传进去直接问，所以 RAG 一定要放在第一优先级。"),
-                    ],
-                    "knowledge_docs": [],
-                },
-            )(),
-            "会议时间：[请填写具体日期]\n项目复盘与规划会议\n智能工作流引擎",
-        )
-
-        self.assertIn("团队知识助手", content)
-        self.assertIn("RAG 一定要放在第一优先级", content)
-        self.assertIn("聊天记录未提供", content)
-        self.assertNotIn("[请填写", content)
-        self.assertNotIn("智能工作流引擎", content)
-
-    def test_meeting_summary_prompt_keeps_last_15_source_messages(self) -> None:
+    def test_chat_history_prompt_keeps_all_selected_messages(self) -> None:
         service = DocumentService.__new__(DocumentService)
 
         prompt = service._get_user_prompt(
@@ -73,8 +46,53 @@ class DocumentMeetingContextPromptTest(TestCase):
             bitable_records=[],
         )
 
+        self.assertIn("早期消息 1", prompt)
+        self.assertIn("早期消息 3", prompt)
         self.assertIn("有效会议消息 1", prompt)
         self.assertIn("有效会议消息 15", prompt)
-        self.assertNotIn("早期消息 1", prompt)
-        self.assertNotIn("早期消息 3", prompt)
-        self.assertNotIn("文档生成完成", prompt)
+        self.assertIn("文档生成完成", prompt)
+
+
+class _LLMCapture:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
+    async def generate(self, system_prompt: str, user_prompt: str) -> str:
+        self.calls.append((system_prompt, user_prompt))
+        return "# 基于聊天记录的讨论总结\n\n## 讨论要点\n- 同意，团队管理可以先放到二级入口。\n"
+
+    async def generate_stream(self, system_prompt: str, user_prompt: str):
+        self.calls.append((system_prompt, user_prompt))
+        yield "# 基于聊天记录的讨论总结\n"
+
+
+class DocumentMeetingContextGenerationTest(IsolatedAsyncioTestCase):
+    async def test_chat_record_summary_generation_uses_general_llm_prompt_without_template_limits(self) -> None:
+        llm = _LLMCapture()
+        service = DocumentService(llm_client=llm, feishu_service=object())
+
+        content = await service.generate_document(
+            type(
+                "Request",
+                (),
+                {
+                    "session_id": "test",
+                    "topic": "根据上文会议记录总结出文档",
+                    "requirement": "根据上文会议记录总结出文档",
+                    "tone": "formal",
+                    "chat_history": [
+                        ChatMessage(role="user", content="同意，团队管理可以先放到二级入口，不要一开始压到用户面前。"),
+                    ],
+                    "knowledge_docs": [],
+                    "bitable_records": [],
+                },
+            )()
+        )
+
+        self.assertEqual(len(llm.calls), 1)
+        system_prompt, user_prompt = llm.calls[0]
+        self.assertIn("文档生成模块", system_prompt)
+        self.assertNotIn("不要把简短讨论包装成正式会议纪要", system_prompt)
+        self.assertIn("同意，团队管理可以先放到二级入口", user_prompt)
+        self.assertNotIn("聊天记录纪要约束", user_prompt)
+        self.assertIn("团队管理可以先放到二级入口", content)

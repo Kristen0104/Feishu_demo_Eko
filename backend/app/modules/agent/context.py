@@ -21,7 +21,8 @@ class AgentContextAssembler:
 
         session = await self._get_sync_session(request.session_id, sync_service)
         if session is not None:
-            chat_history.extend(self._coerce_messages(getattr(session, "context_messages", None)))
+            selected_context_messages = self._coerce_messages(getattr(session, "selected_context_messages", None))
+            chat_history.extend(selected_context_messages)
             chat_history.extend(self._coerce_messages(getattr(session, "messages", None)))
 
         chat_history.extend(base.chat_history)

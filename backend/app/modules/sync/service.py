@@ -33,6 +33,7 @@ class SyncService:
         context_messages: list[dict[str, Any]] | None = None,
         intent: str | None = None,
         artifact: dict[str, Any] | None = None,
+        selected_context_messages: list[dict[str, Any]] | None = None,
         messages: list[dict[str, Any]] | None = None,
     ) -> SyncSessionSchema:
         record = await self._manager.register_session(
@@ -49,6 +50,7 @@ class SyncService:
             context_messages=context_messages,
             intent=intent,
             artifact=artifact,
+            selected_context_messages=selected_context_messages,
             messages=messages,
         )
         return self._to_schema(record)
@@ -83,6 +85,9 @@ class SyncService:
         context_size: int | None = None,
         instruction: str | None = None,
         context_messages: list[dict[str, Any]] | None = None,
+        selected_context_messages: list[dict[str, Any]] | None = None,
+        status: str = "进行中",
+        summary: str | None = None,
         messages: list[dict[str, Any]] | None = None,
     ) -> None:
         payload: dict[str, Any] = {"source": source}
@@ -96,18 +101,21 @@ class SyncService:
             payload["context_size"] = context_size
         if context_messages is not None:
             payload["context_messages"] = context_messages
+        if selected_context_messages is not None:
+            payload["selected_context_messages"] = selected_context_messages
         await self.register_session(
             session_id,
             source=source,
             title="飞书群聊新会话",
-            summary="收到 @机器人 消息，正在读取候选消息，请先选择消息记录再生成。",
-            status="等待选择",
+            summary=summary or "收到 @机器人 消息，正在处理。",
+            status=status,
             user_id=user_id,
             chat_id=chat_id,
             message_id=message_id,
             context_size=context_size or 0,
             instruction=instruction,
             context_messages=context_messages,
+            selected_context_messages=selected_context_messages,
             messages=messages,
         )
         await self.emit(
@@ -256,12 +264,18 @@ class SyncService:
         session_id: str,
         *,
         context_size: int,
+        selected_context_messages: list[dict[str, Any]] | None = None,
     ) -> None:
+        update: dict[str, Any] = {
+            "status": "进行中",
+            "summary": f"已选择 {context_size} 条上下文，正在生成回复。",
+            "context_size": context_size,
+        }
+        if selected_context_messages is not None:
+            update["selected_context_messages"] = selected_context_messages
         await self._manager.update_session(
             session_id,
-            status="进行中",
-            summary=f"已选择 {context_size} 条上下文，正在生成回复。",
-            context_size=context_size,
+            **update,
         )
 
     async def update_session_context(
@@ -349,6 +363,7 @@ class SyncService:
             intent=record.intent,
             artifact=artifact,
             context_messages=record.context_messages or [],
+            selected_context_messages=getattr(record, "selected_context_messages", None) or [],
             messages=record.messages or [],
         )
 

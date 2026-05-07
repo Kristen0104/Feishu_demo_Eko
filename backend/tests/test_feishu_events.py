@@ -3,6 +3,7 @@ from __future__ import annotations
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import patch
 
+from app.modules.agent.schemas import AgentIntent
 from app.modules.feishu.events import FeishuEventProcessor
 
 
@@ -30,14 +31,31 @@ class _FeishuServiceStub:
         return [{"role": "user", "content": "会议记录 1", "timestamp": 1}]
 
 
+class _RouterStub:
+    def __init__(self, intent: AgentIntent = AgentIntent.DOCX) -> None:
+        self.intent = intent
+
+    async def classify_chat_intent(self, instruction: str) -> AgentIntent:
+        return self.intent
+
+
+class _AgentServiceStub:
+    def __init__(self, intent: AgentIntent = AgentIntent.DOCX) -> None:
+        self._router = _RouterStub(intent)
+
+
 class _ProcessorForTest(FeishuEventProcessor):
-    def __init__(self) -> None:
+    def __init__(self, intent: AgentIntent = AgentIntent.DOCX) -> None:
         self.sync = _SyncServiceStub()
-        super().__init__(feishu_service=_FeishuServiceStub(), agent_service=object(), sync_service=self.sync)
+        super().__init__(feishu_service=_FeishuServiceStub(), agent_service=_AgentServiceStub(intent), sync_service=self.sync)
         self.scheduled_sessions: list[str] = []
+        self.scheduled_chat_requests: list[object] = []
 
     def _schedule_new_session_bootstrap(self, *, session_id: str, **_: object) -> None:
         self.scheduled_sessions.append(session_id)
+
+    def _schedule_agent_chat(self, request):  # noqa: ANN001
+        self.scheduled_chat_requests.append(request)
 
 
 class _ProcessorBootstrapForTest(_ProcessorForTest):
@@ -157,6 +175,19 @@ class FeishuEventProcessorMentionGateTest(IsolatedAsyncioTestCase):
         self.assertEqual(result, {"msg": "success"})
         self.assertEqual(processor.sync.opened_sessions, ["feishu:oc_test:om_test"])
         self.assertEqual(processor.scheduled_sessions, ["feishu:oc_test:om_test"])
+
+    async def test_chat_intent_runs_immediately_with_recent_context_without_selection(self) -> None:
+        processor = _ProcessorForTest(intent=AgentIntent.CHAT)
+
+        result = await processor.handle(_payload(text="NovaMind 模型分级策略", chat_type="p2p"))
+
+        self.assertEqual(result, {"msg": "success"})
+        self.assertEqual(processor.sync.opened_sessions, ["feishu:oc_test:om_test"])
+        self.assertEqual(processor.scheduled_sessions, [])
+        self.assertEqual(len(processor.scheduled_chat_requests), 1)
+        request = processor.scheduled_chat_requests[0]
+        self.assertEqual(request.message, "NovaMind 模型分级策略")
+        self.assertEqual([message.content for message in request.context.chat_history], ["会议记录 1"])
 
     async def test_bootstrap_loads_context_and_waits_for_selection(self) -> None:
         processor = _ProcessorBootstrapForTest()

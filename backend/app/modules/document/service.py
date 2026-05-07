@@ -155,84 +155,8 @@ Eko 的唤醒方式：在飞书群中 @Eko + 一句指令
             lines.append(f"{msg.role}: {msg.content}")
         return "\n".join(lines)
 
-    def _is_chat_record_summary_request(self, topic: str, requirement: str) -> bool:
-        text = f"{topic}\n{requirement}"
-        return any(keyword in text for keyword in ("聊天记录", "群聊记录", "消息记录", "会议记录", "会议总结", "会议纪要"))
-
-    def _source_chat_messages_for_summary(self, chat_history: list[ChatMessage]) -> list[ChatMessage]:
-        return [
-            message
-            for message in chat_history
-            if message.role.strip().lower() not in {"assistant", "eko", "bot", "app", "system"}
-        ][-15:]
-
     def _contains_unfilled_template(self, content: str) -> bool:
         return any(pattern in content for pattern in ("[请填写", "[具体", "[负责人", "[日期", "[某部门", "请填写具体"))
-
-    def _chat_record_summary_needs_fallback(self, request: DocumentGenerationRequest, content: str) -> bool:
-        if not self._is_chat_record_summary_request(request.topic, request.requirement):
-            return False
-        source_messages = self._source_chat_messages_for_summary(request.chat_history)
-        if not source_messages:
-            return self._contains_unfilled_template(content)
-        source_text = "\n".join(message.content for message in source_messages)
-        source_terms = [
-            term
-            for term in ("团队知识助手", "RAG", "文档上传", "切块", "检索", "会话页", "团队隔离", "上传资料", "开始提问")
-            if term in source_text
-        ]
-        missing_source_terms = source_terms and not any(term in content for term in source_terms[:3])
-        return self._contains_unfilled_template(content) or bool(missing_source_terms)
-
-    def _build_chat_record_summary_document(self, request: DocumentGenerationRequest) -> str:
-        source_messages = self._source_chat_messages_for_summary(request.chat_history)
-        lines = [
-            "# 基于聊天记录的讨论总结",
-            "",
-            "## 基本信息",
-            "- 会议时间：聊天记录未提供",
-            "- 参会人员：聊天记录未提供",
-            "- 记录依据：飞书群聊中可见的用户消息",
-            "",
-            "## 原始讨论要点",
-        ]
-        if not source_messages:
-            lines.append("- 聊天记录未提供可总结的用户消息。")
-        else:
-            lines.extend(f"- {message.content}" for message in source_messages)
-        lines.extend(
-            [
-                "",
-                "## 讨论共识",
-            ]
-        )
-        source_text = "\n".join(message.content for message in source_messages)
-        consensus: list[str] = []
-        if "团队知识助手" in source_text:
-            consensus.append("围绕团队知识助手收拢方案，目标服务 20 到 50 人的小团队。")
-        if "RAG" in source_text:
-            consensus.append("RAG 是第一优先级，因为销售侧高频问题是能否上传公司文档并直接提问。")
-        if any(term in source_text for term in ("文档上传", "切块", "检索", "会话页")):
-            consensus.append("第一阶段优先完成文档上传、切块、检索和会话页。")
-        if "团队隔离" in source_text:
-            consensus.append("权限先保持简单，按团队进行数据隔离。")
-        if "上传资料" in source_text or "开始提问" in source_text:
-            consensus.append("首次体验应保持极简，首页聚焦“上传资料”和“开始提问”两个主动作。")
-        if "团队管理" in source_text or "二级入口" in source_text:
-            consensus.append("团队管理先放到二级入口，避免首次进入时增加用户负担。")
-        lines.extend(f"- {item}" for item in consensus)
-        if not consensus:
-            lines.append("- 聊天记录未提供明确共识。")
-        lines.extend(
-            [
-                "",
-                "## 待办事项",
-                "- 负责人：聊天记录未提供",
-                "- 截止日期：聊天记录未提供",
-                "- 下一步建议：基于上述共识继续细化产品范围、信息架构和 RAG 技术实现路径。",
-            ]
-        )
-        return "\n".join(lines).strip() + "\n"
 
     def _format_knowledge_docs(self, docs: list[KnowledgeDoc]) -> str:
         """格式化知识库文档"""
@@ -384,27 +308,12 @@ Eko 的唤醒方式：在飞书群中 @Eko + 一句指令
     ) -> str:
         """构建用户提示词"""
         parts = []
-        is_chat_record_summary = self._is_chat_record_summary_request(topic, requirement)
-        effective_chat_history = (
-            self._source_chat_messages_for_summary(chat_history)
-            if is_chat_record_summary
-            else chat_history
-        )
-
         parts.append(f"## 用户需求")
         parts.append(f"**文档主题**: {topic}")
         parts.append(f"**具体需求**: {requirement}")
 
-        if is_chat_record_summary:
-            parts.append("")
-            parts.append("## 聊天记录纪要约束")
-            parts.append("只能依据下面保留的用户聊天记录生成会议总结/纪要，不得把 Eko、assistant、bot 的历史回复当作会议事实。")
-            parts.append("聊天记录里没有出现的会议时间、参会人、责任人、日期、数字、项目名，一律写“聊天记录未提供”。")
-            parts.append("不得编造姓名、会议时间、数据指标、功能模块、待办截止日期或下次会议安排。")
-            parts.append("如果聊天记录不足以支撑正式会议纪要，请输出“基于聊天记录的讨论总结”，并明确未提供项。")
-
         # 添加上下文
-        chat_str = self._format_chat_history(effective_chat_history)
+        chat_str = self._format_chat_history(chat_history)
         if chat_str:
             parts.append("")
             parts.append(chat_str)
@@ -455,12 +364,6 @@ Eko 的唤醒方式：在飞书群中 @Eko + 一句指令
         return content
 
     def ground_document_if_needed(self, request: DocumentGenerationRequest, content: str) -> str:
-        if self._chat_record_summary_needs_fallback(request, content):
-            logger.warning(
-                "Document generation failed chat-record grounding check; using source-grounded summary. session=%s",
-                request.session_id,
-            )
-            return self._build_chat_record_summary_document(request)
         if not self._requires_grounded_fallback(content, request.knowledge_docs):
             return content
         logger.warning(

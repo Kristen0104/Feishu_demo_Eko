@@ -107,6 +107,11 @@ class AgentRuntime:
         if "instruction" not in payload:
             payload["instruction"] = turn.user_message
         payload.setdefault("session_id", turn.session_id)
+        if step.tool in {"docx", "board"} and turn.request.context and turn.request.context.chat_history:
+            payload.setdefault(
+                "chat_history",
+                [message.model_dump() for message in turn.request.context.chat_history],
+            )
         if turn.retrieved_context:
             payload.setdefault("retrieved_context", [chunk.model_dump() for chunk in turn.retrieved_context])
         if turn.request.sharing_url:

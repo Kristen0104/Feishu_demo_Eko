@@ -35,6 +35,7 @@ class SessionRecord:
     intent: str | None = None
     artifact: dict[str, Any] | None = None
     context_messages: list[dict[str, Any]] | None = None
+    selected_context_messages: list[dict[str, Any]] | None = None
     messages: list[dict[str, Any]] | None = None
     opened_at: str = ""
     updated_at: str = ""
@@ -105,6 +106,7 @@ class SyncConnectionManager:
             intent=data.get("intent") if isinstance(data.get("intent"), str) else None,
             artifact=data.get("artifact") if isinstance(data.get("artifact"), dict) else None,
             context_messages=data.get("context_messages") if isinstance(data.get("context_messages"), list) else [],
+            selected_context_messages=data.get("selected_context_messages") if isinstance(data.get("selected_context_messages"), list) else [],
             messages=data.get("messages") if isinstance(data.get("messages"), list) else [],
             opened_at=str(data.get("opened_at", "")),
             updated_at=str(data.get("updated_at", "")),
@@ -296,6 +298,7 @@ class SyncConnectionManager:
         context_size: int = 0,
         instruction: str | None = None,
         context_messages: list[dict[str, Any]] | None = None,
+        selected_context_messages: list[dict[str, Any]] | None = None,
         intent: str | None = None,
         artifact: dict[str, Any] | None = None,
         messages: list[dict[str, Any]] | None = None,
@@ -315,6 +318,7 @@ class SyncConnectionManager:
             intent=intent,
             artifact=artifact,
             context_messages=context_messages or [],
+            selected_context_messages=selected_context_messages or [],
             messages=messages or [],
             opened_at=now,
             updated_at=now,
@@ -334,6 +338,7 @@ class SyncConnectionManager:
         intent: str | None | object = _UNSET,
         artifact: dict[str, Any] | None | object = _UNSET,
         context_messages: list[dict[str, Any]] | None | object = _UNSET,
+        selected_context_messages: list[dict[str, Any]] | None | object = _UNSET,
         messages: list[dict[str, Any]] | None | object = _UNSET,
     ) -> SessionRecord | None:
         async with self._lock:
@@ -354,6 +359,8 @@ class SyncConnectionManager:
             record.artifact = artifact
         if context_messages is not _UNSET:
             record.context_messages = context_messages
+        if selected_context_messages is not _UNSET:
+            record.selected_context_messages = selected_context_messages
         if messages is not _UNSET:
             record.messages = messages
         record.updated_at = datetime.now(timezone.utc).isoformat()

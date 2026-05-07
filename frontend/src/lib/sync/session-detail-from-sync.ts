@@ -304,8 +304,6 @@ function buildArtifact(session: SyncSession): SyncSessionArtifact | null {
   const content =
     typeof artifact?.content === "string" && artifact.content.trim().length > 0
       ? artifact.content
-      : kind === "docx"
-      ? session.summary
       : null;
   const sessionDone = session.status === "completed" || session.status === "已同步" || session.status === "done";
   const sessionFailed = session.status === "failed" || session.status.includes("失败");
@@ -439,6 +437,7 @@ export function buildSessionDetailData(session: SyncSession): SessionDetailData 
           resultSummary: artifact.result_summary ?? null,
         }
       : undefined,
+    intent: session.intent ?? artifact?.intent ?? null,
     disabledCards: [],
     contextSources: buildSources(session),
     contextMessages: session.context_messages ?? [],
