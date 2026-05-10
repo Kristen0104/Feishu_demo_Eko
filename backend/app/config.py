@@ -79,7 +79,7 @@ class Settings(BaseSettings):
     FEISHU_BASE_URL: str = "https://open.feishu.cn"
     FEISHU_AUTH_BASE_URL: str = "https://accounts.feishu.cn"
     FEISHU_OAUTH_REDIRECT_URI: str = "http://127.0.0.1:3002/login/feishu/callback"
-    FEISHU_OAUTH_SCOPE: str = "contact:user.base:readonly"
+    FEISHU_OAUTH_SCOPE: str = "contact:user.base:readonly search:docs:read"
     FEISHU_OAUTH_STATE_TTL_SECONDS: int = 600
     FRONTEND_LOGIN_SUCCESS_URL: str = "http://127.0.0.1:3002/home"
     FEISHU_BITABLE_APP_TOKEN: str = ""

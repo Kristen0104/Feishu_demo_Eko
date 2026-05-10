@@ -103,6 +103,12 @@ export type BitableBaseOption = {
   app_token_masked?: string | null;
 };
 
+export type BitableBaseUrlResolveResponse = {
+  base: BitableBaseOption;
+  table_id?: string | null;
+  view_id?: string | null;
+};
+
 export type BitableTableOption = {
   id: string;
   name: string;
@@ -164,6 +170,13 @@ export async function getBitableDiscoveryStatus(): Promise<BitableDiscoveryStatu
 
 export async function listBitableBases(): Promise<BitableBaseOption[]> {
   return fetchEkoJson("/api/v1/bitable/discovery/bases", { cache: "no-store" });
+}
+
+export async function resolveBitableBaseUrl(url: string): Promise<BitableBaseUrlResolveResponse> {
+  return fetchEkoJson("/api/v1/bitable/discovery/resolve-url", {
+    method: "POST",
+    body: JSON.stringify({ url }),
+  });
 }
 
 export async function listBitableTables(baseId: string): Promise<BitableTableOption[]> {

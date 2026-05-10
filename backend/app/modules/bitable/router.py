@@ -12,6 +12,8 @@ from app.modules.bitable.schemas import (
     BitableArchiveRequest,
     BitableArchiveResponse,
     BitableBaseOption,
+    BitableBaseUrlResolveRequest,
+    BitableBaseUrlResolveResponse,
     BitableDiscoveryStatus,
     BitableFieldOption,
     BitableInspectResult,
@@ -53,6 +55,24 @@ async def list_discovery_bases(
     discovery_service: Annotated[BitableDiscoveryService, Depends(get_bitable_discovery_service)],
 ) -> ApiResponse[list[BitableBaseOption]]:
     return ApiResponse.success(await discovery_service.list_bases(auth_context.user_id))
+
+
+@router.post(
+    "/discovery/resolve-url",
+    response_model=ApiResponse[BitableBaseUrlResolveResponse],
+    summary="通过飞书多维表格链接解析可选择的 Base",
+)
+async def resolve_discovery_base_url(
+    payload: BitableBaseUrlResolveRequest,
+    auth_context: Annotated[AuthContext, Depends(get_auth_context)],
+    discovery_service: Annotated[BitableDiscoveryService, Depends(get_bitable_discovery_service)],
+) -> ApiResponse[BitableBaseUrlResolveResponse]:
+    try:
+        return ApiResponse.success(await discovery_service.resolve_base_url(auth_context.user_id, payload.url))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except BitableOpenApiError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @router.get(

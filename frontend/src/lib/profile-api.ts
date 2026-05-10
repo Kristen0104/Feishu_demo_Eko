@@ -46,6 +46,32 @@ export async function updateCurrentPassword(currentPassword: string, newPassword
   });
 }
 
+export type FeishuLoginUrlResult = {
+  authorize_url: string;
+  state: string;
+  expires_in: number;
+};
+
+export async function createFeishuBindUrl(redirectUri: string): Promise<FeishuLoginUrlResult> {
+  return fetchEkoJson<FeishuLoginUrlResult>(
+    `/api/v1/auth/feishu/login-url?redirect_uri=${encodeURIComponent(redirectUri)}`,
+    { cache: "no-store" },
+  );
+}
+
+export async function bindFeishuWithCallbackUrl(callbackUrl: string, redirectUri: string): Promise<AuthMeUser> {
+  const parsed = new URL(callbackUrl.trim());
+  const code = parsed.searchParams.get("code");
+  const state = parsed.searchParams.get("state");
+  if (!code || !state) {
+    throw new Error("回跳链接里没有 code/state，请复制飞书授权后的完整地址。");
+  }
+  return fetchEkoJson<AuthMeUser>("/api/v1/auth/feishu/bind", {
+    method: "POST",
+    body: JSON.stringify({ code, state, redirect_uri: redirectUri }),
+  });
+}
+
 export function authUserToProfilePatch(user: AuthMeUser): Partial<UserProfile> {
   const displayName = user.display_name?.trim() || user.email?.trim() || "Eko User";
   const email = user.email?.trim() || "";

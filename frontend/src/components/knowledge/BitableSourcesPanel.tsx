@@ -14,6 +14,7 @@ import {
   listBitableTables,
   listBitableViews,
   queryBitableRecords,
+  resolveBitableBaseUrl,
   updateBitableSource,
   type BitableBaseOption,
   type BitableDiscoveryStatus,
@@ -91,6 +92,15 @@ const fieldLabels: Record<FieldKey, string> = {
   date_field: "日期字段",
 };
 
+const autoMappingRules: Record<FieldKey, string[]> = {
+  title_field: ["任务名称", "任务", "标题", "名称", "主题", "事项", "项目", "title", "name", "task"],
+  summary_field: ["任务描述", "描述", "内容", "摘要", "说明", "备注", "详情", "description", "summary", "content", "note"],
+  url_field: ["链接", "地址", "url", "link"],
+  status_field: ["状态", "进度", "阶段", "status", "state", "progress"],
+  owner_field: ["负责人", "所有者", "经办人", "成员", "owner", "assignee", "person", "member"],
+  date_field: ["截止日期", "截止时间", "日期", "时间", "deadline", "due", "date", "time"],
+};
+
 function sourceStatus(source: BitableSource) {
   if (source.last_check_status === "ok") return "已连接";
   if (source.last_check_status === "failed") return "连接失败";
@@ -126,6 +136,39 @@ function clean(value: string) {
   return next || null;
 }
 
+function normalizeFieldName(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_\-()[\]（）【】「」:：/\\|.]/g, "");
+}
+
+function autoMapFields(fields: BitableFieldOption[]): Pick<SelectorDraft, FieldKey> {
+  const options = fields
+    .map((field) => ({ name: fieldName(field), normalized: normalizeFieldName(fieldName(field)), type: String(field.type || "").toLowerCase() }))
+    .filter((field) => field.name);
+  const used = new Set<string>();
+
+  function pick(key: FieldKey, typeHints: string[] = []) {
+    const rules = autoMappingRules[key].map(normalizeFieldName);
+    const exact = options.find((field) => !used.has(field.name) && rules.includes(field.normalized));
+    const contains = exact || options.find((field) => !used.has(field.name) && rules.some((rule) => field.normalized.includes(rule) || rule.includes(field.normalized)));
+    const typed = contains || options.find((field) => !used.has(field.name) && typeHints.some((hint) => field.type.includes(hint)));
+    if (!typed) return "";
+    used.add(typed.name);
+    return typed.name;
+  }
+
+  return {
+    title_field: pick("title_field", ["text"]),
+    summary_field: pick("summary_field", ["text"]),
+    url_field: pick("url_field", ["url", "link"]),
+    status_field: pick("status_field", ["single", "option", "select"]),
+    owner_field: pick("owner_field", ["user", "person"]),
+    date_field: pick("date_field", ["date", "time"]),
+  };
+}
+
 export function BitableSourcesPanel() {
   const [sources, setSources] = useState<BitableSource[]>([]);
   const [status, setStatus] = useState<BitableDiscoveryStatus | null>(null);
@@ -135,6 +178,7 @@ export function BitableSourcesPanel() {
   const [fields, setFields] = useState<BitableFieldOption[]>([]);
   const [draft, setDraft] = useState<SelectorDraft>(emptySelectorDraft);
   const [advancedDraft, setAdvancedDraft] = useState<AdvancedDraft>(emptyAdvancedDraft);
+  const [baseUrl, setBaseUrl] = useState("");
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
   const [query, setQuery] = useState("项目排期 负责人 状态");
@@ -217,6 +261,95 @@ export function BitableSourcesPanel() {
     }
   }
 
+  async function handleResolveBaseUrl() {
+    if (!baseUrl.trim()) {
+      setNotice("请粘贴飞书多维表格链接。");
+      return;
+    }
+
+    setLoadingTables(true);
+    setNotice(null);
+    try {
+      const result = await resolveBitableBaseUrl(baseUrl.trim());
+      setBases((current) => {
+        const exists = current.some((item) => item.id === result.base.id);
+        return exists ? current : [result.base, ...current];
+      });
+      setDraft((current) => ({
+        ...current,
+        base_id: result.base.id,
+        table_id: "",
+        view_id: result.view_id || "",
+        title_field: "",
+        summary_field: "",
+        url_field: "",
+        status_field: "",
+        owner_field: "",
+        date_field: "",
+      }));
+      setViews([]);
+      setFields([]);
+      const nextTables = await listBitableTables(result.base.id);
+      setTables(nextTables);
+      const tableId = result.table_id && nextTables.some((table) => table.id === result.table_id)
+        ? result.table_id
+        : nextTables[0]?.id || "";
+      if (tableId) {
+        await handleTableChangeWithBase(result.base.id, tableId, result.view_id || "");
+      }
+      setNotice("已识别多维表格链接，请确认数据表和字段映射。");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "识别多维表格链接失败");
+    } finally {
+      setLoadingTables(false);
+    }
+  }
+
+  async function handleTableChangeWithBase(baseId: string, tableId: string, preferredViewId = "") {
+    setDraft((current) => ({
+      ...current,
+      base_id: baseId,
+      table_id: tableId,
+      view_id: preferredViewId,
+      title_field: "",
+      summary_field: "",
+      url_field: "",
+      status_field: "",
+      owner_field: "",
+      date_field: "",
+    }));
+    setViews([]);
+    setFields([]);
+    if (!baseId || !tableId) return;
+
+    setLoadingFields(true);
+    setNotice(null);
+    try {
+      const [nextViews, nextFields] = await Promise.all([
+        listBitableViews(baseId, tableId),
+        listBitableFields(baseId, tableId),
+      ]);
+      const autoMapping = autoMapFields(nextFields);
+      setViews(nextViews);
+      setFields(nextFields);
+      setDraft((current) => ({
+        ...current,
+        view_id: preferredViewId && nextViews.some((view) => view.id === preferredViewId)
+          ? preferredViewId
+          : nextViews[0]?.id || "",
+        ...autoMapping,
+      }));
+      const mappedCount = Object.values(autoMapping).filter(Boolean).length;
+      if (mappedCount > 0) {
+        setNotice(`已自动映射 ${mappedCount} 个字段，可直接保存或手动调整。`);
+      }
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "加载视图或字段失败");
+    } finally {
+      setLoadingFields(false);
+    }
+  }
+
   async function handleTableChange(tableId: string) {
     setDraft((current) => ({
       ...current,
@@ -236,13 +369,7 @@ export function BitableSourcesPanel() {
     setLoadingFields(true);
     setNotice(null);
     try {
-      const [nextViews, nextFields] = await Promise.all([
-        listBitableViews(draft.base_id, tableId),
-        listBitableFields(draft.base_id, tableId),
-      ]);
-      setViews(nextViews);
-      setFields(nextFields);
-      setDraft((current) => ({ ...current, view_id: nextViews[0]?.id || "" }));
+      await handleTableChangeWithBase(draft.base_id, tableId);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "加载视图或字段失败");
     } finally {
@@ -385,6 +512,13 @@ export function BitableSourcesPanel() {
     setAdvancedDraft((current) => ({ ...current, [key]: value }));
   }
 
+  function handleAutoMapFields() {
+    const autoMapping = autoMapFields(fields);
+    const mappedCount = Object.values(autoMapping).filter(Boolean).length;
+    setDraft((current) => ({ ...current, ...autoMapping }));
+    setNotice(mappedCount > 0 ? `已自动映射 ${mappedCount} 个字段。` : "没有找到可自动映射的字段。");
+  }
+
   return (
     <section className="rounded-[16px] border border-slate-200 bg-white p-5 shadow-[0_12px_30px_rgba(15,23,42,0.04)]">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -403,8 +537,8 @@ export function BitableSourcesPanel() {
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-[13px] font-medium leading-5 text-slate-700">{modeCopy(status)}</p>
           {status && (!status.bound || status.needs_reauth) ? (
-            <Link href="/profile/security" className="inline-flex h-9 items-center justify-center rounded-[10px] bg-slate-950 px-3 text-[13px] font-semibold text-white transition hover:bg-slate-800 active:translate-y-px">
-              去绑定
+            <Link href="/login/feishu/start?mode=bind" className="inline-flex h-9 items-center justify-center rounded-[10px] bg-slate-950 px-3 text-[13px] font-semibold text-white transition hover:bg-slate-800 active:translate-y-px">
+              重新授权
             </Link>
           ) : null}
         </div>
@@ -412,6 +546,28 @@ export function BitableSourcesPanel() {
 
       <div className="mt-5 grid gap-4 xl:grid-cols-[minmax(0,1.12fr)_minmax(340px,0.88fr)]">
         <div className="rounded-[14px] border border-slate-200 bg-slate-50/60 p-4">
+          <div className="mb-4 rounded-[12px] border border-slate-200 bg-white p-3">
+            <label className="block">
+              <span className="text-[12px] font-semibold text-slate-700">飞书多维表格链接</span>
+              <div className="mt-1 flex flex-col gap-2 sm:flex-row">
+                <input
+                  value={baseUrl}
+                  onChange={(event) => setBaseUrl(event.target.value)}
+                  className="h-10 min-w-0 flex-1 rounded-[11px] border border-slate-200 px-3 text-[13px] outline-none focus:border-blue-500"
+                  placeholder="https://...feishu.cn/base/..."
+                />
+                <button
+                  type="button"
+                  onClick={() => void handleResolveBaseUrl()}
+                  disabled={loadingTables}
+                  className="h-10 rounded-[11px] bg-blue-600 px-4 text-[13px] font-semibold text-white transition hover:bg-blue-700 active:translate-y-px disabled:bg-slate-300"
+                >
+                  {loadingTables ? "识别中..." : "识别链接"}
+                </button>
+              </div>
+            </label>
+          </div>
+
           {canUseSelectors ? (
             <>
               <div className="grid gap-3 md:grid-cols-2">
@@ -452,19 +608,42 @@ export function BitableSourcesPanel() {
                 </label>
               </div>
 
-              <div className="mt-4 grid gap-3 md:grid-cols-3">
-                {(Object.keys(fieldLabels) as FieldKey[]).map((key) => (
-                  <label key={key} className="block">
-                    <span className="text-[12px] font-semibold text-slate-700">{fieldLabels[key]}</span>
-                    <select value={draft[key]} onChange={(event) => updateDraft(key, event.target.value)} className="mt-1 h-10 w-full rounded-[11px] border border-slate-200 bg-white px-3 text-[13px] outline-none focus:border-blue-500" disabled={!fields.length}>
-                      <option value="">不映射</option>
-                      {fieldOptions.map((name) => (
-                        <option key={`${key}-${name}`} value={name}>{name}</option>
+              {fields.length ? (
+                <div className="mt-4 rounded-[12px] border border-slate-200 bg-white p-3">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <p className="text-[12px] font-semibold text-slate-700">字段映射</p>
+                    <button type="button" onClick={handleAutoMapFields} className="h-8 rounded-[9px] border border-slate-200 px-3 text-[12px] font-semibold text-slate-700 transition hover:bg-slate-50">
+                      重新自动映射
+                    </button>
+                  </div>
+                  <div className="mt-3 grid gap-2 md:grid-cols-2">
+                    {(Object.keys(fieldLabels) as FieldKey[]).map((key) => (
+                      draft[key] ? (
+                        <div key={key} className="flex min-w-0 items-center justify-between gap-3 rounded-[10px] bg-slate-50 px-3 py-2">
+                          <span className="shrink-0 text-[12px] font-semibold text-slate-600">{fieldLabels[key]}</span>
+                          <span className="min-w-0 truncate text-right text-[12px] font-medium text-slate-900">{draft[key]}</span>
+                        </div>
+                      ) : null
+                    ))}
+                  </div>
+                  <details className="mt-3">
+                    <summary className="cursor-pointer text-[12px] font-semibold text-slate-500">手动调整字段</summary>
+                    <div className="mt-3 grid gap-3 md:grid-cols-3">
+                      {(Object.keys(fieldLabels) as FieldKey[]).map((key) => (
+                        <label key={key} className="block">
+                          <span className="text-[12px] font-semibold text-slate-700">{fieldLabels[key]}</span>
+                          <select value={draft[key]} onChange={(event) => updateDraft(key, event.target.value)} className="mt-1 h-10 w-full rounded-[11px] border border-slate-200 bg-white px-3 text-[13px] outline-none focus:border-blue-500">
+                            <option value="">不映射</option>
+                            {fieldOptions.map((name) => (
+                              <option key={`${key}-${name}`} value={name}>{name}</option>
+                            ))}
+                          </select>
+                        </label>
                       ))}
-                    </select>
-                  </label>
-                ))}
-              </div>
+                    </div>
+                  </details>
+                </div>
+              ) : null}
 
               <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center">
                 <button type="button" onClick={() => void handleCreateFromSelector()} disabled={saving || !draft.base_id || !draft.table_id} className="inline-flex h-10 items-center justify-center rounded-[11px] bg-slate-950 px-4 text-[13px] font-semibold text-white transition hover:bg-slate-800 active:translate-y-px disabled:bg-slate-300">
@@ -479,8 +658,8 @@ export function BitableSourcesPanel() {
               <p className="mt-2 max-w-[560px] text-[13px] leading-6 text-slate-500">
                 绑定后，这里会显示你可选择的多维表格、数据表和字段映射。
               </p>
-              <Link href="/profile/security" className="mt-4 inline-flex h-10 items-center justify-center rounded-[11px] bg-slate-950 px-4 text-[13px] font-semibold text-white transition hover:bg-slate-800 active:translate-y-px">
-                去绑定
+              <Link href="/login/feishu/start?mode=bind" className="mt-4 inline-flex h-10 items-center justify-center rounded-[11px] bg-slate-950 px-4 text-[13px] font-semibold text-white transition hover:bg-slate-800 active:translate-y-px">
+                绑定或重新授权
               </Link>
             </div>
           )}

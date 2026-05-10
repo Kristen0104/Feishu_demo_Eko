@@ -134,6 +134,16 @@ class BitableSchemaResponse(BaseModel):
     sources: list[BitableSourceSchema] = Field(default_factory=list)
 
 
+class BitableBaseUrlResolveRequest(BaseModel):
+    url: str
+
+
+class BitableBaseUrlResolveResponse(BaseModel):
+    base: "BitableBaseOption"
+    table_id: str | None = None
+    view_id: str | None = None
+
+
 class BitableDiscoveryStatus(BaseModel):
     bound: bool
     needs_reauth: bool

@@ -41,11 +41,11 @@ class BitableOpenApiAdapter:
     async def list_bases(self, *, access_token: str | None = None) -> dict[str, Any]:
         return await self._paged_request(
             "POST",
-            "/open-apis/drive/v1/files/search",
-            page_size=50,
+            "/open-apis/search/v2/doc_wiki/search",
+            page_size=20,
             json_body={
-                "search_key": "",
-                "docs_types": ["bitable"],
+                "query": "",
+                "doc_filter": {"doc_types": ["BITABLE"]},
             },
             access_token=access_token,
         )
@@ -63,6 +63,14 @@ class BitableOpenApiAdapter:
             "GET",
             f"/open-apis/bitable/v1/apps/{app_token}/tables",
             page_size=100,
+            access_token=access_token,
+        )
+
+    async def get_wiki_node(self, wiki_token: str, *, access_token: str | None = None) -> dict[str, Any]:
+        return await self._request(
+            "GET",
+            "/open-apis/wiki/v2/spaces/get_node",
+            params={"token": wiki_token},
             access_token=access_token,
         )
 
@@ -207,7 +215,8 @@ class BitableOpenApiAdapter:
                 access_token=access_token,
             )
             data = last_payload.get("data") if isinstance(last_payload.get("data"), dict) else {}
-            for item in data.get("items") or []:
+            page_items = data.get("items") or data.get("res_units") or []
+            for item in page_items:
                 if isinstance(item, dict):
                     merged_items.append(item)
             if not data.get("has_more") or not data.get("page_token"):
@@ -216,6 +225,8 @@ class BitableOpenApiAdapter:
 
         data = dict(last_payload.get("data") if isinstance(last_payload.get("data"), dict) else {})
         data["items"] = merged_items
+        if "res_units" in data:
+            data["res_units"] = merged_items
         data["has_more"] = False
         data.pop("page_token", None)
         return {**last_payload, "data": data, "items": merged_items}

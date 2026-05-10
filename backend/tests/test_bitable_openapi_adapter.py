@@ -127,12 +127,12 @@ class BitableOpenApiAdapterTest(IsolatedAsyncioTestCase):
         self.assertEqual(result["items"][0]["table_id"], "tbl_test")
         self.assertEqual(client.calls[0]["headers"]["Authorization"], "Bearer user_access_token")
 
-    async def test_list_bases_uses_drive_search_with_user_token(self) -> None:
+    async def test_list_bases_uses_official_doc_wiki_search_with_user_token(self) -> None:
         client = _FeishuClient(
             [
                 {
                     "code": 0,
-                    "data": {"items": [{"token": "bascn_user_secret", "name": "项目表"}], "has_more": False},
+                    "data": {"res_units": [{"token": "bascn_user_secret", "title": "项目表"}], "has_more": False},
                 }
             ]
         )
@@ -141,7 +141,8 @@ class BitableOpenApiAdapterTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(result["items"][0]["token"], "bascn_user_secret")
         self.assertEqual(client.calls[0]["method"], "POST")
-        self.assertEqual(client.calls[0]["path"], "/open-apis/drive/v1/files/search")
-        self.assertEqual(client.calls[0]["json_body"]["docs_types"], ["bitable"])
-        self.assertEqual(client.calls[0]["json_body"]["page_size"], 50)
+        self.assertEqual(client.calls[0]["path"], "/open-apis/search/v2/doc_wiki/search")
+        self.assertEqual(client.calls[0]["json_body"]["doc_filter"]["doc_types"], ["BITABLE"])
+        self.assertEqual(client.calls[0]["json_body"]["query"], "")
+        self.assertEqual(client.calls[0]["json_body"]["page_size"], 20)
         self.assertEqual(client.calls[0]["headers"]["Authorization"], "Bearer user_access_token")

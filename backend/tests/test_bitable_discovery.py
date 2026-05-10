@@ -51,22 +51,34 @@ class _Repository:
 
 
 class _Adapter:
-    def __init__(self) -> None:
+    def __init__(self, *, user_bases_error: bool = False, search_payload: dict | None = None) -> None:  # noqa: ANN401
         self.calls = []
+        self.user_bases_error = user_bases_error
+        self.search_payload = search_payload
 
     async def list_bases(self, *, access_token=None):  # noqa: ANN001
         self.calls.append(("list_bases", access_token))
+        if access_token and self.user_bases_error:
+            from app.modules.bitable.openapi_adapter import BitableOpenApiError
+
+            raise BitableOpenApiError("user token cannot list bases")
+        if self.search_payload is not None:
+            return self.search_payload
         return {
             "data": {
                 "items": [
                     {
-                        "token": "bascn_user_secret",
-                        "name": "决赛项目多维表格",
+                        "token": "bascn_user_secret" if access_token else "bascn_tenant_secret",
+                        "name": "决赛项目多维表格" if access_token else "应用可访问多维表格",
                         "docs_type": "bitable",
                     }
                 ]
             }
         }
+
+    async def get_wiki_node(self, wiki_token, *, access_token=None):  # noqa: ANN001
+        self.calls.append(("get_wiki_node", wiki_token, access_token))
+        return {"data": {"node": {"obj_type": "bitable", "obj_token": "bascn_wiki_secret"}}}
 
     async def list_tables(self, app_token, *, access_token=None):  # noqa: ANN001
         self.calls.append(("list_tables", app_token, access_token))
@@ -179,6 +191,101 @@ class BitableDiscoveryTest(IsolatedAsyncioTestCase):
         self.assertEqual(token, "bascn_user_secret")
         self.assertEqual(base.app_token_masked, "basc***cret")
         self.assertNotIn("bascn_user_secret", base.model_dump_json())
+
+    async def test_user_base_parses_official_search_result_units(self) -> None:
+        cache = BitableDiscoveryCache()
+        adapter = _Adapter(
+            search_payload={
+                "data": {
+                    "res_units": [
+                        {
+                            "title_highlighted": "<em>决赛项目</em>",
+                            "url": "https://example.feishu.cn/base/bascn_from_url?table=tbl_1",
+                            "result_meta": {"doc_types": ["BITABLE"]},
+                        }
+                    ]
+                }
+            }
+        )
+        repository = _Repository()
+        resolver = BitableBaseResolver(repository, cache=cache, settings=_settings())
+        service = BitableDiscoveryService(
+            _IdentityService(_identity()),
+            resolver,
+            adapter=adapter,
+            cache=cache,
+            settings=_settings(),
+        )
+
+        bases = await service.list_bases("user_1")
+
+        self.assertEqual(len(bases), 1)
+        self.assertEqual(bases[0].name, "<em>决赛项目</em>")
+        self.assertEqual(await resolver.resolve_base_token(bases[0].id, user_id="user_1"), "bascn_from_url")
+
+    async def test_resolve_base_url_accepts_pasted_token_text(self) -> None:
+        cache = BitableDiscoveryCache()
+        adapter = _Adapter()
+        repository = _Repository()
+        resolver = BitableBaseResolver(repository, cache=cache, settings=_settings())
+        service = BitableDiscoveryService(
+            _IdentityService(_identity()),
+            resolver,
+            adapter=adapter,
+            cache=cache,
+            settings=_settings(),
+        )
+
+        result = await service.resolve_base_url(
+            "user_1",
+            "项目表 bascn_manual_secret table=tbl_project view=vew_all",
+        )
+
+        self.assertEqual(result.table_id, "tbl_project")
+        self.assertEqual(result.view_id, "vew_all")
+        self.assertEqual(await resolver.resolve_base_token(result.base.id, user_id="user_1"), "bascn_manual_secret")
+        self.assertIn(("list_tables", "bascn_manual_secret", None), adapter.calls)
+
+    async def test_resolve_base_url_accepts_wiki_bitable_link(self) -> None:
+        cache = BitableDiscoveryCache()
+        adapter = _Adapter()
+        repository = _Repository()
+        resolver = BitableBaseResolver(repository, cache=cache, settings=_settings())
+        service = BitableDiscoveryService(
+            _IdentityService(_identity()),
+            resolver,
+            adapter=adapter,
+            cache=cache,
+            settings=_settings(),
+        )
+
+        result = await service.resolve_base_url("user_1", "https://example.feishu.cn/wiki/wikcnabc123")
+
+        self.assertEqual(await resolver.resolve_base_token(result.base.id, user_id="user_1"), "bascn_wiki_secret")
+        self.assertIn(("get_wiki_node", "wikcnabc123", None), adapter.calls)
+        self.assertIn(("list_tables", "bascn_wiki_secret", None), adapter.calls)
+
+    async def test_bound_user_falls_back_to_tenant_app_bases_when_user_discovery_fails(self) -> None:
+        cache = BitableDiscoveryCache()
+        adapter = _Adapter(user_bases_error=True)
+        repository = _Repository()
+        resolver = BitableBaseResolver(repository, cache=cache, settings=_settings())
+        service = BitableDiscoveryService(
+            _IdentityService(_identity()),
+            resolver,
+            adapter=adapter,
+            cache=cache,
+            settings=_settings(),
+        )
+
+        bases = await service.list_bases("user_1")
+
+        self.assertEqual(len(bases), 1)
+        self.assertEqual(bases[0].source, "tenant_app")
+        self.assertEqual(bases[0].name, "应用可访问多维表格")
+        self.assertEqual(await resolver.resolve_base_token(bases[0].id, user_id="user_1"), "bascn_tenant_secret")
+        self.assertIn(("list_bases", "user_access_token"), adapter.calls)
+        self.assertIn(("list_bases", None), adapter.calls)
 
     async def test_user_a_cannot_resolve_user_b_base_id(self) -> None:
         cache = BitableDiscoveryCache()
