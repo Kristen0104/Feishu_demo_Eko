@@ -29,7 +29,8 @@ export type BitableSource = {
 export type BitableSourceInput = {
   workspace_id: string;
   name: string;
-  app_token: string;
+  base_id?: string | null;
+  app_token?: string | null;
   table_id: string;
   view_id?: string | null;
   purpose: BitablePurpose;
@@ -87,6 +88,38 @@ export type BitableQueryResponse = {
   failures: Array<{ source_id: string; message: string }>;
 };
 
+export type BitableDiscoveryStatus = {
+  bound: boolean;
+  needs_reauth: boolean;
+  identity_label?: string | null;
+  mode: "user_oauth" | "tenant_app" | "preset" | "advanced_only";
+  message?: string | null;
+};
+
+export type BitableBaseOption = {
+  id: string;
+  name: string;
+  source: "user_oauth" | "tenant_app" | "preset";
+  app_token_masked?: string | null;
+};
+
+export type BitableTableOption = {
+  id: string;
+  name: string;
+};
+
+export type BitableViewOption = {
+  id: string;
+  name: string;
+  type?: string | null;
+};
+
+export type BitableFieldOption = {
+  id?: string | null;
+  name: string;
+  type?: string | null;
+};
+
 export async function listBitableSources(workspaceId = "Feishu_demo_Eko"): Promise<BitableSource[]> {
   return fetchEkoJson(`/api/v1/bitable/sources?workspace_id=${encodeURIComponent(workspaceId)}`);
 }
@@ -123,4 +156,30 @@ export async function queryBitableRecords(query: string, limit = 5, workspaceId 
     method: "POST",
     body: JSON.stringify({ workspace_id: workspaceId, query, limit }),
   });
+}
+
+export async function getBitableDiscoveryStatus(): Promise<BitableDiscoveryStatus> {
+  return fetchEkoJson("/api/v1/bitable/discovery/status", { cache: "no-store" });
+}
+
+export async function listBitableBases(): Promise<BitableBaseOption[]> {
+  return fetchEkoJson("/api/v1/bitable/discovery/bases", { cache: "no-store" });
+}
+
+export async function listBitableTables(baseId: string): Promise<BitableTableOption[]> {
+  return fetchEkoJson(`/api/v1/bitable/discovery/tables?base_id=${encodeURIComponent(baseId)}`, { cache: "no-store" });
+}
+
+export async function listBitableViews(baseId: string, tableId: string): Promise<BitableViewOption[]> {
+  return fetchEkoJson(
+    `/api/v1/bitable/discovery/views?base_id=${encodeURIComponent(baseId)}&table_id=${encodeURIComponent(tableId)}`,
+    { cache: "no-store" },
+  );
+}
+
+export async function listBitableFields(baseId: string, tableId: string): Promise<BitableFieldOption[]> {
+  return fetchEkoJson(
+    `/api/v1/bitable/discovery/fields?base_id=${encodeURIComponent(baseId)}&table_id=${encodeURIComponent(tableId)}`,
+    { cache: "no-store" },
+  );
 }

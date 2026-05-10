@@ -144,13 +144,14 @@ class FeishuClient:
         json_body: dict[str, Any] | None = None,
         headers: dict[str, str] | None = None,
     ) -> dict[str, Any]:
-        extra_headers = headers or {}
+        request_headers = dict(headers or {})
+        request_headers.setdefault("Authorization", f"Bearer {self._get_tenant_access_token()}")
         response = self._get_http_client().request(
             method,
             path,
             params=params,
             json=json_body,
-            headers={**extra_headers, "Authorization": f"Bearer {self._get_tenant_access_token()}"},
+            headers=request_headers,
         )
         if response.status_code >= 400:
             raise RuntimeError(f"Feishu request failed: HTTP {response.status_code} body={response.text[:500]}")

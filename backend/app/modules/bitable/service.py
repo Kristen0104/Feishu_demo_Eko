@@ -5,6 +5,7 @@ from typing import Any
 
 from app.config import settings
 from app.modules.bitable import normalizer
+from app.modules.bitable.discovery import BitableBaseResolver
 from app.modules.bitable.models import BitableSource
 from app.modules.bitable.openapi_adapter import BitableOpenApiAdapter, BitableOpenApiError
 from app.modules.bitable.repository import BitableRepository
@@ -21,6 +22,7 @@ from app.modules.bitable.schemas import (
     BitableSourceSchema,
     BitableSourceUpdate,
 )
+from app.modules.feishu.identity_service import FeishuIdentityService, FeishuReauthRequired
 
 logger = logging.getLogger(__name__)
 
@@ -31,9 +33,13 @@ class BitableService:
         repository: BitableRepository,
         *,
         adapter: BitableOpenApiAdapter | None = None,
+        base_resolver: BitableBaseResolver | None = None,
+        identity_service: FeishuIdentityService | None = None,
     ) -> None:
         self._repository = repository
         self._adapter = adapter or BitableOpenApiAdapter()
+        self._base_resolver = base_resolver
+        self._identity_service = identity_service
 
     async def list_sources(self, workspace_id: str, *, created_by: str | None = None) -> list[BitableSourceSchema]:
         if created_by is not None:
@@ -43,6 +49,7 @@ class BitableService:
         return [self._source_schema(source) for source in sources]
 
     async def create_source(self, payload: BitableSourceCreate, *, created_by: str | None = None) -> BitableSourceSchema:
+        payload = await self._resolve_create_payload(payload, created_by=created_by)
         source = await self._repository.create_source(payload, created_by=created_by)
         return self._source_schema(source)
 
@@ -62,10 +69,11 @@ class BitableService:
 
     async def inspect_source(self, source_id: str, *, created_by: str | None = None) -> BitableInspectResult:
         source = await self._require_source(source_id, created_by=created_by)
+        access_token = await self._user_access_token(created_by)
         try:
-            table_payload = await self._adapter.get_table(source.app_token, source.table_id)
-            fields_payload = await self._adapter.list_fields(source.app_token, source.table_id)
-            views_payload = await self._adapter.list_views(source.app_token, source.table_id)
+            table_payload = await self._adapter.get_table(source.app_token, source.table_id, access_token=access_token)
+            fields_payload = await self._adapter.list_fields(source.app_token, source.table_id, access_token=access_token)
+            views_payload = await self._adapter.list_views(source.app_token, source.table_id, access_token=access_token)
             table = normalizer.extract_table(table_payload)
             fields = normalizer.normalize_fields(fields_payload) or normalizer.normalize_fields(table_payload)
             views = normalizer.normalize_views(views_payload) or normalizer.normalize_views(table_payload)
@@ -93,9 +101,33 @@ class BitableService:
         records: list[BitableRecordContext] = []
         failures: list[dict[str, str]] = []
         per_source_limit = min(5, payload.limit)
+        access_token = await self._user_access_token(created_by)
         for source in sources:
             try:
-                records.extend(await self._query_source(source, query=payload.query, limit=per_source_limit))
+                records.extend(
+                    await self._query_source(
+                        source,
+                        query=payload.query,
+                        limit=per_source_limit,
+                        access_token=access_token,
+                    )
+                )
+            except BitableOpenApiError as exc:
+                if access_token:
+                    try:
+                        records.extend(await self._query_source(source, query=payload.query, limit=per_source_limit))
+                        continue
+                    except Exception as fallback_exc:  # noqa: BLE001
+                        logger.warning(
+                            "Bitable query tenant fallback failed source=%s table=%s: %s",
+                            source.id,
+                            source.table_id,
+                            fallback_exc,
+                        )
+                        failures.append({"source_id": source.id, "message": str(fallback_exc)})
+                        continue
+                logger.warning("Bitable query source failed source=%s table=%s: %s", source.id, source.table_id, exc)
+                failures.append({"source_id": source.id, "message": str(exc)})
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Bitable query source failed source=%s table=%s: %s", source.id, source.table_id, exc)
                 failures.append({"source_id": source.id, "message": str(exc)})
@@ -113,8 +145,12 @@ class BitableService:
 
         sources = await self._enabled_sources(payload.workspace_id, purposes={"archive", "both"}, created_by=created_by)
         results: list[BitableArchiveResult] = []
+        access_token = await self._user_access_token(created_by)
         for source in sources:
-            results.append(await self._archive_to_source(source, payload))
+            result = await self._archive_to_source(source, payload, access_token=access_token)
+            if result.status == "failed" and access_token:
+                result = await self._archive_to_source(source, payload, access_token=None)
+            results.append(result)
         return BitableArchiveResponse(results=results)
 
     async def _enabled_sources(
@@ -133,9 +169,36 @@ class BitableService:
             if source.enabled and source.purpose in purposes
         ]
 
-    async def _query_source(self, source: BitableSource, *, query: str, limit: int) -> list[BitableRecordContext]:
+    async def _resolve_create_payload(
+        self,
+        payload: BitableSourceCreate,
+        *,
+        created_by: str | None = None,
+    ) -> BitableSourceCreate:
+        base_id = self._clean_text(payload.base_id)
+        app_token = self._clean_text(payload.app_token)
+        if base_id and app_token:
+            raise ValueError("base_id and app_token cannot both be provided")
+        if not base_id and not app_token:
+            raise ValueError("base_id or app_token is required")
+        if base_id:
+            if created_by is None:
+                raise ValueError("Authenticated user is required to resolve base_id")
+            if self._base_resolver is None:
+                raise ValueError("Bitable base resolver is not configured")
+            app_token = await self._base_resolver.resolve_base_token(base_id, user_id=created_by)
+        return payload.model_copy(update={"app_token": app_token, "base_id": None})
+
+    async def _query_source(
+        self,
+        source: BitableSource,
+        *,
+        query: str,
+        limit: int,
+        access_token: str | None = None,
+    ) -> list[BitableRecordContext]:
         table_name = self._table_name(source)
-        search_fields = await self._search_fields(source)
+        search_fields = await self._search_fields(source, access_token=access_token)
         select_fields = self._select_fields(source, search_fields)
         records_payload: dict[str, Any] | None = None
         if search_fields:
@@ -148,6 +211,7 @@ class BitableService:
                     limit=limit,
                     search_fields=search_fields,
                     select_fields=select_fields,
+                    access_token=access_token,
                 )
             except BitableOpenApiError as exc:
                 logger.info("Bitable record-search fell back to record-list source=%s: %s", source.id, exc)
@@ -158,6 +222,7 @@ class BitableService:
                 source.table_id,
                 view_id=source.view_id,
                 page_size=50,
+                access_token=access_token,
             )
         records = normalizer.normalize_records(records_payload)
         contexts = [
@@ -166,7 +231,13 @@ class BitableService:
         ]
         return sorted(contexts, key=lambda record: record.score, reverse=True)[:limit]
 
-    async def _archive_to_source(self, source: BitableSource, payload: BitableArchiveRequest) -> BitableArchiveResult:
+    async def _archive_to_source(
+        self,
+        source: BitableSource,
+        payload: BitableArchiveRequest,
+        *,
+        access_token: str | None = None,
+    ) -> BitableArchiveResult:
         artifact = dict(payload.artifact)
         kind = str(artifact.get("kind") or artifact.get("artifact_kind") or "artifact")
         job_id = str(artifact.get("job_id") or artifact.get("task_id") or "") or None
@@ -181,16 +252,27 @@ class BitableService:
         )
         try:
             if existing is not None:
-                raw = await self._adapter.update_record(source.app_token, source.table_id, existing.record_id, fields)
+                raw = await self._adapter.update_record(
+                    source.app_token,
+                    source.table_id,
+                    existing.record_id,
+                    fields,
+                    access_token=access_token,
+                )
                 record_id = existing.record_id
                 status = "updated"
             else:
-                raw = await self._adapter.create_record(source.app_token, source.table_id, fields)
+                raw = await self._adapter.create_record(
+                    source.app_token,
+                    source.table_id,
+                    fields,
+                    access_token=access_token,
+                )
                 record_id = normalizer.extract_record_id(raw)
                 status = "created"
             if not record_id:
                 raise BitableOpenApiError("Bitable OpenAPI response did not include record_id")
-            record_url = await self._record_share_link(source, record_id)
+            record_url = await self._record_share_link(source, record_id, access_token=access_token)
             await self._repository.save_archive_link(
                 session_id=payload.session_id,
                 artifact_kind=kind,
@@ -229,9 +311,20 @@ class BitableService:
                 error=str(exc),
             )
 
-    async def _record_share_link(self, source: BitableSource, record_id: str) -> str | None:
+    async def _record_share_link(
+        self,
+        source: BitableSource,
+        record_id: str,
+        *,
+        access_token: str | None = None,
+    ) -> str | None:
         try:
-            payload = await self._adapter.create_record_share_link(source.app_token, source.table_id, record_id)
+            payload = await self._adapter.create_record_share_link(
+                source.app_token,
+                source.table_id,
+                record_id,
+                access_token=access_token,
+            )
         except Exception as exc:  # noqa: BLE001
             logger.info("Create Bitable record share link skipped source=%s record=%s: %s", source.id, record_id, exc)
             return None
@@ -239,7 +332,7 @@ class BitableService:
             return None
         return normalizer.extract_share_link(payload, record_id)
 
-    async def _search_fields(self, source: BitableSource) -> list[str]:
+    async def _search_fields(self, source: BitableSource, *, access_token: str | None = None) -> list[str]:
         configured = [
             source.title_field,
             source.summary_field,
@@ -255,7 +348,7 @@ class BitableService:
         snapshot_fields = source.last_schema_snapshot.get("fields") if isinstance(source.last_schema_snapshot, dict) else None
         if not isinstance(snapshot_fields, list) or not snapshot_fields:
             try:
-                payload = await self._adapter.list_fields(source.app_token, source.table_id)
+                payload = await self._adapter.list_fields(source.app_token, source.table_id, access_token=access_token)
                 snapshot_fields = normalizer.normalize_fields(payload)
             except Exception as exc:  # noqa: BLE001
                 logger.info("Bitable list_fields for search projection failed source=%s: %s", source.id, exc)
@@ -298,6 +391,15 @@ class BitableService:
             raise LookupError("Bitable source not found")
         return source
 
+    async def _user_access_token(self, created_by: str | None) -> str | None:
+        if created_by is None or self._identity_service is None:
+            return None
+        try:
+            identity = await self._identity_service.get_bound_identity(created_by)
+        except FeishuReauthRequired:
+            return None
+        return identity.access_token if identity else None
+
     def _source_schema(self, source: BitableSource) -> BitableSourceSchema:
         return BitableSourceSchema(
             id=source.id,
@@ -330,3 +432,9 @@ class BitableService:
         if len(token) <= 8:
             return "***"
         return f"{token[:4]}***{token[-4:]}"
+
+    def _clean_text(self, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned or None

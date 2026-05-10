@@ -6,11 +6,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.config import settings
 from app.core.security import AuthContext, get_auth_context
-from app.modules.bitable.dependencies import get_bitable_service
+from app.modules.bitable.dependencies import get_bitable_discovery_service, get_bitable_service
 from app.modules.bitable.openapi_adapter import BitableOpenApiError
 from app.modules.bitable.schemas import (
     BitableArchiveRequest,
     BitableArchiveResponse,
+    BitableBaseOption,
+    BitableDiscoveryStatus,
+    BitableFieldOption,
     BitableInspectResult,
     BitableQueryRequest,
     BitableQueryResponse,
@@ -18,11 +21,88 @@ from app.modules.bitable.schemas import (
     BitableSourceCreate,
     BitableSourceSchema,
     BitableSourceUpdate,
+    BitableTableOption,
+    BitableViewOption,
 )
+from app.modules.bitable.discovery import BitableDiscoveryService
 from app.modules.bitable.service import BitableService
 from app.shared.responses import ApiResponse
 
 router = APIRouter()
+
+
+@router.get(
+    "/discovery/status",
+    response_model=ApiResponse[BitableDiscoveryStatus],
+    summary="获取当前用户 Bitable 发现状态",
+)
+async def get_discovery_status(
+    auth_context: Annotated[AuthContext, Depends(get_auth_context)],
+    discovery_service: Annotated[BitableDiscoveryService, Depends(get_bitable_discovery_service)],
+) -> ApiResponse[BitableDiscoveryStatus]:
+    return ApiResponse.success(await discovery_service.get_status(auth_context.user_id))
+
+
+@router.get(
+    "/discovery/bases",
+    response_model=ApiResponse[list[BitableBaseOption]],
+    summary="列出当前用户可选择的多维表格",
+)
+async def list_discovery_bases(
+    auth_context: Annotated[AuthContext, Depends(get_auth_context)],
+    discovery_service: Annotated[BitableDiscoveryService, Depends(get_bitable_discovery_service)],
+) -> ApiResponse[list[BitableBaseOption]]:
+    return ApiResponse.success(await discovery_service.list_bases(auth_context.user_id))
+
+
+@router.get(
+    "/discovery/tables",
+    response_model=ApiResponse[list[BitableTableOption]],
+    summary="列出多维表格下的数据表",
+)
+async def list_discovery_tables(
+    auth_context: Annotated[AuthContext, Depends(get_auth_context)],
+    discovery_service: Annotated[BitableDiscoveryService, Depends(get_bitable_discovery_service)],
+    base_id: str,
+) -> ApiResponse[list[BitableTableOption]]:
+    try:
+        return ApiResponse.success(await discovery_service.list_tables(auth_context.user_id, base_id))
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get(
+    "/discovery/views",
+    response_model=ApiResponse[list[BitableViewOption]],
+    summary="列出数据表视图",
+)
+async def list_discovery_views(
+    auth_context: Annotated[AuthContext, Depends(get_auth_context)],
+    discovery_service: Annotated[BitableDiscoveryService, Depends(get_bitable_discovery_service)],
+    base_id: str,
+    table_id: str,
+) -> ApiResponse[list[BitableViewOption]]:
+    try:
+        return ApiResponse.success(await discovery_service.list_views(auth_context.user_id, base_id, table_id))
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get(
+    "/discovery/fields",
+    response_model=ApiResponse[list[BitableFieldOption]],
+    summary="列出数据表字段",
+)
+async def list_discovery_fields(
+    auth_context: Annotated[AuthContext, Depends(get_auth_context)],
+    discovery_service: Annotated[BitableDiscoveryService, Depends(get_bitable_discovery_service)],
+    base_id: str,
+    table_id: str,
+) -> ApiResponse[list[BitableFieldOption]]:
+    try:
+        return ApiResponse.success(await discovery_service.list_fields(auth_context.user_id, base_id, table_id))
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get(
@@ -48,7 +128,12 @@ async def create_source(
     auth_context: Annotated[AuthContext, Depends(get_auth_context)],
     bitable_service: Annotated[BitableService, Depends(get_bitable_service)],
 ) -> ApiResponse[BitableSourceSchema]:
-    return ApiResponse.success(await bitable_service.create_source(payload, created_by=auth_context.user_id))
+    try:
+        return ApiResponse.success(await bitable_service.create_source(payload, created_by=auth_context.user_id))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.patch(

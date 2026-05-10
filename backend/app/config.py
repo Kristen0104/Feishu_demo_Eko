@@ -92,6 +92,7 @@ class Settings(BaseSettings):
     BITABLE_DEFAULT_WORKSPACE_ID: str = "Feishu_demo_Eko"
     BITABLE_QUERY_LIMIT: int = 8
     BITABLE_ARCHIVE_ENABLED: bool = False
+    BITABLE_PRESET_BASE_NAME: str = "团队预置多维表格"
 
     # Agent (DeepSeek)
     AGENT_MODEL: str = "deepseek-v4-flash"

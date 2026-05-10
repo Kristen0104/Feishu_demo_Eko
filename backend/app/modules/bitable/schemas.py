@@ -8,12 +8,13 @@ from pydantic import BaseModel, ConfigDict, Field
 
 BitablePurpose = Literal["context", "archive", "both"]
 ArchiveStatus = Literal["created", "updated", "skipped", "failed"]
+BitableDiscoveryMode = Literal["user_oauth", "tenant_app", "preset", "advanced_only"]
+BitableBaseSource = Literal["user_oauth", "tenant_app", "preset"]
 
 
 class BitableSourceBase(BaseModel):
     workspace_id: str = "Feishu_demo_Eko"
     name: str
-    app_token: str
     table_id: str
     view_id: str | None = None
     purpose: BitablePurpose = "both"
@@ -28,7 +29,8 @@ class BitableSourceBase(BaseModel):
 
 
 class BitableSourceCreate(BitableSourceBase):
-    pass
+    app_token: str | None = None
+    base_id: str | None = None
 
 
 class BitableSourceUpdate(BaseModel):
@@ -130,3 +132,35 @@ class BitableArchiveResponse(BaseModel):
 
 class BitableSchemaResponse(BaseModel):
     sources: list[BitableSourceSchema] = Field(default_factory=list)
+
+
+class BitableDiscoveryStatus(BaseModel):
+    bound: bool
+    needs_reauth: bool
+    identity_label: str | None = None
+    mode: BitableDiscoveryMode = "advanced_only"
+    message: str | None = None
+
+
+class BitableBaseOption(BaseModel):
+    id: str
+    name: str
+    source: BitableBaseSource
+    app_token_masked: str | None = None
+
+
+class BitableTableOption(BaseModel):
+    id: str
+    name: str
+
+
+class BitableViewOption(BaseModel):
+    id: str
+    name: str
+    type: str | None = None
+
+
+class BitableFieldOption(BaseModel):
+    id: str | None = None
+    name: str
+    type: str | None = None

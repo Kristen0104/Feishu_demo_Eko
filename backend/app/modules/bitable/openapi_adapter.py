@@ -38,34 +38,49 @@ class BitableOpenApiAdapter:
 
     feishu_client: FeishuClient | None = None
 
-    async def get_table(self, app_token: str, table_id: str) -> dict[str, Any]:
-        payload = await self.list_tables(app_token)
+    async def list_bases(self, *, access_token: str | None = None) -> dict[str, Any]:
+        return await self._paged_request(
+            "POST",
+            "/open-apis/drive/v1/files/search",
+            page_size=50,
+            json_body={
+                "search_key": "",
+                "docs_types": ["bitable"],
+            },
+            access_token=access_token,
+        )
+
+    async def get_table(self, app_token: str, table_id: str, *, access_token: str | None = None) -> dict[str, Any]:
+        payload = await self.list_tables(app_token, access_token=access_token)
         items = self._items(payload)
         for item in items:
             if str(item.get("table_id") or item.get("id") or "") == table_id:
                 return {"data": {"table": item}}
         return {"data": {"table": {"table_id": table_id}}}
 
-    async def list_tables(self, app_token: str) -> dict[str, Any]:
+    async def list_tables(self, app_token: str, *, access_token: str | None = None) -> dict[str, Any]:
         return await self._paged_request(
             "GET",
             f"/open-apis/bitable/v1/apps/{app_token}/tables",
             page_size=100,
+            access_token=access_token,
         )
 
-    async def list_fields(self, app_token: str, table_id: str) -> dict[str, Any]:
+    async def list_fields(self, app_token: str, table_id: str, *, access_token: str | None = None) -> dict[str, Any]:
         return await self._paged_request(
             "GET",
             f"/open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/fields",
             page_size=200,
             params={"text_field_as_array": "false"},
+            access_token=access_token,
         )
 
-    async def list_views(self, app_token: str, table_id: str) -> dict[str, Any]:
+    async def list_views(self, app_token: str, table_id: str, *, access_token: str | None = None) -> dict[str, Any]:
         return await self._paged_request(
             "GET",
             f"/open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/views",
             page_size=200,
+            access_token=access_token,
         )
 
     async def search_records(
@@ -78,6 +93,7 @@ class BitableOpenApiAdapter:
         limit: int = 8,
         search_fields: list[str] | None = None,
         select_fields: list[str] | None = None,
+        access_token: str | None = None,
     ) -> dict[str, Any]:
         _ = query, search_fields
         page_size = max(1, min(max(limit * 5, limit), 200))
@@ -87,6 +103,7 @@ class BitableOpenApiAdapter:
             view_id=view_id,
             page_size=page_size,
             select_fields=select_fields,
+            access_token=access_token,
         )
 
     async def list_records(
@@ -97,6 +114,7 @@ class BitableOpenApiAdapter:
         view_id: str | None = None,
         page_size: int = 50,
         select_fields: list[str] | None = None,
+        access_token: str | None = None,
     ) -> dict[str, Any]:
         params: dict[str, Any] = {"text_field_as_array": "false"}
         if view_id:
@@ -108,26 +126,51 @@ class BitableOpenApiAdapter:
             f"/open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/records",
             page_size=max(1, min(page_size, 200)),
             params=params,
+            access_token=access_token,
         )
 
-    async def create_record(self, app_token: str, table_id: str, fields: dict[str, Any]) -> dict[str, Any]:
+    async def create_record(
+        self,
+        app_token: str,
+        table_id: str,
+        fields: dict[str, Any],
+        *,
+        access_token: str | None = None,
+    ) -> dict[str, Any]:
         return await self._request(
             "POST",
             f"/open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/records",
             params={"ignore_consistency_check": "true"},
             json_body={"fields": fields},
+            access_token=access_token,
         )
 
-    async def update_record(self, app_token: str, table_id: str, record_id: str, fields: dict[str, Any]) -> dict[str, Any]:
+    async def update_record(
+        self,
+        app_token: str,
+        table_id: str,
+        record_id: str,
+        fields: dict[str, Any],
+        *,
+        access_token: str | None = None,
+    ) -> dict[str, Any]:
         return await self._request(
             "PUT",
             f"/open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/records/{record_id}",
             params={"ignore_consistency_check": "true"},
             json_body={"fields": fields},
+            access_token=access_token,
         )
 
-    async def create_record_share_link(self, app_token: str, table_id: str, record_id: str) -> dict[str, Any] | None:
-        _ = app_token, table_id, record_id
+    async def create_record_share_link(
+        self,
+        app_token: str,
+        table_id: str,
+        record_id: str,
+        *,
+        access_token: str | None = None,
+    ) -> dict[str, Any] | None:
+        _ = app_token, table_id, record_id, access_token
         return None
 
     async def _paged_request(
@@ -137,6 +180,8 @@ class BitableOpenApiAdapter:
         *,
         page_size: int,
         params: dict[str, Any] | None = None,
+        json_body: dict[str, Any] | None = None,
+        access_token: str | None = None,
     ) -> dict[str, Any]:
         merged_items: list[dict[str, Any]] = []
         last_payload: dict[str, Any] = {}
@@ -144,10 +189,23 @@ class BitableOpenApiAdapter:
 
         for _ in range(20):
             page_params = dict(params or {})
-            page_params["page_size"] = page_size
+            page_body = dict(json_body or {})
+            if method.upper() == "GET":
+                page_params["page_size"] = page_size
+            else:
+                page_body["page_size"] = page_size
             if page_token:
-                page_params["page_token"] = page_token
-            last_payload = await self._request(method, path, params=page_params)
+                if method.upper() == "GET":
+                    page_params["page_token"] = page_token
+                else:
+                    page_body["page_token"] = page_token
+            last_payload = await self._request(
+                method,
+                path,
+                params=page_params,
+                json_body=page_body or None,
+                access_token=access_token,
+            )
             data = last_payload.get("data") if isinstance(last_payload.get("data"), dict) else {}
             for item in data.get("items") or []:
                 if isinstance(item, dict):
@@ -169,9 +227,11 @@ class BitableOpenApiAdapter:
         *,
         params: dict[str, Any] | None = None,
         json_body: dict[str, Any] | None = None,
+        access_token: str | None = None,
     ) -> dict[str, Any]:
         client = self.feishu_client or FeishuClient()
         safe_path = self._redact_text(path)
+        headers = {"Authorization": f"Bearer {access_token}"} if access_token else None
         try:
             payload = await asyncio.to_thread(
                 client.request_openapi_json,
@@ -179,6 +239,7 @@ class BitableOpenApiAdapter:
                 path,
                 params=params,
                 json_body=json_body,
+                headers=headers,
             )
         except Exception as exc:  # noqa: BLE001
             message = self._redact_text(str(exc))

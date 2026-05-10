@@ -56,6 +56,8 @@ class BitableRepository:
         )
 
     async def create_source(self, payload: BitableSourceCreate, *, created_by: str | None = None) -> BitableSource:
+        if payload.app_token is None:
+            raise ValueError("app_token is required after Bitable base resolution")
         now = datetime.now(UTC)
         source = BitableSource(
             workspace_id=payload.workspace_id,

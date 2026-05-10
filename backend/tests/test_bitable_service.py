@@ -52,10 +52,10 @@ class _Repository:
 
 
 class _Cli:
-    async def list_fields(self, app_token, table_id):  # noqa: ANN001
+    async def list_fields(self, app_token, table_id, *, access_token=None):  # noqa: ANN001
         return {"items": [{"field_name": "标题"}, {"field_name": "负责人"}, {"field_name": "阶段"}]}
 
-    async def search_records(self, app_token, table_id, *, query, view_id=None, limit=8, search_fields=None, select_fields=None):  # noqa: ANN001
+    async def search_records(self, app_token, table_id, *, query, view_id=None, limit=8, search_fields=None, select_fields=None, access_token=None):  # noqa: ANN001
         return {
             "items": [
                 {
@@ -65,15 +65,15 @@ class _Cli:
             ]
         }
 
-    async def create_record(self, app_token, table_id, fields):  # noqa: ANN001
+    async def create_record(self, app_token, table_id, fields, *, access_token=None):  # noqa: ANN001
         self.created_fields = fields
         return {"record": {"record_id": "rec_archive"}}
 
-    async def update_record(self, app_token, table_id, record_id, fields):  # noqa: ANN001
+    async def update_record(self, app_token, table_id, record_id, fields, *, access_token=None):  # noqa: ANN001
         self.updated_fields = fields
         return {"record": {"record_id": record_id}}
 
-    async def create_record_share_link(self, app_token, table_id, record_id):  # noqa: ANN001
+    async def create_record_share_link(self, app_token, table_id, record_id, *, access_token=None):  # noqa: ANN001
         return {"record_share_links": {record_id: "https://example.feishu.cn/record/rec_archive"}}
 
 
