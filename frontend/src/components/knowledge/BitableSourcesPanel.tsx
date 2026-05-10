@@ -202,7 +202,7 @@ export function BitableSourcesPanel() {
         <div>
           <h2 className="text-[18px] font-semibold text-slate-950">Bitable 数据源</h2>
           <p className="mt-1 max-w-[720px] text-[13px] leading-6 text-slate-500">
-            使用飞书官方 lark-cli Base skill 读取结构化记录，并把生成结果归档回多维表格。
+            使用项目内飞书 OpenAPI 读取结构化记录，并把正式生成结果归档回多维表格。
           </p>
         </div>
         <span className="inline-flex h-8 items-center rounded-[10px] border border-slate-200 px-3 text-[12px] font-semibold text-slate-600">

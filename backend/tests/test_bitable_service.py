@@ -3,6 +3,7 @@ from __future__ import annotations
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import patch
 
+import app.modules.bitable.service as service_module
 from app.modules.bitable.service import BitableService
 from app.modules.bitable.schemas import BitableArchiveRequest, BitableQueryRequest, BitableSourceCreate
 
@@ -79,7 +80,7 @@ class _Cli:
 class BitableServiceTest(IsolatedAsyncioTestCase):
     async def test_query_records_returns_context_records(self) -> None:
         repository = _Repository()
-        service = BitableService(repository, cli_adapter=_Cli())
+        service = BitableService(repository, adapter=_Cli())
         await service.create_source(
             BitableSourceCreate(
                 workspace_id="Feishu_demo_Eko",
@@ -105,7 +106,7 @@ class BitableServiceTest(IsolatedAsyncioTestCase):
 
     async def test_query_records_without_user_scope_returns_empty(self) -> None:
         repository = _Repository()
-        service = BitableService(repository, cli_adapter=_Cli())
+        service = BitableService(repository, adapter=_Cli())
         await service.create_source(
             BitableSourceCreate(
                 workspace_id="Feishu_demo_Eko",
@@ -125,7 +126,7 @@ class BitableServiceTest(IsolatedAsyncioTestCase):
     async def test_archive_creates_then_updates_existing_link(self) -> None:
         repository = _Repository()
         cli = _Cli()
-        service = BitableService(repository, cli_adapter=cli)
+        service = BitableService(repository, adapter=cli)
         await service.create_source(
             BitableSourceCreate(
                 workspace_id="Feishu_demo_Eko",
@@ -165,7 +166,7 @@ class BitableServiceTest(IsolatedAsyncioTestCase):
 
     async def test_archive_skips_when_no_archive_fields_are_configured(self) -> None:
         repository = _Repository()
-        service = BitableService(repository, cli_adapter=_Cli())
+        service = BitableService(repository, adapter=_Cli())
         await service.create_source(
             BitableSourceCreate(
                 workspace_id="Feishu_demo_Eko",
@@ -194,7 +195,7 @@ class BitableServiceTest(IsolatedAsyncioTestCase):
 
     async def test_archive_without_user_scope_returns_empty(self) -> None:
         repository = _Repository()
-        service = BitableService(repository, cli_adapter=_Cli())
+        service = BitableService(repository, adapter=_Cli())
         await service.create_source(
             BitableSourceCreate(
                 workspace_id="Feishu_demo_Eko",
@@ -223,7 +224,7 @@ class BitableServiceTest(IsolatedAsyncioTestCase):
 
     async def test_source_schema_masks_app_token(self) -> None:
         repository = _Repository()
-        service = BitableService(repository, cli_adapter=_Cli())
+        service = BitableService(repository, adapter=_Cli())
         source = await service.create_source(
             BitableSourceCreate(
                 workspace_id="Feishu_demo_Eko",
@@ -239,7 +240,7 @@ class BitableServiceTest(IsolatedAsyncioTestCase):
 
     async def test_user_scoped_queries_only_use_owned_sources(self) -> None:
         repository = _Repository()
-        service = BitableService(repository, cli_adapter=_Cli())
+        service = BitableService(repository, adapter=_Cli())
         await service.create_source(
             BitableSourceCreate(
                 workspace_id="Feishu_demo_Eko",
@@ -263,7 +264,7 @@ class BitableServiceTest(IsolatedAsyncioTestCase):
 
     async def test_unscoped_query_does_not_use_global_sources(self) -> None:
         repository = _Repository()
-        service = BitableService(repository, cli_adapter=_Cli())
+        service = BitableService(repository, adapter=_Cli())
         await service.create_source(
             BitableSourceCreate(
                 workspace_id="Feishu_demo_Eko",
@@ -282,7 +283,7 @@ class BitableServiceTest(IsolatedAsyncioTestCase):
 
     async def test_unscoped_archive_does_not_write_global_sources(self) -> None:
         repository = _Repository()
-        service = BitableService(repository, cli_adapter=_Cli())
+        service = BitableService(repository, adapter=_Cli())
         await service.create_source(
             BitableSourceCreate(
                 workspace_id="Feishu_demo_Eko",
@@ -308,3 +309,7 @@ class BitableServiceTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(response.results, [])
         self.assertEqual(repository.saved_links, [])
+
+    def test_bitable_service_uses_openapi_adapter_not_cli(self) -> None:
+        self.assertFalse(hasattr(service_module, "BitableCliAdapter"))
+        self.assertTrue(hasattr(service_module, "BitableOpenApiAdapter"))

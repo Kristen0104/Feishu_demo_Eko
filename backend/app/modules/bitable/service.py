@@ -5,8 +5,8 @@ from typing import Any
 
 from app.config import settings
 from app.modules.bitable import normalizer
-from app.modules.bitable.cli_adapter import BitableCliAdapter, BitableCliError
 from app.modules.bitable.models import BitableSource
+from app.modules.bitable.openapi_adapter import BitableOpenApiAdapter, BitableOpenApiError
 from app.modules.bitable.repository import BitableRepository
 from app.modules.bitable.schemas import (
     BitableArchiveRequest,
@@ -30,10 +30,10 @@ class BitableService:
         self,
         repository: BitableRepository,
         *,
-        cli_adapter: BitableCliAdapter | None = None,
+        adapter: BitableOpenApiAdapter | None = None,
     ) -> None:
         self._repository = repository
-        self._cli = cli_adapter or BitableCliAdapter()
+        self._adapter = adapter or BitableOpenApiAdapter()
 
     async def list_sources(self, workspace_id: str, *, created_by: str | None = None) -> list[BitableSourceSchema]:
         if created_by is not None:
@@ -63,9 +63,9 @@ class BitableService:
     async def inspect_source(self, source_id: str, *, created_by: str | None = None) -> BitableInspectResult:
         source = await self._require_source(source_id, created_by=created_by)
         try:
-            table_payload = await self._cli.get_table(source.app_token, source.table_id)
-            fields_payload = await self._cli.list_fields(source.app_token, source.table_id)
-            views_payload = await self._cli.list_views(source.app_token, source.table_id)
+            table_payload = await self._adapter.get_table(source.app_token, source.table_id)
+            fields_payload = await self._adapter.list_fields(source.app_token, source.table_id)
+            views_payload = await self._adapter.list_views(source.app_token, source.table_id)
             table = normalizer.extract_table(table_payload)
             fields = normalizer.normalize_fields(fields_payload) or normalizer.normalize_fields(table_payload)
             views = normalizer.normalize_views(views_payload) or normalizer.normalize_views(table_payload)
@@ -78,7 +78,7 @@ class BitableService:
                 views=views,
                 raw={"table": table_payload, "fields": fields_payload, "views": views_payload},
             )
-        except BitableCliError as exc:
+        except BitableOpenApiError as exc:
             source = await self._repository.update_check_status(source, status="failed", error=str(exc)[:1000])
             raise
 
@@ -140,7 +140,7 @@ class BitableService:
         records_payload: dict[str, Any] | None = None
         if search_fields:
             try:
-                records_payload = await self._cli.search_records(
+                records_payload = await self._adapter.search_records(
                     source.app_token,
                     source.table_id,
                     query=query,
@@ -149,11 +149,11 @@ class BitableService:
                     search_fields=search_fields,
                     select_fields=select_fields,
                 )
-            except BitableCliError as exc:
+            except BitableOpenApiError as exc:
                 logger.info("Bitable record-search fell back to record-list source=%s: %s", source.id, exc)
 
         if records_payload is None:
-            records_payload = await self._cli.list_records(
+            records_payload = await self._adapter.list_records(
                 source.app_token,
                 source.table_id,
                 view_id=source.view_id,
@@ -181,15 +181,15 @@ class BitableService:
         )
         try:
             if existing is not None:
-                raw = await self._cli.update_record(source.app_token, source.table_id, existing.record_id, fields)
+                raw = await self._adapter.update_record(source.app_token, source.table_id, existing.record_id, fields)
                 record_id = existing.record_id
                 status = "updated"
             else:
-                raw = await self._cli.create_record(source.app_token, source.table_id, fields)
+                raw = await self._adapter.create_record(source.app_token, source.table_id, fields)
                 record_id = normalizer.extract_record_id(raw)
                 status = "created"
             if not record_id:
-                raise BitableCliError("CLI response did not include record_id")
+                raise BitableOpenApiError("Bitable OpenAPI response did not include record_id")
             record_url = await self._record_share_link(source, record_id)
             await self._repository.save_archive_link(
                 session_id=payload.session_id,
@@ -231,9 +231,11 @@ class BitableService:
 
     async def _record_share_link(self, source: BitableSource, record_id: str) -> str | None:
         try:
-            payload = await self._cli.create_record_share_link(source.app_token, source.table_id, record_id)
+            payload = await self._adapter.create_record_share_link(source.app_token, source.table_id, record_id)
         except Exception as exc:  # noqa: BLE001
             logger.info("Create Bitable record share link skipped source=%s record=%s: %s", source.id, record_id, exc)
+            return None
+        if payload is None:
             return None
         return normalizer.extract_share_link(payload, record_id)
 
@@ -253,7 +255,7 @@ class BitableService:
         snapshot_fields = source.last_schema_snapshot.get("fields") if isinstance(source.last_schema_snapshot, dict) else None
         if not isinstance(snapshot_fields, list) or not snapshot_fields:
             try:
-                payload = await self._cli.list_fields(source.app_token, source.table_id)
+                payload = await self._adapter.list_fields(source.app_token, source.table_id)
                 snapshot_fields = normalizer.normalize_fields(payload)
             except Exception as exc:  # noqa: BLE001
                 logger.info("Bitable list_fields for search projection failed source=%s: %s", source.id, exc)

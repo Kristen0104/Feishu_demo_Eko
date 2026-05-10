@@ -1,1 +1,1 @@
-"""Bitable source integration backed by the official lark-cli Base skill."""
+"""Bitable source integration backed by Feishu OpenAPI."""

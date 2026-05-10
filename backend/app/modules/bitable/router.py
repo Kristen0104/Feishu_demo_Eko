@@ -6,8 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.config import settings
 from app.core.security import AuthContext, get_auth_context
-from app.modules.bitable.cli_adapter import BitableCliError
 from app.modules.bitable.dependencies import get_bitable_service
+from app.modules.bitable.openapi_adapter import BitableOpenApiError
 from app.modules.bitable.schemas import (
     BitableArchiveRequest,
     BitableArchiveResponse,
@@ -99,7 +99,7 @@ async def inspect_source(
         return ApiResponse.success(await bitable_service.inspect_source(source_id, created_by=auth_context.user_id))
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except BitableCliError as exc:
+    except BitableOpenApiError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
