@@ -37,13 +37,16 @@ export function EditableTextRow({
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value);
+  const displayValue = value || "—";
 
   return (
     <div className="flex flex-col gap-1 border-b border-slate-100 py-4 last:border-b-0 sm:flex-row sm:items-start sm:justify-between sm:gap-8">
       <div className="w-full shrink-0 text-[13px] font-medium text-slate-500 sm:w-[168px]">{label}</div>
       <div className="min-w-0 flex-1">
         {!editing ? (
-          <p className="whitespace-pre-wrap text-[15px] font-medium text-slate-900">{value || "—"}</p>
+          <div key={displayValue} className="rounded-[12px] px-3 py-2">
+            <p className="whitespace-pre-wrap text-[15px] leading-[1.6] font-medium text-slate-900">{displayValue}</p>
+          </div>
         ) : multiline ? (
           <textarea
             className="min-h-[88px] w-full resize-y rounded-[12px] border border-slate-200 bg-white px-3 py-2 text-[15px] text-slate-900 outline-none ring-blue-500/30 focus:ring-2"

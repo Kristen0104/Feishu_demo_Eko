@@ -12,11 +12,15 @@ from app.core.llm_client import LLMRequestError
 from app.modules.document.dependencies import get_document_service
 from app.modules.document.service import DocumentService
 from app.modules.document.schemas import (
+    DocumentAutoSyncRequest,
+    DocumentAutoSyncResponse,
     DocumentGenerationRequest,
     DocumentGenerationResponse,
     DocumentSaveRequest,
     DocumentSaveResponse,
 )
+from app.modules.sync.dependencies import get_sync_service
+from app.modules.sync.service import SyncService
 from app.shared.responses import ApiResponse
 
 router = APIRouter()
@@ -91,6 +95,7 @@ async def save_document(
     request: DocumentSaveRequest,
     background_tasks: BackgroundTasks,
     service: Annotated[DocumentService, Depends(get_document_service)],
+    sync_service: Annotated[SyncService, Depends(get_sync_service)],
 ) -> ApiResponse[DocumentSaveResponse]:
     """保存文档，可选同步到飞书"""
     if request.sync_to_feishu:
@@ -102,6 +107,7 @@ async def save_document(
             content=request.content,
             app_token=request.app_token,
             table_id=request.table_id,
+            sync_service=sync_service,
         )
         return ApiResponse.success(
             DocumentSaveResponse(
@@ -119,6 +125,44 @@ async def save_document(
                 message="文档已保存",
             )
         )
+
+
+@router.post(
+    "/sync",
+    response_model=ApiResponse[DocumentAutoSyncResponse],
+    summary="自动同步当前编辑文档到飞书",
+)
+async def auto_sync_document(
+    request: DocumentAutoSyncRequest,
+    service: Annotated[DocumentService, Depends(get_document_service)],
+    sync_service: Annotated[SyncService, Depends(get_sync_service)],
+) -> ApiResponse[DocumentAutoSyncResponse]:
+    """同步前端直接编辑后的 Markdown，不经过 LLM。"""
+    result = await service.auto_sync_markdown_document(request)
+    response = DocumentAutoSyncResponse(
+        session_id=request.session_id,
+        status=str(result.get("status") or "failed"),
+        message=str(result.get("message") or "文档同步完成。"),
+        document_url=result.get("document_url") if isinstance(result.get("document_url"), str) else None,
+    )
+    artifact = {
+        "kind": "docx",
+        "content": request.content,
+        "status": response.status,
+        "current_step": "文档已自动同步",
+        "sharing_url": response.document_url or request.current_url,
+        "result_summary": response.message,
+    }
+    await sync_service.publish_task_completed(
+        request.session_id,
+        intent="docx",
+        message=response.message,
+        status=response.status,
+        artifact=artifact,
+        messages=None,
+        error=str(result.get("error")) if result.get("error") else None,
+    )
+    return ApiResponse.success(response)
 
 
 @router.post(

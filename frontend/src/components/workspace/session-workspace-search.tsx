@@ -14,7 +14,10 @@ export function SessionWorkspaceSearchProvider({ children }: { children: ReactNo
   const [query, setQuery] = useState("");
   const pathname = usePathname() ?? "";
   useEffect(() => {
-    setQuery("");
+    const timer = window.setTimeout(() => {
+      setQuery("");
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [pathname]);
   const value = useMemo(() => ({ query, setQuery }), [query]);
   return <SessionWorkspaceSearchContext.Provider value={value}>{children}</SessionWorkspaceSearchContext.Provider>;

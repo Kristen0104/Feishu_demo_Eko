@@ -8,9 +8,10 @@ import { AnimatePresence, motion } from "@/components/MotionShim";
 import { detailDesignTokens } from "@/components/session-detail/designTokens";
 import { AccentPill, HeaderBadge, StatusPill, cn } from "@/components/UiPrimitives";
 import { TopSearchIcon } from "@/components/workspace/workspace-chrome";
-import { useMockWebSocket } from "@/hooks/useMockWebSocket";
+import { deleteSyncSession } from "@/lib/sync/delete-session";
+import { fetchSyncSessions } from "@/lib/sync/fetch-sessions";
 import { SessionFilter, useAppStore } from "@/store/app-store";
-import { SessionItem, SessionListPageData, SessionParticipant, SessionStatus } from "@/types/session";
+import { SessionItem, SessionParticipant, SessionStatus } from "@/types/session";
 
 function ItemModeIcon({ kind, compact }: { kind: SessionItem["kind"]; compact?: boolean }) {
   const base = compact
@@ -81,7 +82,75 @@ function SourceIcon({ source, compact }: { source: SessionItem["source"]; compac
 function statusToWorkflow(status: SessionStatus): "completed" | "running" | "pending" | "warning" {
   if (status === "已同步") return "completed";
   if (status === "进行中") return "running";
+  if (status === "待处理") return "warning";
   return "pending";
+}
+
+function mapRemoteStatus(status: string): SessionStatus {
+  const normalized = status.trim().toLowerCase();
+  if (status === "已同步" || normalized === "completed" || normalized === "done" || normalized === "success") return "已同步";
+  if (status === "进行中" || normalized === "running" || normalized === "processing" || normalized === "queued") return "进行中";
+  if (status.includes("失败") || normalized === "failed" || normalized === "error" || normalized === "cancelled") return "待处理";
+  if (status === "草稿" || status === "待处理") return status;
+  return "进行中";
+}
+
+function formatUpdatedAt(timestamp: string): string {
+  const parsed = Date.parse(timestamp);
+  if (Number.isNaN(parsed)) return "刚刚";
+  const date = new Date(parsed);
+  return `${date.getMonth() + 1} 月 ${date.getDate()} 日`;
+}
+
+function makeLiveSessionItem(session: {
+  session_id: string;
+  source: string;
+  title: string;
+  summary: string;
+  status: string;
+  updated_at: string;
+  intent?: string | null;
+  artifact?: {
+    kind?: string | null;
+    intent?: string | null;
+  } | null;
+}): SessionItem {
+  const source = session.source === "feishu" ? "飞书" : "IM";
+  const status = mapRemoteStatus(session.status);
+  const updatedAt = formatUpdatedAt(session.updated_at);
+  const collaborator: SessionParticipant = { id: "eko-bot", name: "Eko Bot", initials: "EK" };
+  const signal = (session.artifact?.kind || session.artifact?.intent || session.intent || "").trim().toLowerCase();
+  const kind: SessionItem["kind"] = signal === "board" ? "canvas" : signal === "ppt" || signal === "docx" || signal === "presentation" ? "doc" : "chat";
+  const kindLabel: SessionItem["kindLabel"] = kind === "canvas" ? "画布" : kind === "doc" ? "文稿" : "聊天";
+  return {
+    id: session.session_id,
+    title: session.title,
+    summary: session.summary,
+    source,
+    kind,
+    kindLabel,
+    status,
+    updatedAt,
+    participants: [collaborator],
+    preview: {
+      id: session.session_id,
+      title: session.title,
+      source,
+      startedAt: updatedAt,
+      outputMode: kindLabel,
+      status,
+      syncedAt: updatedAt,
+      summary: session.summary,
+      collaborators: [collaborator],
+      relatedItems: [],
+      activity: {
+        id: `${session.session_id}:activity`,
+        actor: "Eko Bot",
+        action: "创建了新会话",
+        time: "刚刚",
+      },
+    },
+  };
 }
 
 function AvatarStack({ participants, compact }: { participants: SessionParticipant[]; compact?: boolean }) {
@@ -114,10 +183,60 @@ function KindPill({ kindLabel, kind, className }: Pick<SessionItem, "kindLabel" 
   );
 }
 
-export function SessionsWorkspace({ data }: { data: SessionListPageData }) {
+type SortOrder = "recent" | "oldest" | "title";
+
+const sortLabels: Record<SortOrder, string> = {
+  recent: "最新优先",
+  oldest: "最早优先",
+  title: "标题优先",
+};
+
+function getSessionSearchText(item: SessionItem): string {
+  return [item.title, item.summary, item.source, item.kindLabel, item.participants.map((person) => person.name).join(" ")]
+    .join(" ")
+    .toLowerCase();
+}
+
+function parseSessionTime(value: string): number {
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+function sortSessionItems(items: SessionItem[], order: SortOrder): SessionItem[] {
+  const collator = new Intl.Collator("zh-Hans", { sensitivity: "base", numeric: true });
+  return [...items].sort((left, right) => {
+    if (order === "title") {
+      return collator.compare(left.title, right.title) || parseSessionTime(right.updatedAt) - parseSessionTime(left.updatedAt);
+    }
+    const delta = parseSessionTime(right.updatedAt) - parseSessionTime(left.updatedAt);
+    return order === "recent" ? delta : -delta || collator.compare(left.title, right.title);
+  });
+}
+
+function getSectionSortAnchor(section: { items: SessionItem[] }, order: SortOrder): number {
+  if (section.items.length === 0) return 0;
+  const timestamps = section.items.map((item) => parseSessionTime(item.updatedAt));
+  if (order === "oldest") return Math.min(...timestamps);
+  if (order === "title") return Math.max(...timestamps);
+  return Math.max(...timestamps);
+}
+
+export function SessionsWorkspace({
+  initialSections = [],
+}: {
+  initialSections?: Array<{ title: string; items: SessionItem[] }>;
+}) {
   const pathname = usePathname() ?? "";
-  const defaultId = data.sections[0]?.items[0]?.id ?? "";
   const [toast, setToast] = useState<string | null>(null);
+  const [liveData, setLiveData] = useState<{ sections: Array<{ title: string; items: SessionItem[] }> }>({
+    sections: initialSections,
+  });
+  const [searchQuery, setSearchQuery] = useState("");
+  const [sortOrder, setSortOrder] = useState<SortOrder>("recent");
+  const [isFilterPanelOpen, setIsFilterPanelOpen] = useState(false);
+  const [isSelectionMode, setIsSelectionMode] = useState(false);
+  const [selectedSessionIds, setSelectedSessionIds] = useState<string[]>([]);
+  const [isDeleting, setIsDeleting] = useState(false);
   const selectedId = useAppStore((state) => state.selectedSessionId);
   const isDetailOpen = useAppStore((state) => state.isDetailOpen);
   const activeFilter = useAppStore((state) => state.activeFilter);
@@ -128,7 +247,7 @@ export function SessionsWorkspace({ data }: { data: SessionListPageData }) {
   const closeDetail = useAppStore((state) => state.closeDetail);
   const initializeStars = useAppStore((state) => state.initializeStars);
   const toggleStar = useAppStore((state) => state.toggleStar);
-  const setRuntimeSessionPatch = useAppStore((state) => state.setRuntimeSessionPatch);
+  const defaultId = liveData.sections[0]?.items[0]?.id ?? "";
 
   const filterOptions: Array<{ key: SessionFilter; label: string }> = [
     { key: "all", label: "全部" },
@@ -140,37 +259,46 @@ export function SessionsWorkspace({ data }: { data: SessionListPageData }) {
   ];
 
   useEffect(() => {
-    if (!selectedId && defaultId) selectSession(defaultId);
-  }, [defaultId, selectSession, selectedId]);
+    const hasSelectedItem = liveData.sections.some((section) => section.items.some((item) => item.id === selectedId));
+    if (defaultId && (!selectedId || !hasSelectedItem)) selectSession(defaultId);
+  }, [defaultId, liveData.sections, selectSession, selectedId]);
 
   useEffect(() => {
-    const initial: Record<string, boolean> = {};
-    for (const section of data.sections) {
-      for (const item of section.items) {
-        initial[item.id] = Boolean(item.starred);
+    let cancelled = false;
+    const syncRemoteSessions = async () => {
+      const sessions = await fetchSyncSessions();
+      if (cancelled || sessions.length === 0) return;
+      const incomingIds = new Set(sessions.map((session) => session.session_id));
+      const liveItems = sessions.map(makeLiveSessionItem);
+      setLiveData((current) => {
+        const sections = current.sections.map((section) => ({
+          ...section,
+          items: section.items.filter((item) => !incomingIds.has(item.id)),
+        }));
+        const todayIndex = sections.findIndex((section) => section.title === "今天");
+        if (todayIndex >= 0) {
+          sections[todayIndex] = {
+            ...sections[todayIndex],
+            items: [...liveItems, ...sections[todayIndex].items],
+          };
+        } else {
+          sections.unshift({ title: "今天", items: liveItems });
+        }
+        return { ...current, sections };
+      });
+      const initial: Record<string, boolean> = {};
+      for (const session of sessions) {
+        initial[session.session_id] = false;
       }
-    }
-    initializeStars(initial);
-  }, [data.sections, initializeStars]);
-
-  const allItems = useMemo(() => data.sections.flatMap((section) => section.items), [data.sections]);
-
-  useMockWebSocket({
-    enabled: allItems.length > 0,
-    intervalMs: 9000,
-    onTick: () => {
-      const targets = allItems.map((item) => item.id);
-      if (!targets.length) return;
-      const now = new Date();
-      const minuteSeed = now.getMinutes() + now.getSeconds();
-      const index = minuteSeed % targets.length;
-      const statuses: SessionStatus[] = ["进行中", "已同步", "待处理", "草稿"];
-      const id = targets[index];
-      const next = statuses[minuteSeed % statuses.length];
-      const updatedAt = `刚刚 ${now.getHours().toString().padStart(2, "0")}:${now.getMinutes().toString().padStart(2, "0")}`;
-      setRuntimeSessionPatch(id, { status: next, updatedAt });
-    },
-  });
+      initializeStars(initial);
+    };
+    void syncRemoteSessions();
+    const timer = window.setInterval(syncRemoteSessions, 5000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [initializeStars, setActiveFilter]);
 
   const getRuntimeStatus = (item: SessionItem) => runtimeSessionMap[item.id]?.status ?? item.status;
   const getRuntimeUpdatedAt = (item: SessionItem) => runtimeSessionMap[item.id]?.updatedAt ?? item.updatedAt;
@@ -184,28 +312,45 @@ export function SessionsWorkspace({ data }: { data: SessionListPageData }) {
     setToast(current ? "已取消星标" : "已加入星标");
   };
 
-  const matchesFilter = useCallback(
-    (item: SessionItem, sectionTitle: string) => {
-      if (activeFilter === "all") return true;
-      if (activeFilter === "chat") return item.kind === "chat";
-      if (activeFilter === "doc") return item.kind === "doc";
-      if (activeFilter === "canvas") return item.kind === "canvas";
-      if (activeFilter === "starred") return isStarred(item);
-      return sectionTitle === "今天";
-    },
-    [activeFilter, isStarred],
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+
+  const filteredSections = useMemo(() => {
+    const sectionItems = liveData.sections
+      .map((section) => {
+        const items = section.items
+          .filter((item) => {
+            if (activeFilter === "chat") return item.kind === "chat";
+            if (activeFilter === "doc") return item.kind === "doc";
+            if (activeFilter === "canvas") return item.kind === "canvas";
+            if (activeFilter === "starred") return isStarred(item);
+            if (activeFilter === "recent") return section.title !== "更早";
+            return true;
+          })
+          .filter((item) => (normalizedQuery ? getSessionSearchText(item).includes(normalizedQuery) : true));
+
+        return {
+          ...section,
+          items: sortSessionItems(items, sortOrder),
+        };
+      })
+      .filter((section) => section.items.length > 0);
+
+    const collator = new Intl.Collator("zh-Hans", { sensitivity: "base", numeric: true });
+    return [...sectionItems].sort((left, right) => {
+      if (sortOrder === "title") {
+        return collator.compare(left.title, right.title) || getSectionSortAnchor(right, sortOrder) - getSectionSortAnchor(left, sortOrder);
+      }
+      const delta = getSectionSortAnchor(right, sortOrder) - getSectionSortAnchor(left, sortOrder);
+      return sortOrder === "recent" ? delta : -delta || collator.compare(left.title, right.title);
+    });
+  }, [activeFilter, isStarred, liveData.sections, normalizedQuery, sortOrder]);
+
+  const visibleSessionIds = useMemo(
+    () => filteredSections.flatMap((section) => section.items.map((item) => item.id)),
+    [filteredSections],
   );
 
-  const filteredSections = useMemo(
-    () =>
-      data.sections
-        .map((section) => ({
-          ...section,
-          items: section.items.filter((item) => matchesFilter(item, section.title)),
-        }))
-        .filter((section) => section.items.length > 0),
-    [data.sections, matchesFilter],
-  );
+  const isAllVisibleSelected = visibleSessionIds.length > 0 && visibleSessionIds.every((id) => selectedSessionIds.includes(id));
 
   useEffect(() => {
     if (!toast) return;
@@ -213,21 +358,111 @@ export function SessionsWorkspace({ data }: { data: SessionListPageData }) {
     return () => window.clearTimeout(timer);
   }, [toast]);
 
+  const toggleSelection = (itemId: string) => {
+    setSelectedSessionIds((current) =>
+      current.includes(itemId) ? current.filter((id) => id !== itemId) : [...current, itemId],
+    );
+    setIsSelectionMode(true);
+  };
+
+  const selectAllVisible = () => {
+    setSelectedSessionIds(isAllVisibleSelected ? [] : visibleSessionIds);
+    setIsSelectionMode(true);
+  };
+
+  const clearSelection = () => {
+    setSelectedSessionIds([]);
+    setIsSelectionMode(false);
+  };
+
+  const exportSelectedPreview = async (item: SessionItem) => {
+    const lines = [
+      `会话：${item.preview.title}`,
+      `模式：${item.preview.outputMode}`,
+      `状态：${getRuntimeStatus(item)}`,
+      `来源：${item.preview.source}`,
+      `时间：${item.preview.startedAt}`,
+      "",
+      item.preview.summary || item.summary,
+    ];
+    const text = lines.join("\n");
+    try {
+      if (navigator.clipboard) {
+        await navigator.clipboard.writeText(text);
+        setToast("已复制会话摘要");
+        return;
+      }
+    } catch {
+      // Fall through to local download when clipboard permission is unavailable.
+    }
+    const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${item.id}-summary.txt`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+    setToast("已导出会话摘要");
+  };
+
+  const deleteSelectedSessions = async () => {
+    if (selectedSessionIds.length === 0 || isDeleting) return;
+    const confirmed = window.confirm(`确认删除选中的 ${selectedSessionIds.length} 个会话吗？`);
+    if (!confirmed) return;
+
+    setIsDeleting(true);
+    try {
+      const results = await Promise.all(selectedSessionIds.map((sessionId) => deleteSyncSession(sessionId)));
+      const deletedIds = selectedSessionIds.filter((sessionId, index) => results[index]);
+      const deletedSet = new Set(deletedIds);
+      const failedCount = selectedSessionIds.length - deletedIds.length;
+
+      if (deletedIds.length > 0) {
+        setLiveData((current) => ({
+          ...current,
+          sections: current.sections
+            .map((section) => ({
+              ...section,
+              items: section.items.filter((item) => !deletedSet.has(item.id)),
+            }))
+            .filter((section) => section.items.length > 0),
+        }));
+      }
+
+      if (deletedIds.includes(selectedId ?? "")) {
+        const nextId = visibleSessionIds.find((id) => !deletedSet.has(id)) ?? "";
+        if (nextId) {
+          selectSession(nextId);
+        }
+      }
+
+      setSelectedSessionIds([]);
+      setIsSelectionMode(false);
+      setToast(
+        failedCount > 0
+          ? `已删除 ${deletedIds.length} 个会话，${failedCount} 个删除失败`
+          : `已删除 ${deletedIds.length} 个会话`,
+      );
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   const selectedItem = useMemo(() => {
     if (!selectedId) return null;
-    for (const section of filteredSections.length > 0 ? filteredSections : data.sections) {
+    for (const section of filteredSections.length > 0 ? filteredSections : liveData.sections) {
       const match = section.items.find((item) => item.id === selectedId);
       if (match) return match;
     }
-    for (const section of data.sections) {
+    for (const section of liveData.sections) {
       const match = section.items.find((item) => item.id === selectedId);
       if (match) return match;
     }
     return null;
-  }, [data.sections, filteredSections, selectedId]);
+  }, [filteredSections, liveData.sections, selectedId]);
 
   return (
-      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+    <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <AnimatePresence>
           {toast ? (
             <motion.div
@@ -242,7 +477,7 @@ export function SessionsWorkspace({ data }: { data: SessionListPageData }) {
         </AnimatePresence>
 
         <div className={cn("grid min-h-0 min-w-0 flex-1 grid-cols-1", selectedItem && isDetailOpen ? "xl:grid-cols-[minmax(0,1fr)_388px]" : "xl:grid-cols-1")}>
-            <motion.div layout className={cn("flex min-h-0 min-w-0 flex-1 flex-col bg-white", selectedItem && isDetailOpen ? "border-r border-slate-200/90" : "")}>
+          <motion.div layout className={cn("flex min-h-0 min-w-0 flex-1 flex-col bg-white", selectedItem && isDetailOpen ? "border-r border-slate-200/90" : "")}>
               <div className="shrink-0 bg-white px-4 pb-2.5 pt-2.5">
                 <div className="min-w-0 border-b border-slate-200/90 pb-2.5">
                   <h1 className="text-[17px] font-semibold leading-tight tracking-[-0.03em] text-slate-950">会话</h1>
@@ -254,21 +489,120 @@ export function SessionsWorkspace({ data }: { data: SessionListPageData }) {
 
               <div className="flex min-h-0 min-w-0 flex-1 flex-col">
                 <div className="min-h-0 flex-1 space-y-2.5 overflow-y-auto px-3 py-2.5">
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <div className="flex h-9 min-w-[160px] flex-1 items-center gap-2 rounded-[12px] border border-slate-200 bg-[#fafbfc] px-2.5">
-                      <TopSearchIcon />
-                      <span className="text-[12px] text-slate-400">搜索会话</span>
+                  <div className="space-y-2">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <label className="flex h-9 min-w-[180px] flex-1 items-center gap-2 rounded-[12px] border border-slate-200 bg-[#fafbfc] px-2.5">
+                        <TopSearchIcon />
+                        <input
+                          type="search"
+                          value={searchQuery}
+                          onChange={(event) => setSearchQuery(event.target.value)}
+                          placeholder="搜索会话标题、摘要、来源"
+                          className="w-full bg-transparent text-[12px] text-slate-700 outline-none placeholder:text-slate-400"
+                        />
+                        {searchQuery ? (
+                          <button
+                            type="button"
+                            onClick={() => setSearchQuery("")}
+                            className="text-[12px] font-semibold text-slate-400 hover:text-slate-600"
+                            aria-label="清空搜索"
+                          >
+                            ×
+                          </button>
+                        ) : null}
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => setIsFilterPanelOpen((current) => !current)}
+                        className={cn(
+                          "inline-flex h-9 items-center rounded-[12px] border px-3 text-[12px] font-semibold transition",
+                          isFilterPanelOpen || activeFilter !== "all"
+                            ? "border-blue-300 bg-blue-50 text-blue-700"
+                            : "border-slate-200 bg-white text-slate-700",
+                        )}
+                      >
+                        筛选
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSortOrder((current) => (current === "recent" ? "oldest" : current === "oldest" ? "title" : "recent"))}
+                        className="inline-flex h-9 items-center gap-0.5 rounded-[12px] border border-slate-200 bg-white px-3 text-[12px] font-semibold text-slate-700"
+                      >
+                        {sortLabels[sortOrder]}
+                        <span className="text-slate-400">⌄</span>
+                      </button>
+                      {isSelectionMode ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={selectAllVisible}
+                            className="inline-flex h-9 items-center rounded-[12px] border border-slate-200 bg-white px-3 text-[12px] font-semibold text-slate-700"
+                          >
+                            全选
+                          </button>
+                          <button
+                            type="button"
+                            onClick={deleteSelectedSessions}
+                            disabled={isDeleting || selectedSessionIds.length === 0}
+                            className={cn(
+                              "inline-flex h-9 items-center rounded-[12px] px-3 text-[12px] font-semibold transition",
+                              isDeleting || selectedSessionIds.length === 0
+                                ? "cursor-not-allowed border border-slate-200 bg-slate-100 text-slate-400"
+                                : "border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100",
+                            )}
+                          >
+                            {isDeleting ? "删除中..." : `删除选中 (${selectedSessionIds.length})`}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={clearSelection}
+                            className="inline-flex h-9 items-center rounded-[12px] border border-slate-200 bg-white px-3 text-[12px] font-semibold text-slate-700"
+                          >
+                            退出多选
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setIsSelectionMode(true)}
+                          className="inline-flex h-9 items-center rounded-[12px] border border-slate-200 bg-white px-3 text-[12px] font-semibold text-slate-700"
+                        >
+                          多选删除
+                        </button>
+                      )}
                     </div>
-                    <button
-                      type="button"
-                      className="inline-flex h-9 items-center rounded-[12px] border border-slate-200 bg-white px-3 text-[12px] font-semibold text-slate-700"
-                    >
-                      筛选
-                    </button>
-                    <button type="button" className="inline-flex h-9 items-center gap-0.5 rounded-[12px] border border-slate-200 bg-white px-3 text-[12px] font-semibold text-slate-700">
-                      最新优先
-                      <span className="text-slate-400">⌄</span>
-                    </button>
+
+                    {isFilterPanelOpen ? (
+                      <div className="rounded-[16px] border border-slate-200 bg-white p-2.5 shadow-[0_12px_30px_rgba(15,23,42,0.08)]">
+                        <div className="flex flex-wrap gap-1.5">
+                          {filterOptions.map((option) => {
+                            const active = activeFilter === option.key;
+                            return (
+                              <button
+                                key={option.key}
+                                type="button"
+                                onClick={() => setActiveFilter(option.key)}
+                                className="rounded-full"
+                              >
+                                <HeaderBadge tone={active ? "info" : "neutral"}>{option.label}</HeaderBadge>
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <div className="mt-2.5 flex items-center justify-between gap-2">
+                          <p className="text-[12px] text-slate-500">
+                            当前筛选：{filterOptions.find((option) => option.key === activeFilter)?.label ?? "全部"}
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => setActiveFilter("all")}
+                            className="text-[12px] font-semibold text-blue-600 hover:text-blue-700"
+                          >
+                            重置筛选
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
 
                   <div className="flex origin-left scale-[0.94] flex-wrap gap-1.5">
@@ -285,7 +619,7 @@ export function SessionsWorkspace({ data }: { data: SessionListPageData }) {
                   <div className="space-y-3 pb-1">
                     {filteredSections.length === 0 ? (
                       <div className="rounded-[14px] border border-slate-200/90 bg-[#fafbfc] px-4 py-6 text-center text-[13px] text-slate-500">
-                        当前筛选暂无会话，试试切换到“全部”。
+                        {searchQuery ? "没有找到匹配的会话，试试清空搜索条件。" : "当前筛选暂无会话，试试切换到“全部”。"}
                       </div>
                     ) : null}
                     {filteredSections.map((section) => (
@@ -296,40 +630,49 @@ export function SessionsWorkspace({ data }: { data: SessionListPageData }) {
                             const sessionHref = `/sessions/${encodeURIComponent(item.id)}`;
                             const routeActive = pathname === sessionHref;
                             const active = routeActive || selectedItem?.id === item.id;
-                            return (
-                              <Link
-                                key={item.id}
-                                href={sessionHref}
-                                prefetch={false}
-                                scroll
-                                onClick={() => selectSession(item.id)}
-                                className={cn(
-                                  "flex w-full items-start gap-2 rounded-[14px] border px-2.5 py-2 text-left transition outline-none ring-offset-2 focus-visible:ring-2 focus-visible:ring-blue-500",
-                                  active
-                                    ? "border-blue-300/90 bg-blue-50/80 shadow-[0_4px_14px_rgba(37,99,235,0.08)]"
-                                    : "border-slate-200/90 bg-[#fafbfc] hover:border-slate-300 hover:bg-white",
-                                )}
-                              >
+                            const checked = selectedSessionIds.includes(item.id);
+                            const rowClasses = cn(
+                              "flex w-full items-start gap-2 rounded-[14px] border px-2.5 py-2 text-left transition outline-none ring-offset-2 focus-visible:ring-2 focus-visible:ring-blue-500",
+                              active
+                                ? "border-blue-300/90 bg-blue-50/80 shadow-[0_4px_14px_rgba(37,99,235,0.08)]"
+                                : "border-slate-200/90 bg-[#fafbfc] hover:border-slate-300 hover:bg-white",
+                            );
+                            const rowContent = (
+                              <>
+                                {isSelectionMode ? (
+                                  <span className="mt-0.5 flex h-5 w-5 items-center justify-center rounded-[6px] border border-slate-300 bg-white">
+                                    <input
+                                      type="checkbox"
+                                      checked={checked}
+                                      onChange={() => toggleSelection(item.id)}
+                                      onClick={(event) => event.stopPropagation()}
+                                      className="h-3.5 w-3.5 accent-blue-600"
+                                      aria-label={`选择 ${item.title}`}
+                                    />
+                                  </span>
+                                ) : null}
                                 <ItemModeIcon kind={item.kind} compact />
                                 <div className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-start gap-x-3 gap-y-1">
                                   <div className="min-w-0">
                                     <div className="flex items-center gap-1">
                                       <h4 className="truncate text-[13px] font-semibold leading-tight text-slate-900">{item.title}</h4>
-                                      <button
-                                        type="button"
-                                        onClick={(event) => {
-                                          event.preventDefault();
-                                          event.stopPropagation();
-                                          toggleStarred(item.id);
-                                        }}
-                                        className={cn(
-                                          "shrink-0 text-[11px] transition",
-                                          isStarred(item) ? "text-amber-400 hover:text-amber-500" : "text-slate-300 hover:text-slate-500",
-                                        )}
-                                        aria-label={isStarred(item) ? "取消星标" : "设为星标"}
-                                      >
-                                        {isStarred(item) ? "★" : "☆"}
-                                      </button>
+                                      {isSelectionMode ? null : (
+                                        <button
+                                          type="button"
+                                          onClick={(event) => {
+                                            event.preventDefault();
+                                            event.stopPropagation();
+                                            toggleStarred(item.id);
+                                          }}
+                                          className={cn(
+                                            "shrink-0 text-[11px] transition",
+                                            isStarred(item) ? "text-amber-400 hover:text-amber-500" : "text-slate-300 hover:text-slate-500",
+                                          )}
+                                          aria-label={isStarred(item) ? "取消星标" : "设为星标"}
+                                        >
+                                          {isStarred(item) ? "★" : "☆"}
+                                        </button>
+                                      )}
                                     </div>
                                     <p className="mt-0.5 line-clamp-1 text-[11px] leading-snug text-slate-500">{item.summary}</p>
                                   </div>
@@ -348,7 +691,25 @@ export function SessionsWorkspace({ data }: { data: SessionListPageData }) {
                                     <AvatarStack participants={item.participants} compact />
                                   </div>
                                 </div>
-                              </Link>
+                              </>
+                            );
+                            return (
+                              isSelectionMode ? (
+                                <div key={item.id} className={rowClasses} onClick={() => toggleSelection(item.id)}>
+                                  {rowContent}
+                                </div>
+                              ) : (
+                                <Link
+                                  key={item.id}
+                                  href={sessionHref}
+                                  prefetch={false}
+                                  scroll
+                                  onClick={() => selectSession(item.id)}
+                                  className={rowClasses}
+                                >
+                                  {rowContent}
+                                </Link>
+                              )
                             );
                           })}
                         </div>
@@ -359,7 +720,7 @@ export function SessionsWorkspace({ data }: { data: SessionListPageData }) {
               </div>
             </motion.div>
 
-            <AnimatePresence mode="wait">
+          <AnimatePresence mode="wait">
               {selectedItem && isDetailOpen ? (
                 <motion.div
                   key="session-detail-panel"
@@ -415,11 +776,19 @@ export function SessionsWorkspace({ data }: { data: SessionListPageData }) {
                         >
                           打开
                         </Link>
-                        <button type="button" className={cn(detailDesignTokens.button.control, "min-w-[120px] flex-1 justify-center sm:flex-none")}>
+                        <Link
+                          href={`/sessions/${encodeURIComponent(selectedItem.id)}`}
+                          prefetch={false}
+                          className={cn(detailDesignTokens.button.control, "min-w-[120px] flex-1 justify-center sm:flex-none")}
+                        >
                           继续
-                        </button>
-                        <button type="button" className={cn(detailDesignTokens.button.control, "gap-1")}>
-                          导出 <span className="text-slate-400">⌄</span>
+                        </Link>
+                        <button
+                          type="button"
+                          onClick={() => void exportSelectedPreview(selectedItem)}
+                          className={cn(detailDesignTokens.button.control, "gap-1")}
+                        >
+                          导出 <span className="text-slate-400">↗</span>
                         </button>
                       </div>
 
@@ -515,8 +884,8 @@ export function SessionsWorkspace({ data }: { data: SessionListPageData }) {
                   </div>
                 </motion.div>
               ) : null}
-            </AnimatePresence>
-          </div>
+          </AnimatePresence>
         </div>
+      </div>
   );
 }

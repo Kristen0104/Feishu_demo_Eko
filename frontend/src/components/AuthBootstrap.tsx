@@ -6,6 +6,7 @@ import { apiUrl } from "@/lib/eko-api";
 import { clearAccessToken, readAccessToken } from "@/lib/auth-token";
 import { readAuth } from "@/lib/auth-session";
 import { useAppStore } from "@/store/app-store";
+import { useProfileStore } from "@/store/profile-store";
 
 /** 在 Zustand persist 完成后再对齐浏览器中的登录票据（15 天 localStorage / 单次会话 sessionStorage） */
 export function AuthBootstrap() {
@@ -30,6 +31,7 @@ export function AuthBootstrap() {
             .then((res) => {
               if (res.status === 401) {
                 clearAccessToken();
+                useProfileStore.getState().clearProfileState();
                 useAppStore.getState().logout();
               }
             })

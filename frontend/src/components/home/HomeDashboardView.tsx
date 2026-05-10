@@ -83,7 +83,11 @@ function SessionTeaserCard({ item }: { item: SessionItem }) {
 }
 
 export function HomeDashboardView({ data }: { data: SessionListPageData }) {
-  const recent = data.sections.flatMap((s) => s.items).slice(0, 4);
+  const allSessions = data.sections.flatMap((s) => s.items);
+  const recent = allSessions.slice(0, 4);
+  const inProgressCount = allSessions.filter((item) => item.status === "进行中").length;
+  const syncedCount = allSessions.filter((item) => item.status === "已同步").length;
+  const feishuCount = allSessions.filter((item) => item.source === "飞书").length;
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "早上好" : hour < 18 ? "下午好" : "晚上好";
 
@@ -111,9 +115,9 @@ export function HomeDashboardView({ data }: { data: SessionListPageData }) {
           </div>
 
           <div className="mt-8 grid gap-4 sm:grid-cols-3">
-            <StatCard label="进行中会话" value="12" hint="较昨日 +2" accent="blue" />
-            <StatCard label="本周文稿" value="8" hint="3 篇待同步" accent="emerald" />
-            <StatCard label="画布节点" value="24" hint="已连接飞书" accent="violet" />
+            <StatCard label="进行中会话" value={String(inProgressCount)} hint="来自实时会话" accent="blue" />
+            <StatCard label="已同步会话" value={String(syncedCount)} hint="后端最新状态" accent="emerald" />
+            <StatCard label="飞书来源" value={String(feishuCount)} hint="由 @机器人 触发" accent="violet" />
           </div>
         </div>
 

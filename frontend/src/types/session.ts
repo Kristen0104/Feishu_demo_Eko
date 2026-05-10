@@ -36,6 +36,7 @@ export type SessionPreview = {
   collaborators: SessionParticipant[];
   relatedItems: SessionRelatedItem[];
   activity: SessionActivity;
+  externalUrl?: string;
 };
 
 export type SessionItem = {

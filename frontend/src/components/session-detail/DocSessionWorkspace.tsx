@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { AnimatePresence, motion } from "framer-motion";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -8,18 +9,70 @@ import remarkGfm from "remark-gfm";
 
 import { MessageInput } from "@/components/MessageInput";
 import { MoreIcon } from "@/components/Icons";
+import { Stepper } from "@/components/Stepper";
 import { EvidencePill, HeaderBadge, StatusPill } from "@/components/UiPrimitives";
 import { useEkoSessionRealtime } from "@/hooks/useEkoSessionRealtime";
-import { streamAgentExecute, streamDocumentGeneration } from "@/lib/agent/sse-stream";
+import { apiUrl, fetchEkoJson } from "@/lib/eko-api";
+import { fetchSyncSession } from "@/lib/sync/fetch-session";
+import { streamAgentChat, type AgentChatStreamEvent } from "@/lib/agent/sse-stream";
 import { useAppStore } from "@/store/app-store";
-import { useAgentRuntimeStore, type PlanningStepWire } from "@/store/agent-runtime-store";
-import { Stepper } from "@/components/Stepper";
-import { DetailActivity, DetailCanvasNode, DetailRelatedFile, DetailSyncAction, DetailTabKey, SessionDetailData } from "@/types/session-detail";
-import type { WorkflowStatus, WorkflowStep } from "@/types/workspace";
+import { useAgentRuntimeStore, type PlanningPlanWire, type PlanningStepWire, type RetrievedSourceWire } from "@/store/agent-runtime-store";
+import {
+  DetailActivity,
+  DetailCanvasNode,
+  DetailDocumentArtifact,
+  DetailEvidenceItem,
+  DetailRelatedFile,
+  DetailSourceItem,
+  DetailSyncAction,
+  DetailTabKey,
+  SessionDetailData,
+} from "@/types/session-detail";
+import type { WorkflowStatus } from "@/types/workspace";
+import type { WorkflowStep } from "@/types/workspace";
 
 import { useSessionWorkspaceSearch } from "@/components/workspace/session-workspace-search";
 import { DetailConversationMessage } from "./DetailConversationMessage";
 import { detailDesignTokens } from "./designTokens";
+
+type AgentEventChannel = "chat" | "status" | "plan" | "sources" | "artifact" | "log" | "error";
+
+function inferAgentEventChannel(event: {
+  event?: string | null;
+  channel?: AgentEventChannel | null;
+}): AgentEventChannel {
+  if (event.channel) return event.channel;
+  switch (event.event) {
+    case "turn.started":
+    case "intent.recognized":
+    case "retrieval.started":
+    case "tool.started":
+      return "status";
+    case "context.loaded":
+    case "retrieval.completed":
+    case "source.bitable.started":
+    case "source.bitable.completed":
+    case "source.bitable.empty":
+    case "source.bitable.failed":
+      return "sources";
+    case "plan.created":
+    case "plan.summary":
+    case "plan.step":
+      return "plan";
+    case "result.created":
+    case "clarification.requested":
+      return "chat";
+    case "artifact.archived":
+    case "artifact.archive_failed":
+      return "artifact";
+    case "turn.failed":
+      return "error";
+    case "tool.selected":
+    case "tool.completed":
+    default:
+      return "log";
+  }
+}
 
 function SmallIcon({
   type,
@@ -266,6 +319,755 @@ function ActivityRow({ item }: { item: DetailActivity }) {
   );
 }
 
+function normalizeArtifactKind(artifact?: SessionDetailData["artifact"]): "ppt" | "docx" | "board" | "unknown" {
+  const kind = (artifact?.kind ?? "").toLowerCase();
+  if (kind === "ppt" || kind === "docx" || kind === "board") return kind;
+  return "unknown";
+}
+
+function normalizeArtifactState(status?: string | null) {
+  const normalized = (status ?? "").toLowerCase();
+  if (normalized === "done" || normalized === "completed" || normalized === "已同步") {
+    return { label: "已完成", tone: "emerald", progress: 100 };
+  }
+  if (normalized === "failed" || normalized.includes("失败")) {
+    return { label: "失败", tone: "rose", progress: 100 };
+  }
+  if (normalized === "queued") {
+    return { label: "排队中", tone: "blue", progress: 8 };
+  }
+  if (normalized === "进行中" || normalized === "running" || normalized === "generating_slides" || normalized === "generating_notes" || normalized === "exporting" || normalized === "generating_design" || normalized === "parsing_file") {
+    return { label: "进行中", tone: "blue", progress: 48 };
+  }
+  return { label: status || "待处理", tone: "slate", progress: 0 };
+}
+
+type AgentChatResponseWire = {
+  session_id: string;
+  intent: "chat" | "docx" | "ppt" | "board";
+  status: "completed" | "failed";
+  message: string;
+  events?: Array<{
+    event?: string | null;
+    status?: string | null;
+    message?: string | null;
+    payload?: Record<string, unknown> | null;
+  }> | null;
+  artifact?: {
+    kind?: string | null;
+    content?: string | null;
+    job_id?: string | null;
+    download_url?: string | null;
+    progress?: number | null;
+    current_step?: string | null;
+    task_id?: string | null;
+    status?: string | null;
+    whiteboard_id?: string | null;
+    preview_url?: string | null;
+    sharing_url?: string | null;
+    result_summary?: string | null;
+    error_message?: string | null;
+    bitable_archive_results?: DetailDocumentArtifact["bitableArchiveResults"];
+  } | null;
+  plan?: {
+    goal?: string | null;
+    intent?: string | null;
+    task_complexity?: string | null;
+    missing_info?: string[] | null;
+    need_clarification?: boolean | null;
+    questions?: string[] | null;
+    assumptions?: string[] | null;
+    clarification_needed?: boolean | null;
+    clarification_question?: string | null;
+    summary?: string | null;
+    visible_summary?: string | null;
+    final_output?: {
+      format?: string | null;
+      requirements?: string[] | null;
+    } | null;
+    steps?: Array<{
+      id?: string | null;
+      step_id?: string | null;
+      title?: string | null;
+      description?: string | null;
+      type?: string | null;
+      tool?: string | null;
+      input?: Record<string, unknown> | null;
+      expected_output?: string | null;
+      depends_on?: string[] | null;
+      status?: string | null;
+    }>;
+  } | null;
+  error?: string | null;
+};
+
+type PPTPreviewSlide = {
+  slide_number: number;
+  title?: string | null;
+  template?: string | null;
+  right_items?: string[] | null;
+};
+
+type PPTPreview = {
+  job_id: string;
+  title?: string | null;
+  subtitle?: string | null;
+  page_count: number;
+  status: string;
+  progress: number;
+  download_url?: string | null;
+  slides: PPTPreviewSlide[];
+};
+
+type BoardImagePreview = {
+  whiteboard_id: string;
+  preview_url: string;
+};
+
+type DocumentAutoSyncWire = {
+  session_id: string;
+  status: "completed" | "failed" | string;
+  message: string;
+  document_url?: string | null;
+};
+
+type DocumentAutoSyncState = "idle" | "dirty" | "syncing" | "synced" | "failed";
+
+function toDetailArtifact(artifact?: AgentChatResponseWire["artifact"]): DetailDocumentArtifact | undefined {
+  if (!artifact) return undefined;
+  return {
+    kind: artifact.kind,
+    content: artifact.content,
+    jobId: artifact.job_id,
+    downloadUrl: artifact.download_url,
+    progress: artifact.progress,
+    currentStep: artifact.current_step,
+    status: artifact.status,
+    whiteboardId: artifact.whiteboard_id,
+    previewUrl: artifact.preview_url,
+    sharingUrl: artifact.sharing_url,
+    resultSummary: artifact.result_summary,
+    errorMessage: artifact.error_message,
+    bitableArchiveResults: artifact.bitable_archive_results ?? null,
+  };
+}
+
+function toPlanningSteps(plan?: AgentChatResponseWire["plan"]): PlanningStepWire[] {
+  const steps = plan?.steps;
+  if (!Array.isArray(steps)) return [];
+  return steps.map((step, index) => ({
+    id: step.id || step.step_id || String(index + 1),
+    title: step.title || step.description || `步骤 ${index + 1}`,
+    description: step.description || undefined,
+    type: step.type || undefined,
+    tool: step.tool || undefined,
+    input: step.input || undefined,
+    expectedOutput: step.expected_output || undefined,
+    dependsOn: step.depends_on || [],
+    status: step.status === "completed" || step.status === "running" || step.status === "warning" ? step.status : "pending",
+  }));
+}
+
+function toPlanningPlan(plan?: AgentChatResponseWire["plan"]): PlanningPlanWire | null {
+  const steps = toPlanningSteps(plan);
+  const hasSummary = Boolean(plan?.visible_summary || plan?.summary || plan?.goal);
+  const hasClarification = Boolean(plan?.clarification_question) || Boolean(plan?.questions?.length) || Boolean(plan?.missing_info?.length);
+  const hasFinalOutput = Boolean(plan?.final_output?.format) || Boolean(plan?.final_output?.requirements?.length);
+  if (!plan || (!steps.length && !hasSummary && !hasClarification && !hasFinalOutput)) return null;
+  return {
+    goal: plan.goal || "",
+    intent: plan.intent || "",
+    taskComplexity: plan.task_complexity || "medium",
+    missingInfo: plan.missing_info || [],
+    needClarification: Boolean(plan.need_clarification),
+    questions: plan.questions || [],
+    assumptions: plan.assumptions || [],
+    clarificationNeeded: Boolean(plan.clarification_needed),
+    clarificationQuestion: plan.clarification_question || null,
+    summary: plan.visible_summary || plan.summary || "",
+    steps,
+    finalOutput: plan.final_output
+      ? {
+          format: plan.final_output.format || "",
+          requirements: plan.final_output.requirements || [],
+        }
+      : undefined,
+  };
+}
+
+function formatMessageTime(date = new Date()) {
+  const hh = date.getHours().toString().padStart(2, "0");
+  const mm = date.getMinutes().toString().padStart(2, "0");
+  return `${hh}:${mm}`;
+}
+
+function agentToolCallText(intent: AgentChatResponseWire["intent"], artifact?: DetailDocumentArtifact) {
+  const kind = artifact?.kind || intent;
+  if (kind === "docx") return "好的，我现在调用文档生成能力，生成内容并同步到飞书。";
+  if (kind === "ppt") return "好的，我现在调用 AI PPT 能力，创建生成任务并等待导出。";
+  if (kind === "board") return "好的，我现在调用飞书画板能力，把任务落到画板流程里。";
+  return "好的，我现在直接回复这个问题。";
+}
+
+function planningMessageBody(plan: PlanningPlanWire) {
+  const clarificationLine =
+    plan.questions?.[0] ||
+    plan.clarificationQuestion ||
+    (plan.missingInfo?.length ? `待补充信息：${plan.missingInfo.join("、")}` : "");
+  const lines = ["任务理解与规划", plan.summary || plan.goal, clarificationLine].filter(Boolean);
+  const steps = plan.steps
+    .slice(0, 6)
+    .map((step, index) => `${index + 1}. ${step.title}${step.description ? `：${step.description}` : ""}`);
+  return [...lines, ...steps].join("\n");
+}
+
+function ragScoreLabel(score: number) {
+  if (!Number.isFinite(score) || score <= 0) return "";
+  return ` · ${(score * 100).toFixed(0)}%`;
+}
+
+function ragSnippet(content: string) {
+  const normalized = content.replace(/\s+/g, " ").trim();
+  if (!normalized) return "命中知识库资料，已注入本轮 Agent 上下文。";
+  return normalized.length > 86 ? `${normalized.slice(0, 86)}...` : normalized;
+}
+
+function ragSourcesToContextSources(sources: RetrievedSourceWire[]): DetailSourceItem[] {
+  return sources.map((source, index) => ({
+    id: `rag:${source.sourceId}:${index}`,
+    title: source.title || (source.sourceType === "bitable" ? "Bitable 数据" : "RAG 命中资料"),
+    description:
+      source.sourceType === "bitable"
+        ? `Bitable${ragScoreLabel(source.score)} · ${ragSnippet(source.content)}`
+        : `RAG${ragScoreLabel(source.score)} · ${ragSnippet(source.content)}`,
+    status: "completed",
+  }));
+}
+
+function ragSourcesToEvidence(sources: RetrievedSourceWire[]): DetailEvidenceItem[] {
+  return sources.map((source, index) => ({
+    id: `rag:evidence:${source.sourceId}:${index}`,
+    title: source.title || (source.sourceType === "bitable" ? "Bitable 数据" : "RAG 命中资料"),
+    description: ragSnippet(source.content),
+    tone: source.sourceType === "chat_history" ? "chat" : source.sourceType === "artifact" || source.sourceType === "bitable" ? "record" : "document",
+  }));
+}
+
+function mergeById<T extends { id: string }>(base: T[], extra: T[]) {
+  const seen = new Set(base.map((item) => item.id));
+  return [...base, ...extra.filter((item) => !seen.has(item.id))];
+}
+
+function wantsNewDocument(text: string) {
+  const normalized = text.toLowerCase();
+  return ["新建", "重新生成", "重新写", "重写一份", "另写", "另起", "再写一份", "再生成一份", "生成新", "新文档", "new document", "create new", "regenerate"].some(
+    (keyword) => text.includes(keyword) || normalized.includes(keyword),
+  );
+}
+
+function sectionsToMarkdown(sections: SessionDetailData["document"]["sections"]) {
+  return sections
+    .map((section) => {
+      const body = section.body ? `\n\n${section.body}` : "";
+      return `## ${section.title}${body}`;
+    })
+    .join("\n\n");
+}
+
+function ArtifactPresenter({
+  artifact,
+  sessionId,
+  markdown,
+  sections,
+  streaming = false,
+  editable = false,
+  onMarkdownChange,
+  autoSyncState = "idle",
+  autoSyncError,
+}: {
+  artifact?: SessionDetailData["artifact"];
+  sessionId: string;
+  markdown?: string | null;
+  sections: SessionDetailData["document"]["sections"];
+  streaming?: boolean;
+  editable?: boolean;
+  onMarkdownChange?: (nextMarkdown: string) => void;
+  autoSyncState?: DocumentAutoSyncState;
+  autoSyncError?: string | null;
+}) {
+  const kind = normalizeArtifactKind(artifact);
+  const state = normalizeArtifactState(artifact?.status);
+  const title =
+    kind === "ppt" ? artifact?.title || "AI PPT" : kind === "board" ? artifact?.title || "飞书画板" : artifact?.title || "文档产物";
+  const [pptPreview, setPptPreview] = useState<PPTPreview | null>(null);
+  const [selectedSlideNumber, setSelectedSlideNumber] = useState(1);
+  const [brokenSlidesByPreview, setBrokenSlidesByPreview] = useState<Record<string, Set<number>>>({});
+  const boardViewportRef = useRef<HTMLDivElement | null>(null);
+  const boardDragRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    scrollLeft: number;
+    scrollTop: number;
+  } | null>(null);
+  const [boardPreview, setBoardPreview] = useState<{
+    whiteboardId: string;
+    previewUrl: string | null;
+    state: "ready" | "failed";
+  } | null>(null);
+  const [boardZoom, setBoardZoom] = useState(1.7);
+  const [isDocEditing, setIsDocEditing] = useState(false);
+  const matchedBoardPreview =
+    boardPreview && boardPreview.whiteboardId === artifact?.whiteboardId ? boardPreview : null;
+  const effectiveBoardPreviewUrl =
+    artifact?.previewUrl ?? matchedBoardPreview?.previewUrl ?? null;
+  const effectiveBoardPreviewState =
+    artifact?.previewUrl ? "ready" : matchedBoardPreview?.state ?? "loading";
+  const previewSlides =
+    pptPreview?.slides?.length
+      ? pptPreview.slides
+      : [1, 2, 3].map((slide) => ({ slide_number: slide, title: slide === 1 ? "封面" : slide === 2 ? "内容" : "结尾", template: "" }));
+  const selectedSlide =
+    previewSlides.find((slide) => slide.slide_number === selectedSlideNumber) ?? previewSlides[0];
+  const pptPreviewKey = useMemo(() => {
+    if (!artifact?.jobId) return "ppt:placeholder";
+    const slideCount = pptPreview?.slides?.length ?? 0;
+    const statusKey = pptPreview?.status ?? artifact?.status ?? "unknown";
+    return `${artifact.jobId}:${statusKey}:${slideCount}`;
+  }, [artifact?.jobId, artifact?.status, pptPreview?.slides?.length, pptPreview?.status]);
+  const brokenSlides = brokenSlidesByPreview[pptPreviewKey] ?? new Set<number>();
+  const boardZoomPct = Math.round(boardZoom * 100);
+  const docMarkdown = markdown || sections.map((section) => `## ${section.title}\n\n${section.body ?? ""}`).join("\n\n");
+  const docFileName = `${(title || "Eko 文档").replace(/[\\/:*?"<>|]/g, "_")}.doc`;
+  const docSharingUrl = artifact?.sharingUrl ?? "";
+  const artifactSharingUrl = artifact?.sharingUrl ?? "";
+  const docEditorHeight = Math.min(2400, Math.max(560, docMarkdown.split(/\r?\n/).length * 28 + 120));
+  const canEditDocument = kind === "docx" && editable && !streaming;
+  const isDocEditorOpen = canEditDocument && isDocEditing;
+  const autoSyncLabel =
+    autoSyncState === "dirty"
+      ? "待自动同步"
+      : autoSyncState === "syncing"
+        ? "自动同步中"
+        : autoSyncState === "synced"
+          ? "已自动同步"
+          : autoSyncState === "failed"
+            ? "同步失败"
+            : "";
+  const autoSyncClass =
+    autoSyncState === "failed"
+      ? "border-rose-200 bg-rose-50 text-rose-600"
+      : autoSyncState === "synced"
+        ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+        : autoSyncState === "syncing"
+          ? "border-blue-200 bg-blue-50 text-blue-700"
+          : "border-slate-200 bg-slate-50 text-slate-500";
+
+  const handleCopyDocLink = useCallback(async () => {
+    if (!docSharingUrl || typeof navigator === "undefined" || !navigator.clipboard) return;
+    await navigator.clipboard.writeText(docSharingUrl);
+  }, [docSharingUrl]);
+
+  const handleCopyArtifactLink = useCallback(async () => {
+    if (!artifactSharingUrl || typeof navigator === "undefined" || !navigator.clipboard) return;
+    await navigator.clipboard.writeText(artifactSharingUrl);
+  }, [artifactSharingUrl]);
+
+  const handleSaveDoc = useCallback(() => {
+    if (typeof window === "undefined" || !docMarkdown.trim()) return;
+    const html = `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title></head><body><pre style="font-family:Arial,'Microsoft YaHei',sans-serif;white-space:pre-wrap;line-height:1.7;">${docMarkdown
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")}</pre></body></html>`;
+    const blob = new Blob([html], { type: "application/msword;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = docFileName;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [docFileName, docMarkdown, title]);
+
+  const handleBoardPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (!effectiveBoardPreviewUrl || event.button !== 0) return;
+    const target = event.currentTarget;
+    boardDragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      scrollLeft: target.scrollLeft,
+      scrollTop: target.scrollTop,
+    };
+    target.setPointerCapture(event.pointerId);
+    target.dataset.dragging = "true";
+  }, [effectiveBoardPreviewUrl]);
+
+  const handleBoardPointerMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = boardDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    const target = event.currentTarget;
+    target.scrollLeft = drag.scrollLeft - (event.clientX - drag.startX);
+    target.scrollTop = drag.scrollTop - (event.clientY - drag.startY);
+  }, []);
+
+  const endBoardDrag = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = boardDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    boardDragRef.current = null;
+    event.currentTarget.dataset.dragging = "false";
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  }, []);
+
+  const jobId = artifact?.jobId;
+  useEffect(() => {
+    if (kind !== "ppt" || !jobId) return;
+    let cancelled = false;
+    const fetchPreview = () =>
+      fetchEkoJson<PPTPreview>(`/api/v1/ppt/preview/${encodeURIComponent(jobId)}`)
+        .then((preview) => {
+          if (!cancelled) setPptPreview(preview);
+        })
+        .catch(() => {
+          if (!cancelled) setPptPreview(null);
+        });
+    fetchPreview();
+    const interval = setInterval(fetchPreview, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [jobId, kind, artifact?.status]);
+
+  useEffect(() => {
+    if (kind !== "board") return;
+    if (artifact?.previewUrl) {
+      return;
+    }
+    if (!artifact?.whiteboardId) {
+      return;
+    }
+
+    let cancelled = false;
+    const whiteboardId = artifact.whiteboardId;
+    fetchEkoJson<BoardImagePreview>(`/api/v1/feishu/board/image/${encodeURIComponent(artifact.whiteboardId)}`)
+      .then((preview) => {
+        if (cancelled) return;
+        setBoardPreview({ whiteboardId, previewUrl: preview.preview_url, state: "ready" });
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setBoardPreview({ whiteboardId, previewUrl: null, state: "failed" });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [artifact?.previewUrl, artifact?.whiteboardId, kind]);
+
+  if (!artifact && !markdown && sections.length === 0) return null;
+
+  return (
+    <div className="relative flex h-full min-h-[520px] w-full flex-col bg-white">
+      {kind === "ppt" ? (
+        <div className="flex min-h-0 flex-1 items-center justify-center px-4 py-4">
+          <div className="flex w-full max-w-[1120px] flex-col gap-3">
+            <div className="aspect-[16/9] w-full overflow-hidden rounded-[16px] border border-slate-200 bg-white shadow-[0_18px_44px_rgba(15,23,42,0.06)]">
+              {selectedSlide && artifact?.jobId && !brokenSlides.has(selectedSlide.slide_number) ? (
+                <Image
+                  src={apiUrl(`/api/v1/ppt/preview/${encodeURIComponent(artifact.jobId)}/slides/${selectedSlide.slide_number}`)}
+                  alt={selectedSlide.title || title}
+                  width={1600}
+                  height={900}
+                  unoptimized
+                  sizes="(max-width: 1120px) 100vw, 1120px"
+                  className="h-full w-full object-cover"
+                  onError={() =>
+                    setBrokenSlidesByPreview((prev) => {
+                      const next = { ...prev };
+                      const nextSet = new Set(next[pptPreviewKey] ?? []);
+                      nextSet.add(selectedSlide.slide_number);
+                      next[pptPreviewKey] = nextSet;
+                      return next;
+                    })
+                  }
+                />
+              ) : selectedSlide && brokenSlides.has(selectedSlide.slide_number) ? (
+                <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-slate-50 to-white p-8">
+                  <div className="text-center">
+                    <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-100">
+                      <svg className="h-8 w-8 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15" />
+                      </svg>
+                    </div>
+                    <h3 className="text-lg font-semibold text-slate-800">{selectedSlide.title || title}</h3>
+                    <p className="mt-1 text-sm text-slate-400">第 {selectedSlide.slide_number} 页</p>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex h-full flex-col p-6">
+                  <div className="flex min-w-0 items-center justify-between gap-3">
+                    <h3 className="truncate text-[18px] font-semibold text-slate-950">{title}</h3>
+                    <span className="rounded-full bg-emerald-50 px-3 py-1 text-[12px] font-semibold text-emerald-700">{state.label}</span>
+                  </div>
+                  <div className="mt-8 animate-pulse space-y-4">
+                    <div className="h-4 w-7/12 rounded-full bg-slate-200" />
+                    <div className="h-3 w-10/12 rounded-full bg-slate-100" />
+                    <div className="h-3 w-8/12 rounded-full bg-slate-100" />
+                    <div className="h-56 rounded-[16px] bg-slate-100" />
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              {artifact?.errorMessage ? <span className="rounded-full bg-rose-50 px-3 py-2 text-[12px] font-semibold text-rose-700">{artifact.errorMessage}</span> : null}
+              {artifactSharingUrl ? (
+                <>
+                  <button type="button" onClick={handleCopyArtifactLink} className="inline-flex h-9 items-center justify-center rounded-[12px] border border-slate-200 bg-white px-3 text-[13px] font-semibold text-slate-600 shadow-[0_8px_18px_rgba(15,23,42,0.06)] hover:border-blue-200 hover:text-blue-600">
+                    复制链接
+                  </button>
+                  <a href={artifactSharingUrl} target="_blank" rel="noreferrer" className="inline-flex h-9 items-center justify-center rounded-[12px] bg-slate-900 px-3 text-[13px] font-semibold text-white shadow-[0_10px_20px_rgba(15,23,42,0.14)] hover:bg-blue-600">
+                    打开飞书
+                  </a>
+                </>
+              ) : null}
+              {artifact?.downloadUrl ? (
+                <a href={artifact.downloadUrl} target="_blank" rel="noreferrer" className="inline-flex h-9 items-center justify-center rounded-[12px] bg-blue-600 px-3 text-[13px] font-semibold text-white shadow-[0_10px_20px_rgba(37,99,235,0.18)]">
+                  下载 PPT
+                </a>
+              ) : null}
+            </div>
+            <div className="flex min-w-0 gap-2 overflow-x-auto pb-1">
+              {previewSlides.slice(0, 8).map((slide) => (
+                <button
+                  key={slide.slide_number}
+                  type="button"
+                  onClick={() => {
+                    setSelectedSlideNumber(slide.slide_number);
+                    setBrokenSlidesByPreview((prev) => {
+                      const current = prev[pptPreviewKey];
+                      if (!current?.has(slide.slide_number)) return prev;
+                      const next = { ...prev };
+                      const nextSet = new Set(current);
+                      nextSet.delete(slide.slide_number);
+                      next[pptPreviewKey] = nextSet;
+                      return next;
+                    });
+                  }}
+                  className={[
+                    "w-[132px] shrink-0 overflow-hidden rounded-[12px] border bg-white text-left shadow-[0_8px_20px_rgba(15,23,42,0.04)] transition",
+                    selectedSlide?.slide_number === slide.slide_number ? "border-blue-500 ring-2 ring-blue-100" : "border-slate-200 hover:border-blue-300",
+                  ].join(" ")}
+                >
+                  <div className="flex items-center justify-between px-2 py-1.5 text-[10px] font-semibold text-slate-400">
+                    <span>Slide {slide.slide_number}</span>
+                    <span className="truncate">{slide.title || slide.template || ""}</span>
+                  </div>
+                  {pptPreview && artifact?.jobId && !brokenSlides.has(slide.slide_number) ? (
+                    <Image
+                      src={apiUrl(`/api/v1/ppt/preview/${encodeURIComponent(artifact.jobId)}/slides/${slide.slide_number}`)}
+                      alt={slide.title || `Slide ${slide.slide_number}`}
+                      width={264}
+                      height={149}
+                      unoptimized
+                      sizes="132px"
+                      className="aspect-[16/9] w-full object-cover"
+                      onError={() =>
+                        setBrokenSlidesByPreview((prev) => {
+                          const next = { ...prev };
+                          const nextSet = new Set(next[pptPreviewKey] ?? []);
+                          nextSet.add(slide.slide_number);
+                          next[pptPreviewKey] = nextSet;
+                          return next;
+                        })
+                      }
+                    />
+                  ) : (
+                    <div className="mx-2 mb-2 flex aspect-[16/9] items-center justify-center rounded-[10px] bg-slate-100 text-[11px] font-medium text-slate-400">
+                      {slide.slide_number}
+                    </div>
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : kind === "board" ? (
+        <div className="flex min-h-0 flex-1 flex-col px-5 py-5">
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[18px] border border-slate-200 bg-white shadow-[0_18px_44px_rgba(15,23,42,0.06)]">
+            <div className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
+              <div className="min-w-0">
+                <p className="truncate text-[16px] font-semibold text-slate-950">{title}</p>
+                <p className="mt-0.5 truncate text-[12px] text-slate-500">
+                  {artifact?.whiteboardId ? `Whiteboard ${artifact.whiteboardId}` : "飞书画板预览"}
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                {effectiveBoardPreviewUrl ? (
+                  <div className="flex h-9 items-center rounded-[12px] border border-slate-200 bg-white p-1 shadow-[0_6px_16px_rgba(15,23,42,0.04)]">
+                    <button
+                      type="button"
+                      onClick={() => setBoardZoom((zoom) => Math.max(0.7, Number((zoom - 0.15).toFixed(2))))}
+                      className="flex h-7 w-7 items-center justify-center rounded-[8px] text-[16px] font-semibold text-slate-600 hover:bg-slate-50"
+                      aria-label="缩小画板预览"
+                    >
+                      -
+                    </button>
+                    <span className="w-[54px] text-center text-[12px] font-semibold text-slate-600">{boardZoomPct}%</span>
+                    <button
+                      type="button"
+                      onClick={() => setBoardZoom((zoom) => Math.min(3, Number((zoom + 0.15).toFixed(2))))}
+                      className="flex h-7 w-7 items-center justify-center rounded-[8px] text-[16px] font-semibold text-slate-600 hover:bg-slate-50"
+                      aria-label="放大画板预览"
+                    >
+                      +
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setBoardZoom(1)}
+                      className="ml-1 h-7 rounded-[8px] px-2 text-[12px] font-semibold text-slate-500 hover:bg-slate-50"
+                    >
+                      100%
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setBoardZoom(1.7)}
+                      className="h-7 rounded-[8px] px-2 text-[12px] font-semibold text-blue-600 hover:bg-blue-50"
+                    >
+                      放大
+                    </button>
+                  </div>
+                ) : null}
+                <span className="rounded-full bg-emerald-50 px-3 py-1 text-[12px] font-semibold text-emerald-700">
+                  {state.label}
+                </span>
+              </div>
+            </div>
+            <div className="min-h-0 flex-1 bg-slate-50/70 p-3">
+              {effectiveBoardPreviewUrl ? (
+                <div
+                  ref={boardViewportRef}
+                  onPointerDown={handleBoardPointerDown}
+                  onPointerMove={handleBoardPointerMove}
+                  onPointerUp={endBoardDrag}
+                  onPointerCancel={endBoardDrag}
+                  onPointerLeave={endBoardDrag}
+                  className="h-full min-h-[420px] min-w-0 flex-1 cursor-grab touch-none select-none overflow-auto rounded-[14px] bg-white active:cursor-grabbing data-[dragging=true]:cursor-grabbing"
+                >
+                  <div className="flex min-h-full min-w-full items-start justify-center p-4">
+                    <Image
+                      src={effectiveBoardPreviewUrl}
+                      alt={title}
+                      width={1920}
+                      height={1080}
+                      unoptimized
+                      sizes="100vw"
+                      draggable={false}
+                      style={{ width: `${boardZoom * 100}%`, minWidth: `${Math.round(580 * boardZoom)}px`, height: "auto" }}
+                      className="pointer-events-none max-w-none object-contain"
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="flex h-full min-h-[420px] min-w-0 flex-1 flex-col items-center justify-center rounded-[14px] border border-dashed border-slate-200 bg-white px-6 text-center">
+                  <p className="text-[15px] font-semibold text-slate-900">
+                    {effectiveBoardPreviewState === "loading" ? "正在加载画板预览" : "暂时无法显示画板预览"}
+                  </p>
+                  <p className="mt-2 max-w-[520px] text-[13px] leading-6 text-slate-500">
+                    {effectiveBoardPreviewState === "failed"
+                      ? "飞书图片导出接口没有返回预览图，仍可打开飞书画板继续查看和编辑。"
+                      : artifact?.resultSummary || "画板资源已准备，可打开真实画板继续编辑。"}
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="min-h-0 flex-1 overflow-y-auto px-8 py-5">
+          <div className="sticky top-0 z-10 mx-auto mb-5 flex max-w-[720px] items-center justify-between gap-3 border-b border-slate-100 bg-white/95 pb-3 backdrop-blur">
+            <div className="min-w-0">
+              <p className="truncate text-[13px] font-semibold text-slate-900">{title}</p>
+              <p className="mt-0.5 text-[11px] text-slate-400">
+                {streaming ? "正在生成" : canEditDocument ? (isDocEditorOpen ? "Markdown 源码编辑，自动同步" : "文档预览") : state.label}
+              </p>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              {kind === "docx" && autoSyncLabel ? (
+                <span className={`inline-flex h-8 items-center justify-center rounded-[10px] border px-2.5 text-[12px] font-semibold ${autoSyncClass}`} title={autoSyncError || autoSyncLabel}>
+                  {autoSyncLabel}
+                </span>
+              ) : null}
+              {kind === "docx" && docSharingUrl ? (
+                <>
+                  <button type="button" onClick={handleCopyDocLink} className="inline-flex h-8 items-center justify-center rounded-[10px] border border-slate-200 bg-white px-2.5 text-[12px] font-semibold text-slate-600 hover:border-blue-200 hover:text-blue-600">
+                    复制链接
+                  </button>
+                  <a href={docSharingUrl} target="_blank" rel="noreferrer" className="inline-flex h-8 items-center justify-center rounded-[10px] bg-slate-900 px-2.5 text-[12px] font-semibold text-white hover:bg-blue-600">
+                    打开飞书
+                  </a>
+                </>
+              ) : null}
+              {kind === "docx" ? (
+                <button type="button" onClick={handleSaveDoc} className="inline-flex h-8 items-center justify-center rounded-[10px] border border-slate-200 bg-white px-2.5 text-[12px] font-semibold text-slate-600 hover:border-blue-200 hover:text-blue-600">
+                  下载文档
+                </button>
+              ) : null}
+              {canEditDocument ? (
+                <button
+                  type="button"
+                  onClick={() => setIsDocEditing((editing) => !editing)}
+                  className={[
+                    "inline-flex h-8 items-center justify-center rounded-[10px] px-2.5 text-[12px] font-semibold transition",
+                    isDocEditorOpen
+                      ? "border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100"
+                      : "border border-slate-200 bg-white text-slate-600 hover:border-blue-200 hover:text-blue-600",
+                  ].join(" ")}
+                >
+                  {isDocEditorOpen ? "预览" : "编辑"}
+                </button>
+              ) : null}
+            </div>
+          </div>
+          {streaming ? (
+            <div className="mx-auto max-w-[720px] whitespace-pre-wrap break-words text-[14px] leading-7 text-slate-700">
+              {markdown}
+              <span className="ml-1 inline-block h-4 w-[2px] translate-y-0.5 animate-pulse rounded-full bg-blue-500" aria-label="写入中" />
+            </div>
+          ) : (
+            isDocEditorOpen ? (
+              <textarea
+                value={docMarkdown}
+                onChange={(event) => onMarkdownChange?.(event.target.value)}
+                aria-label="编辑 Markdown 文档源码"
+                spellCheck={false}
+                style={{ minHeight: docEditorHeight }}
+                className="mx-auto block w-full max-w-[720px] resize-y rounded-[14px] border border-blue-100 bg-blue-50/20 px-4 py-3 font-mono text-[13px] leading-7 text-slate-800 outline-none transition focus:border-blue-300 focus:bg-white focus:ring-4 focus:ring-blue-50"
+              />
+            ) : (
+              <div className="prose prose-sm mx-auto max-w-[720px] text-slate-700 prose-headings:my-3 prose-p:my-2 prose-ul:my-2 prose-li:my-0.5">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                  {docMarkdown}
+                </ReactMarkdown>
+              </div>
+            )
+          )}
+        </div>
+      )}
+
+      <div className="absolute bottom-5 right-5 flex items-center gap-2">
+        {artifact?.errorMessage && kind !== "ppt" ? <span className="rounded-full bg-rose-50 px-3 py-2 text-[12px] font-semibold text-rose-700">{artifact.errorMessage}</span> : null}
+        {kind === "board" ? (
+          <Link href={artifact?.sharingUrl || `/canvas?session=${encodeURIComponent(sessionId)}`} prefetch={false} className="inline-flex h-9 items-center justify-center rounded-[12px] bg-blue-600 px-3 text-[13px] font-semibold text-white shadow-[0_10px_20px_rgba(37,99,235,0.18)]">
+            打开画布
+          </Link>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 function SectionCard({ title, children, action }: { title: string; children: ReactNode; action?: ReactNode }) {
   return (
     <section className="min-w-0 rounded-[22px] border border-slate-200/90 bg-white px-4 py-3.5 shadow-[0_12px_24px_rgba(148,163,184,0.06)]">
@@ -354,35 +1156,98 @@ function StepperStatusLegend() {
   return (
     <div
       role="presentation"
-      className="mt-2 flex shrink-0 flex-wrap gap-x-3 gap-y-1 border-t border-slate-100 pt-2 text-[10px] leading-tight text-slate-500"
+      className="flex shrink-0 flex-wrap items-center justify-end gap-x-2 gap-y-1 text-[9px] leading-tight text-slate-500"
     >
       <span className="inline-flex items-center gap-1">
-        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" aria-hidden />
+        <span className="h-1 w-1 shrink-0 rounded-full bg-emerald-500" aria-hidden />
         已完成
       </span>
       <span className="inline-flex items-center gap-1">
-        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-blue-500" aria-hidden />
+        <span className="h-1 w-1 shrink-0 rounded-full bg-blue-500" aria-hidden />
         进行中
       </span>
       <span className="inline-flex items-center gap-1">
-        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-slate-300" aria-hidden />
+        <span className="h-1 w-1 shrink-0 rounded-full bg-slate-300" aria-hidden />
         待处理
       </span>
       <span className="inline-flex items-center gap-1">
-        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" aria-hidden />
+        <span className="h-1 w-1 shrink-0 rounded-full bg-amber-400" aria-hidden />
         预警
       </span>
     </div>
   );
 }
 
-function mergeWorkflowSteps(base: WorkflowStep[], live: PlanningStepWire[]): WorkflowStep[] {
-  if (!live.length) return base;
-  return live.map((s) => ({
-    id: s.id,
-    title: s.title,
-    status: s.status,
+function canonicalWorkflowSteps(kind: "ppt" | "docx" | "board" | "unknown"): WorkflowStep[] {
+  const generateTitle =
+    kind === "ppt" ? "生成 AI PPT" : kind === "board" ? "生成飞书画板" : kind === "docx" ? "生成文稿" : "生成回复 / 文稿";
+  const syncTitle = kind === "board" ? "同步飞书画板" : kind === "ppt" ? "导出 PPT 文件" : kind === "docx" ? "同步飞书文档" : "同步结果";
+  return [
+    { id: "1", title: "分析 IM 上下文", status: "pending" },
+    { id: "2", title: "判断当前意图", status: "pending" },
+    { id: "3", title: "按需检索 RAG", status: "pending" },
+    { id: "4", title: generateTitle, status: "pending" },
+    { id: "5", title: syncTitle, status: "pending" },
+    { id: "6", title: "回传飞书群", status: "pending" },
+  ];
+}
+
+function mergeWorkflowSteps(
+  base: WorkflowStep[],
+  live: PlanningStepWire[],
+  kind: "ppt" | "docx" | "board" | "unknown",
+  phase: string,
+  artifactStatus?: string | null,
+): WorkflowStep[] {
+  const canonical = canonicalWorkflowSteps(kind);
+  const source = live.length ? live : canonical;
+  const byPosition = new Map((live.length ? live : base).map((step, index) => [String(index + 1), step.status]));
+  const normalizedStatus = (artifactStatus ?? "").toLowerCase();
+  const terminalDone = normalizedStatus === "done" || normalizedStatus === "completed" || normalizedStatus === "已同步";
+  const terminalFailed = normalizedStatus === "failed" || phase === "ERROR";
+
+  const withSourceStatus = source.map((step, index) => ({
+    ...step,
+    id: String(index + 1),
+    status: byPosition.get(String(index + 1)) ?? step.status,
   }));
+
+  if (terminalDone) {
+    return withSourceStatus.map((step) => ({ ...step, status: "completed" }));
+  }
+
+  if (terminalFailed) {
+    return withSourceStatus.map((step, index) => ({
+      ...step,
+      status: index < 3 ? "completed" : index === 3 ? "warning" : step.status,
+    }));
+  }
+
+  const activeIndex = live.length
+    ? phase === "ANALYZING" || phase === "RETRIEVING"
+      ? 0
+      : phase === "GENERATING"
+        ? Math.min(1, withSourceStatus.length - 1)
+        : phase === "SYNCING"
+          ? withSourceStatus.length - 1
+          : -1
+    : phase === "ANALYZING"
+      ? 0
+      : phase === "RETRIEVING"
+        ? 2
+        : phase === "GENERATING"
+          ? 3
+          : phase === "SYNCING"
+            ? 4
+            : -1;
+  if (activeIndex >= 0) {
+    return withSourceStatus.map((step, index) => ({
+      ...step,
+      status: index < activeIndex ? "completed" : index === activeIndex ? "running" : "pending",
+    }));
+  }
+
+  return withSourceStatus;
 }
 
 function AgentRealtimeRibbon({
@@ -399,13 +1264,17 @@ function AgentRealtimeRibbon({
     <motion.div
       initial={false}
       animate={{ opacity: busy ? 1 : 0.72 }}
-      className="mb-1 flex flex-wrap items-center gap-1.5 text-[10px] text-slate-600"
+      className="flex shrink-0 flex-wrap items-center gap-1.5 text-[9px] text-slate-600"
     >
       <span className="rounded-full bg-slate-900 px-2 py-0.5 font-semibold tracking-tight text-white">{phase}</span>
       <span className="text-slate-500">
         实时链路 {wsStatus}
-        {useMockFallback ? " · 协议 mock" : ""}
       </span>
+      {useMockFallback ? (
+        <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 font-semibold text-amber-700">
+          DEMO 协议 mock，非真实后端推送
+        </span>
+      ) : null}
       {busy ? (
         <motion.span
           className="inline-flex h-2 w-2 rounded-full bg-blue-500"
@@ -421,9 +1290,35 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
   const { query: workspaceSearchQuery } = useSessionWorkspaceSearch();
   const setRuntimeSessionPatch = useAppStore((state) => state.setRuntimeSessionPatch);
   const conversationOpen = useAppStore((s) => s.sessionDetailChatOpen);
+  const agentSlice = useAgentRuntimeStore((s) => s.sessions[data.id]);
   const [activeTab, setActiveTab] = useState<DetailTabKey>(data.defaultTab);
   const [messages, setMessages] = useState(data.messages);
+  const selfAuthor = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const msg of messages) {
+      if (msg.role === "member" && msg.author && msg.author !== "我" && msg.author !== "Eko" && msg.author !== "成员") {
+        counts.set(msg.author, (counts.get(msg.author) || 0) + 1);
+      }
+    }
+    let best = "";
+    let bestCount = 0;
+    for (const [author, count] of counts) {
+      if (count > bestCount) {
+        best = author;
+        bestCount = count;
+      }
+    }
+    return best || undefined;
+  }, [messages]);
+  const [localArtifact, setLocalArtifact] = useState<DetailDocumentArtifact | undefined>(data.artifact);
+  const [manualDocumentMarkdown, setManualDocumentMarkdown] = useState<string | null>(null);
+  const [docAutoSyncState, setDocAutoSyncState] = useState<DocumentAutoSyncState>("idle");
+  const [docAutoSyncError, setDocAutoSyncError] = useState<string | null>(null);
+  const docAutoSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const docAutoSyncAbortRef = useRef<AbortController | null>(null);
+  const docAutoSyncSeqRef = useRef(0);
   const [sending, setSending] = useState(false);
+  const [plannerEnabled, setPlannerEnabled] = useState(true);
   const isCanvasMode = data.layoutVariant === "canvas";
   const [canvasNodes, setCanvasNodes] = useState<DetailCanvasNode[]>(() => (isCanvasMode ? data.canvas.nodes : []));
   const [canvasActivities, setCanvasActivities] = useState<DetailActivity[]>(() =>
@@ -440,7 +1335,29 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
   const [archiveStatus, setArchiveStatus] = useState(isCanvasMode ? "草稿待确认" : "待同步");
   const [permissionStatus, setPermissionStatus] = useState(isCanvasMode ? "可同步" : "已验证");
   const [canvasNotice, setCanvasNotice] = useState<string | null>(null);
-  const currentTab = useMemo(() => data.outputTabs.find((tab) => tab.key === activeTab) ?? data.outputTabs[0], [activeTab, data.outputTabs]);
+  const contextMessages = data.contextMessages ?? [];
+  const shouldShowContextSelector = contextMessages.length > 0 && data.intent !== "chat";
+  const hasActiveRealtimeConversationRef = useRef(false);
+
+  hasActiveRealtimeConversationRef.current =
+    agentSlice?.phase === "ANALYZING" ||
+    agentSlice?.phase === "RETRIEVING" ||
+    agentSlice?.phase === "GENERATING" ||
+    agentSlice?.phase === "SYNCING";
+
+  useEffect(() => {
+    setMessages((current) => {
+      if (hasActiveRealtimeConversationRef.current && data.messages.length < current.length) return current;
+      return data.messages;
+    });
+  }, [data.messages]);
+  const [contextExpanded, setContextExpanded] = useState(shouldShowContextSelector);
+  const [contextStart, setContextStart] = useState(0);
+  const [contextEnd, setContextEnd] = useState(Math.max(0, contextMessages.length - 1));
+  const [contextSubmitting, setContextSubmitting] = useState(false);
+  const [contextNotice, setContextNotice] = useState<string | null>(null);
+  const [conversationFilter, setConversationFilter] = useState<"all" | "eko">("all");
+  const [memoryExpanded, setMemoryExpanded] = useState(false);
   const canvasSyncActions = useMemo<DetailSyncAction[]>(
     () =>
       isCanvasMode
@@ -464,29 +1381,31 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
         : data.syncActions,
     [archiveStatus, bitableStatus, canvasNodes.length, data.syncActions, isCanvasMode]
   );
-  const selectedTone =
-    currentTab.accent === "chat"
-      ? "border-emerald-200 bg-emerald-50 text-emerald-600"
-      : currentTab.accent === "doc"
-        ? "border-blue-300 bg-blue-50 text-blue-600 shadow-[0_8px_18px_rgba(59,130,246,0.08)]"
-        : "border-violet-200 bg-violet-50 text-violet-600";
-  const dropdownLabel = isCanvasMode ? "画布 / Canvas" : "文稿 / Markdown";
   const conversationTone = isCanvasMode ? "canvas" : "doc";
   const searchNeedle = workspaceSearchQuery.trim().toLowerCase();
   const filteredMessages = useMemo(() => {
-    if (!searchNeedle) return messages;
     return messages.filter((m) => {
+      if (conversationFilter === "eko" && m.role !== "eko" && m.author !== "Eko") return false;
+      if (!searchNeedle) return true;
       const blob = [m.author, m.body, m.time, m.helperText].filter(Boolean).join(" ").toLowerCase();
       return blob.includes(searchNeedle);
     });
-  }, [messages, searchNeedle]);
+  }, [conversationFilter, messages, searchNeedle]);
+  const runtimeContextSources = useMemo(
+    () => mergeById(data.contextSources, ragSourcesToContextSources(agentSlice?.retrievedSources ?? [])),
+    [agentSlice?.retrievedSources, data.contextSources],
+  );
+  const runtimeSourceEvidence = useMemo(
+    () => mergeById(data.sourceEvidence, ragSourcesToEvidence(agentSlice?.retrievedSources ?? [])),
+    [agentSlice?.retrievedSources, data.sourceEvidence],
+  );
   const filteredContextSources = useMemo(() => {
-    if (!searchNeedle) return data.contextSources;
-    return data.contextSources.filter((item) => {
+    if (!searchNeedle) return runtimeContextSources;
+    return runtimeContextSources.filter((item) => {
       const blob = [item.title, item.description].join(" ").toLowerCase();
       return blob.includes(searchNeedle);
     });
-  }, [data.contextSources, searchNeedle]);
+  }, [runtimeContextSources, searchNeedle]);
   const topRowNodes = canvasNodes.slice(0, 3);
   const bottomRowNodes = canvasNodes.slice(3, 6);
 
@@ -496,20 +1415,237 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
     return () => window.clearTimeout(timer);
   }, [canvasNotice]);
 
-  useEkoSessionRealtime({ sessionId: data.id });
+  const handleRealtimeEnvelope = useCallback((raw: unknown) => {
+    if (!raw || typeof raw !== "object") return;
+    const body = raw as Record<string, unknown>;
+    if (body.type === "TASK_COMPLETED") {
+      const payload = (body.payload ?? {}) as Record<string, unknown>;
+      const artifact = payload.artifact && typeof payload.artifact === "object" ? toDetailArtifact(payload.artifact as AgentChatResponseWire["artifact"]) : undefined;
+      if (artifact?.kind === "docx" && (manualDocumentMarkdown === null || docAutoSyncState === "idle" || docAutoSyncState === "synced")) {
+        const payloadStatus = typeof payload.status === "string" ? payload.status : null;
+        const normalizedArtifact = {
+          ...artifact,
+          status: artifact.status ?? (payloadStatus === "completed" || payloadStatus === "done" || payloadStatus === "已同步" ? "completed" : payloadStatus),
+        };
+        setLocalArtifact(normalizedArtifact);
+        setManualDocumentMarkdown(null);
+        if (normalizedArtifact.status === "completed" || normalizedArtifact.status === "done" || normalizedArtifact.status === "已同步") {
+          setDocAutoSyncState("synced");
+        }
+        setDocAutoSyncError(null);
+      }
+      return;
+    }
+    if (body.type !== "AGENT_MESSAGE") return;
+    const payload = (body.payload ?? {}) as Record<string, unknown>;
+    const content = typeof payload.content === "string" ? payload.content : "";
+    if (!content.trim()) return;
+    const role = typeof payload.role === "string" ? payload.role : "assistant";
+    const isEko = role === "assistant" || role === "eko" || role === "bot" || role === "system";
+    const replaceLast = payload.replace_last === true;
+    const time = formatMessageTime();
+    setMessages((prev) => {
+      const nextMessage: SessionDetailData["messages"][number] = {
+        id: `ws-${Date.now()}`,
+        author: isEko ? "Eko" : "成员",
+        role: isEko ? "eko" : "member",
+        time,
+        body: content,
+        avatar: isEko ? "E" : "成",
+        sent: true,
+      };
+      if (isEko) {
+        const duplicateReplay = prev.some((message) => {
+          if (message.role !== "eko") return false;
+          const existing = message.body.trim();
+          const incoming = content.trim();
+          return existing === incoming || existing.includes(incoming);
+        });
+        if (duplicateReplay) return prev;
+      }
+      if (replaceLast && prev.length > 0 && prev[prev.length - 1].role === nextMessage.role) {
+        const existing = prev[prev.length - 1].body.trim();
+        const incoming = content.trim();
+        if (existing.includes(incoming)) return prev;
+        if (incoming.includes(existing)) {
+          return [...prev.slice(0, -1), { ...nextMessage, id: prev[prev.length - 1].id }];
+        }
+        return [...prev.slice(0, -1), { ...nextMessage, id: prev[prev.length - 1].id }];
+      }
+      if (prev.length > 0 && prev[prev.length - 1].role === nextMessage.role && prev[prev.length - 1].body === content) {
+        return prev;
+      }
+      return [...prev, nextMessage];
+    });
+  }, [docAutoSyncState, manualDocumentMarkdown]);
 
-  const agentSlice = useAgentRuntimeStore((s) => s.sessions[data.id]);
+  useEkoSessionRealtime({ sessionId: data.id, onEnvelope: handleRealtimeEnvelope });
+
   const phase = agentSlice?.phase ?? "IDLE";
   const wsStatus = agentSlice?.wsStatus ?? "idle";
   const useMockFb = agentSlice?.useMockFallback ?? false;
   const docStream = agentSlice?.docMarkdownStream ?? "";
   const docConflict = agentSlice?.documentConflict ?? false;
   const lastErr = agentSlice?.lastError ?? null;
-
+  const detailArtifact = localArtifact ?? data.artifact;
+  const artifactTerminal = detailArtifact?.status === "done" || detailArtifact?.status === "completed" || detailArtifact?.status === "failed";
+  const activeDocStream =
+    agentSlice?.isDocStreaming &&
+    Boolean(docStream) &&
+    (phase === "ANALYZING" || phase === "RETRIEVING" || phase === "GENERATING" || phase === "SYNCING")
+      ? docStream
+      : "";
+  const showDocStream =
+    Boolean(activeDocStream) &&
+    phase !== "COMPLETED" &&
+    phase !== "ERROR" &&
+    (!detailArtifact || agentSlice?.isDocStreaming || !artifactTerminal);
+  const resourceArtifact = localArtifact ?? data.canvas.artifact ?? data.document.artifact ?? data.artifact;
+  const resourceKind = normalizeArtifactKind(resourceArtifact);
+  const renderedDocumentMarkdown = useMemo(() => sectionsToMarkdown(data.document.sections), [data.document.sections]);
+  const baseDocumentMarkdown = activeDocStream || (localArtifact?.kind === "docx" ? localArtifact.content : null) || data.document.markdown;
+  const documentMarkdown = manualDocumentMarkdown ?? baseDocumentMarkdown;
+  const currentDocumentMarkdown = documentMarkdown || renderedDocumentMarkdown;
+  const showDocumentSections = !detailArtifact;
+  const canvasSurfaceArtifact = localArtifact ?? data.canvas.artifact ?? data.artifact;
+  const showCanvasScaffold = normalizeArtifactKind(canvasSurfaceArtifact) !== "board";
+  const resourceTab: DetailTabKey | null =
+    resourceKind === "board" ? "canvas" : resourceKind === "ppt" || resourceKind === "docx" || showDocStream ? "doc" : null;
+  const workspaceExpanded = resourceTab !== null;
+  const displayTab = resourceTab ?? activeTab;
   const mergedWorkflow = useMemo(
-    () => mergeWorkflowSteps(data.workflow, agentSlice?.planningSteps ?? []),
-    [data.workflow, agentSlice?.planningSteps],
+    () => mergeWorkflowSteps(data.workflow, plannerEnabled ? agentSlice?.planningSteps ?? [] : [], resourceKind, phase, detailArtifact?.status),
+    [agentSlice?.planningSteps, data.workflow, detailArtifact?.status, phase, plannerEnabled, resourceKind],
   );
+
+  const handlePlannerToggle = useCallback(
+    (nextEnabled: boolean) => {
+      setPlannerEnabled(nextEnabled);
+      if (!nextEnabled) {
+        useAgentRuntimeStore.getState().patchSession(data.id, { planningPlan: null, planningSteps: [] });
+      }
+    },
+    [data.id],
+  );
+
+  useEffect(() => {
+    if (!data.artifact) return;
+    const differentArtifact =
+      data.artifact.jobId !== localArtifact?.jobId ||
+      data.artifact.whiteboardId !== localArtifact?.whiteboardId ||
+      data.artifact.kind !== localArtifact?.kind ||
+      data.artifact.status !== localArtifact?.status ||
+      data.artifact.content !== localArtifact?.content ||
+      data.artifact.sharingUrl !== localArtifact?.sharingUrl ||
+      data.artifact.currentStep !== localArtifact?.currentStep;
+    if (!localArtifact || differentArtifact) {
+      setLocalArtifact(data.artifact);
+      if (data.artifact.kind === "docx") {
+        setManualDocumentMarkdown(null);
+        setDocAutoSyncState("idle");
+        setDocAutoSyncError(null);
+      }
+    }
+  }, [data.artifact, localArtifact]);
+
+  useEffect(() => {
+    return () => {
+      if (docAutoSyncTimerRef.current) {
+        clearTimeout(docAutoSyncTimerRef.current);
+      }
+      docAutoSyncAbortRef.current?.abort();
+    };
+  }, []);
+
+  const handleManualDocumentChange = useCallback(
+    (nextMarkdown: string) => {
+      setManualDocumentMarkdown(nextMarkdown);
+      setDocAutoSyncError(null);
+      if (!nextMarkdown.trim()) {
+        setDocAutoSyncState("idle");
+        if (docAutoSyncTimerRef.current) {
+          clearTimeout(docAutoSyncTimerRef.current);
+          docAutoSyncTimerRef.current = null;
+        }
+        return;
+      }
+
+      setDocAutoSyncState("dirty");
+      if (docAutoSyncTimerRef.current) {
+        clearTimeout(docAutoSyncTimerRef.current);
+      }
+      const sequence = docAutoSyncSeqRef.current + 1;
+      docAutoSyncSeqRef.current = sequence;
+      const currentUrl = resourceArtifact?.sharingUrl ?? null;
+      const title = resourceArtifact?.title || data.document.title || data.title || "Eko 文档";
+
+      docAutoSyncTimerRef.current = setTimeout(async () => {
+        docAutoSyncAbortRef.current?.abort();
+        const controller = new AbortController();
+        docAutoSyncAbortRef.current = controller;
+        setDocAutoSyncState("syncing");
+        try {
+          const result = await fetchEkoJson<DocumentAutoSyncWire>("/api/v1/document/sync", {
+            method: "POST",
+            signal: controller.signal,
+            body: JSON.stringify({
+              session_id: data.id,
+              title,
+              content: nextMarkdown,
+              current_url: currentUrl,
+            }),
+          });
+          if (docAutoSyncSeqRef.current !== sequence) return;
+          if (result.status === "failed") {
+            throw new Error(result.message || "自动同步失败");
+          }
+          const nextArtifact: DetailDocumentArtifact = {
+            ...(resourceArtifact ?? {}),
+            kind: "docx",
+            title,
+            content: nextMarkdown,
+            status: "completed",
+            currentStep: "文档已自动同步",
+            sharingUrl: result.document_url || currentUrl || resourceArtifact?.sharingUrl,
+            resultSummary: result.message,
+          };
+          setLocalArtifact(nextArtifact);
+          setManualDocumentMarkdown(null);
+          setDocAutoSyncState("synced");
+          setDocAutoSyncError(null);
+          setRuntimeSessionPatch(data.id, { status: "已同步", updatedAt: "刚刚" });
+        } catch (error) {
+          if (controller.signal.aborted) return;
+          if (docAutoSyncSeqRef.current !== sequence) return;
+          setDocAutoSyncState("failed");
+          setDocAutoSyncError(error instanceof Error ? error.message : "自动同步失败");
+        }
+      }, 1400);
+    },
+    [data.document.title, data.id, data.title, resourceArtifact, setRuntimeSessionPatch],
+  );
+
+  useEffect(() => {
+    const status = (localArtifact?.status ?? "").toLowerCase();
+    const kind = normalizeArtifactKind(localArtifact);
+    if (!localArtifact || status === "done" || status === "completed" || status === "failed") return;
+    if (kind === "docx") return;
+
+    let cancelled = false;
+    const poll = async () => {
+      const session = await fetchSyncSession(data.id);
+      if (cancelled || !session?.artifact) return;
+      const nextArtifact = toDetailArtifact(session.artifact as AgentChatResponseWire["artifact"]);
+      if (nextArtifact) setLocalArtifact(nextArtifact);
+    };
+
+    void poll();
+    const timer = window.setInterval(poll, 2500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [data.id, localArtifact]);
 
   const prevPhaseRef = useRef(phase);
   useEffect(() => {
@@ -524,77 +1660,183 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
 
   const handleChatSend = useCallback(
     async (text: string) => {
-      const now = new Date();
-      const hh = now.getHours().toString().padStart(2, "0");
-      const mm = now.getMinutes().toString().padStart(2, "0");
-      const time = `${hh}:${mm}`;
+      const time = formatMessageTime();
+      const requestId = Date.now();
+      const userHistoryMessage = {
+        id: `user-${requestId}`,
+        author: "我",
+        role: "member" as const,
+        time,
+        body: text,
+        avatar: "我",
+        sent: true,
+      };
       setMessages((prev) => [
         ...prev,
-        {
-          id: `user-${Date.now()}`,
-          author: "我",
-          role: "member" as const,
-          time,
-          body: text,
-          avatar: "我",
-          sent: true,
-        },
+        userHistoryMessage,
       ]);
+      const chatHistory = [...messages, userHistoryMessage]
+        .slice(-30)
+        .map((message) => ({
+          role: message.role === "eko" || message.author === "Eko" ? "assistant" : "user",
+          content: message.body,
+        }))
+        .filter((message) => message.content.trim().length > 0);
 
+      const streamMessageId = `eko-stream-${requestId}`;
       const store = useAgentRuntimeStore.getState();
-      store.patchSession(data.id, { phase: "ANALYZING", lastError: null });
+      const isExistingDocumentEdit = resourceKind === "docx" && Boolean(currentDocumentMarkdown.trim()) && !wantsNewDocument(text);
+      store.patchSession(data.id, { phase: "ANALYZING", lastError: null, useMockFallback: false });
 
       setSending(true);
-      let firstChunk = true;
-      const append = (chunk: string) => {
-        if (firstChunk) {
-          firstChunk = false;
-          setActiveTab("doc");
-        }
-        store.appendDocMarkdown(data.id, chunk);
-      };
-
       try {
-        const tried = await streamAgentExecute(
-          { session_id: data.id, query: text, stream: true },
+        let streamError: string | null = null;
+        const updateStreamMessage = (
+          chunk: string,
+          options: {
+            helperText?: string;
+            plannerCard?: PlanningPlanWire;
+            sent?: boolean;
+            replace?: boolean;
+          } = {},
+        ) => {
+          setMessages((prev) => {
+            const existingIndex = prev.findIndex((message) => message.id === streamMessageId);
+            if (existingIndex === -1) {
+              return [
+                ...prev,
+                {
+                  id: streamMessageId,
+                  author: "Eko",
+                  role: "eko" as const,
+                  time: formatMessageTime(),
+                  body: chunk,
+                  avatar: "E",
+                  helperText: options.helperText,
+                  plannerCard: options.plannerCard,
+                  sent: options.sent,
+                },
+              ];
+            }
+            return prev.map((message, index) => {
+              if (index !== existingIndex) return message;
+              return {
+                ...message,
+                body: options.replace ? chunk || message.body : chunk ? `${message.body}${message.body ? "\n\n" : ""}${chunk}` : message.body,
+                helperText: options.helperText,
+                plannerCard: options.plannerCard ?? message.plannerCard,
+                sent: options.sent ?? message.sent,
+              };
+            });
+          });
+        };
+
+        const applyResponse = (response: AgentChatResponseWire) => {
+          const nextArtifact = toDetailArtifact(response.artifact);
+          const planningPlan = plannerEnabled ? toPlanningPlan(response.plan) : null;
+          const planningSteps = planningPlan?.steps ?? [];
+          if (nextArtifact) {
+            setLocalArtifact(nextArtifact);
+            setActiveTab(nextArtifact.kind === "board" ? "canvas" : "doc");
+            store.patchSession(data.id, {
+              phase: response.status === "failed" ? "ERROR" : response.status === "completed" ? "COMPLETED" : "GENERATING",
+              intent: nextArtifact.kind === "ppt" ? "PPT" : nextArtifact.kind === "board" ? "CANVAS" : "DOC",
+              planningPlan,
+              planningSteps,
+              lastError: response.error ?? nextArtifact.errorMessage ?? null,
+              isDocStreaming: false,
+              docMarkdownStream: "",
+            });
+          } else {
+            store.patchSession(data.id, {
+              phase: response.status === "failed" ? "ERROR" : "COMPLETED",
+              intent: "CHAT",
+              planningPlan,
+              planningSteps,
+              lastError: response.error ?? null,
+            });
+          }
+          updateStreamMessage(response.status === "failed" ? response.message : isExistingDocumentEdit ? response.message : `已经完成。\n${response.message}`, {
+            sent: true,
+            replace: isExistingDocumentEdit,
+          });
+          if (response.status === "completed") {
+            setRuntimeSessionPatch(data.id, { status: "已同步", updatedAt: "刚刚" });
+          }
+        };
+
+        const streamed = await streamAgentChat(
           {
-            onChunk: append,
-            onDone: () => store.ingestEnvelope(data.id, { type: "TASK_COMPLETED", session_id: data.id, payload: {} }),
-            onError: () => {},
+            session_id: data.id,
+            message: text,
+            current_document:
+              resourceKind === "docx" && currentDocumentMarkdown
+                ? {
+                    kind: "docx",
+                    content: currentDocumentMarkdown,
+                    status: resourceArtifact?.status,
+                    sharing_url: resourceArtifact?.sharingUrl,
+                    result_summary: resourceArtifact?.resultSummary,
+                  }
+                : undefined,
+            context: { chat_history: chatHistory },
+            planning_enabled: isExistingDocumentEdit ? false : plannerEnabled,
+          },
+          (event: AgentChatStreamEvent) => {
+            const payload = event.payload ?? {};
+            const channel = inferAgentEventChannel(event);
+            store.patchSession(data.id, { useMockFallback: false });
+            store.ingestEnvelope(data.id, event);
+            if (event.event === "turn.started") {
+              const planningEnabled = payload.planning_enabled !== false;
+              updateStreamMessage(isExistingDocumentEdit ? "好的，直接修改当前文档。" : event.message || "收到。我开始处理。", {
+                helperText: planningEnabled ? "理解与规划中" : "直接执行中",
+                replace: isExistingDocumentEdit,
+              });
+              return;
+            }
+            if (event.event === "clarification.requested") {
+              store.patchSession(data.id, { phase: "COMPLETED" });
+              const questions = Array.isArray(payload.questions) ? payload.questions.filter((item): item is string => typeof item === "string") : [];
+              updateStreamMessage(
+                questions.length
+                  ? `执行前还需要补充这些信息：\n${questions.map((question, index) => `${index + 1}. ${question}`).join("\n")}`
+                  : event.message || "执行前还需要补充关键信息。",
+                { sent: true },
+              );
+              return;
+            }
+            if (event.event === "result.created") {
+              applyResponse(payload.response as AgentChatResponseWire);
+              return;
+            }
+            if (event.event === "turn.failed") {
+              const error = typeof payload.error === "string" ? payload.error : "";
+              streamError = error || event.message || "处理失败，请稍后重试。";
+              return;
+            }
+            if (channel === "chat" && event.message && !isExistingDocumentEdit) {
+              updateStreamMessage(event.message, { sent: true });
+            }
           },
         );
 
-        if (!tried) {
-          await streamDocumentGeneration(
-            {
-              session_id: data.id,
-              topic: data.title,
-              requirement: text,
-              document_type: "general",
-              tone: "formal",
-              chat_history: [],
-              knowledge_docs: [],
-              bitable_records: [],
-            },
-            {
-              onChunk: append,
-              onDone: () => store.ingestEnvelope(data.id, { type: "TASK_COMPLETED", session_id: data.id, payload: {} }),
-              onError: (msg) => store.patchSession(data.id, { phase: "ERROR", lastError: msg }),
-            },
-          );
+        if (!streamed) {
+          throw new Error("流式接口不可用");
         }
-
-        const doneNow = new Date();
-        const dhh = doneNow.getHours().toString().padStart(2, "0");
-        const dmm = doneNow.getMinutes().toString().padStart(2, "0");
+        if (streamError) {
+          throw new Error(streamError);
+        }
+      } catch (error) {
+        store.patchSession(data.id, { phase: "ERROR", lastError: error instanceof Error ? error.message : "处理失败" });
         setMessages((prev) => [
           ...prev,
           {
-            id: `eko-${Date.now()}`,
+            id: `eko-error-${Date.now()}`,
             author: "Eko",
             role: "eko" as const,
-            time: `${dhh}:${dmm}`,
-            body: "已收到指令并完成一轮生成；请在「文稿」查看 Markdown 流式输出（若后端未启用 Agent 路由则走文档生成 SSE）。",
+            time: "刚刚",
+            body: error instanceof Error ? error.message : "处理失败，请稍后重试。",
             avatar: "E",
             sent: true,
           },
@@ -603,8 +1845,239 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
         setSending(false);
       }
     },
-    [data.id, data.title],
+    [currentDocumentMarkdown, data.id, messages, plannerEnabled, resourceArtifact, resourceKind, setRuntimeSessionPatch],
   );
+
+  const handleContextSelectionRun = useCallback(async () => {
+    if (contextMessages.length === 0) return;
+    const replayContextRunEvents = (
+      response: AgentChatResponseWire | undefined,
+      options: { skipContext?: boolean } = {},
+    ) => {
+      const events = Array.isArray(response?.events) ? response.events : [];
+      if (!events.length) return;
+
+      const replayMessageId = `eko-context-run-${Date.now()}`;
+        const updateReplayMessage = (
+          chunk: string,
+          eventOptions: {
+            helperText?: string;
+            sent?: boolean;
+            replace?: boolean;
+          } = {},
+        ) => {
+        setMessages((prev) => {
+          const existingIndex = prev.findIndex((message) => message.id === replayMessageId);
+          if (existingIndex === -1) {
+            return [
+              ...prev,
+                {
+                  id: replayMessageId,
+                  author: "Eko",
+                  role: "eko" as const,
+                  time: "刚刚",
+                  body: chunk,
+                  avatar: "E",
+                  helperText: eventOptions.helperText,
+                  sent: eventOptions.sent,
+                },
+              ];
+            }
+          return prev.map((message, index) => {
+            if (index !== existingIndex) return message;
+              return {
+                ...message,
+                body: eventOptions.replace ? chunk || message.body : chunk ? `${message.body}${message.body ? "\n\n" : ""}${chunk}` : message.body,
+                helperText: eventOptions.helperText,
+                sent: eventOptions.sent ?? message.sent,
+              };
+            });
+          });
+      };
+
+      for (const event of events) {
+        const payload = event.payload ?? {};
+        const channel = inferAgentEventChannel(event);
+        useAgentRuntimeStore.getState().ingestEnvelope(data.id, event);
+        if (event.event === "turn.started") {
+          const message = options.skipContext
+            ? "收到。本次将忽略群聊消息记录，直接继续处理。"
+            : event.message || "收到。我开始处理。";
+          updateReplayMessage(message, {
+            helperText: payload.planning_enabled !== false ? "理解与规划中" : "直接执行中",
+            replace: true,
+          });
+          continue;
+        }
+        if (event.event === "clarification.requested") {
+          const questions = Array.isArray(payload.questions) ? payload.questions.filter((item): item is string => typeof item === "string") : [];
+          updateReplayMessage(
+            questions.length
+              ? `执行前还需要补充这些信息：\n${questions.map((question, index) => `${index + 1}. ${question}`).join("\n")}`
+              : event.message || "执行前还需要补充关键信息。",
+            { sent: true },
+          );
+          continue;
+        }
+        if (channel === "chat" && event.message) {
+          updateReplayMessage(event.message, { sent: true });
+        }
+      }
+    };
+    const startIndex = Math.min(contextStart, contextEnd);
+    const endIndex = Math.max(contextStart, contextEnd);
+    setContextSubmitting(true);
+    setContextNotice(null);
+    try {
+      const response = await fetch(`/api/v1/sync/sessions/${encodeURIComponent(data.id)}/context/selection`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ start_index: startIndex, end_index: endIndex }),
+      });
+      const body = (await response.json().catch(() => null)) as { code?: number; data?: AgentChatResponseWire } | null;
+      if (!response.ok || !body || body.code !== 0) {
+        throw new Error("上下文提交失败");
+      }
+      replayContextRunEvents(body.data);
+      const planningPlan = plannerEnabled ? toPlanningPlan(body.data?.plan) : null;
+      if (planningPlan) {
+        useAgentRuntimeStore.getState().patchSession(data.id, {
+          phase: "COMPLETED",
+          planningPlan,
+          planningSteps: planningPlan.steps,
+          lastError: null,
+        });
+      }
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `eko-context-${Date.now()}`,
+          author: "Eko",
+          role: "eko",
+          time: "刚刚",
+          body: body.data?.message || "已基于选中的上下文完成处理。",
+          avatar: "E",
+          sent: true,
+        },
+      ]);
+      setContextNotice(`已提交第 ${startIndex + 1} 到 ${endIndex + 1} 条上下文`);
+      setRuntimeSessionPatch(data.id, { status: "已同步", updatedAt: "刚刚" });
+    } catch (error) {
+      setContextNotice(error instanceof Error ? error.message : "上下文提交失败");
+    } finally {
+      setContextSubmitting(false);
+    }
+  }, [contextEnd, contextMessages.length, contextStart, data.id, plannerEnabled, setRuntimeSessionPatch]);
+
+  const handleContextSkipRun = useCallback(async () => {
+    setContextSubmitting(true);
+    setContextNotice(null);
+    try {
+      const response = await fetch(`/api/v1/sync/sessions/${encodeURIComponent(data.id)}/context/selection`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ start_index: 0, end_index: 0, skip_context: true }),
+      });
+      const body = (await response.json().catch(() => null)) as { code?: number; data?: AgentChatResponseWire } | null;
+      if (!response.ok || !body || body.code !== 0) {
+        throw new Error("跳过上下文后生成失败");
+      }
+      const events = Array.isArray(body.data?.events) ? body.data.events : [];
+      if (events.length) {
+        const payload = body.data;
+        const replayMessageId = `eko-context-run-${Date.now()}`;
+        const updateReplayMessage = (
+          chunk: string,
+          options: {
+            helperText?: string;
+            sent?: boolean;
+            replace?: boolean;
+          } = {},
+        ) => {
+          setMessages((prev) => {
+            const existingIndex = prev.findIndex((message) => message.id === replayMessageId);
+            if (existingIndex === -1) {
+              return [
+                ...prev,
+                {
+                  id: replayMessageId,
+                  author: "Eko",
+                  role: "eko" as const,
+                  time: "刚刚",
+                  body: chunk,
+                  avatar: "E",
+                  helperText: options.helperText,
+                  sent: options.sent,
+                },
+              ];
+            }
+            return prev.map((message, index) => {
+              if (index !== existingIndex) return message;
+              return {
+                ...message,
+                body: options.replace ? chunk || message.body : chunk ? `${message.body}${message.body ? "\n\n" : ""}${chunk}` : message.body,
+                helperText: options.helperText,
+                sent: options.sent ?? message.sent,
+              };
+            });
+          });
+        };
+        for (const event of events) {
+          const eventPayload = event.payload ?? {};
+          const channel = inferAgentEventChannel(event);
+          useAgentRuntimeStore.getState().ingestEnvelope(data.id, event);
+          if (event.event === "turn.started") {
+            updateReplayMessage("收到。本次将忽略群聊消息记录，直接继续处理。", {
+              helperText: eventPayload.planning_enabled !== false ? "理解与规划中" : "直接执行中",
+              replace: true,
+            });
+            continue;
+          }
+          if (event.event === "clarification.requested") {
+            const questions = Array.isArray(eventPayload.questions) ? eventPayload.questions.filter((item): item is string => typeof item === "string") : [];
+            updateReplayMessage(
+              questions.length
+                ? `执行前还需要补充这些信息：\n${questions.map((question, index) => `${index + 1}. ${question}`).join("\n")}`
+                : event.message || "执行前还需要补充关键信息。",
+              { sent: true },
+            );
+            continue;
+          }
+          if (channel === "chat" && event.message) {
+            updateReplayMessage(event.message, { sent: true });
+          }
+        }
+        const planningPlan = plannerEnabled ? toPlanningPlan(payload?.plan) : null;
+        if (planningPlan) {
+          useAgentRuntimeStore.getState().patchSession(data.id, {
+            phase: "COMPLETED",
+            planningPlan,
+            planningSteps: planningPlan.steps,
+            lastError: null,
+          });
+        }
+      }
+      const finalPlanningPlan = plannerEnabled ? toPlanningPlan(body.data?.plan) : null;
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `eko-context-skip-${Date.now()}`,
+          author: "Eko",
+          role: "eko",
+          time: "刚刚",
+          body: body.data?.message || "已忽略群聊消息记录，直接完成处理。",
+          avatar: "E",
+          sent: true,
+        },
+      ]);
+      setContextNotice("已忽略上下文消息记录，直接开始生成");
+      setRuntimeSessionPatch(data.id, { status: "已同步", updatedAt: "刚刚" });
+    } catch (error) {
+      setContextNotice(error instanceof Error ? error.message : "跳过上下文后生成失败");
+    } finally {
+      setContextSubmitting(false);
+    }
+  }, [data.id, plannerEnabled, setRuntimeSessionPatch]);
 
   function prependCanvasActivity(title: string, tone: DetailActivity["tone"]) {
     setCanvasActivities((prev) => [
@@ -661,25 +2134,51 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
     }
   }
 
+  function cycleOutputTab() {
+    setActiveTab((current) => (current === "doc" ? "canvas" : "doc"));
+    setCanvasNotice("已切换输出视图。");
+  }
+
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden overflow-x-hidden bg-[#FAFBFC] text-slate-900">
       <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
         <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-5 pb-5 pt-2 sm:px-6 sm:pb-6 sm:pt-3">
-            <div className="flex h-full min-h-0 min-w-0 gap-4 overflow-hidden lg:gap-5">
+          <div className="flex h-full min-h-0 min-w-0 gap-4 overflow-hidden lg:gap-5">
               <div
                 className={[
                   "min-h-0 overflow-hidden transition-[width,opacity,transform] duration-300 ease-out",
-                  conversationOpen ? "w-[280px] opacity-100" : "pointer-events-none w-0 -translate-x-4 opacity-0",
+                  workspaceExpanded
+                    ? conversationOpen
+                      ? "w-[260px] opacity-100"
+                      : "pointer-events-none w-0 -translate-x-4 opacity-0"
+                    : "w-full flex-1 opacity-100",
                 ].join(" ")}
               >
                 <section className="flex h-full min-h-0 flex-col overflow-hidden rounded-[28px] border border-slate-200/90 bg-white px-5 py-4 shadow-[0_14px_32px_rgba(148,163,184,0.08)]">
                   <div className="flex items-center justify-between">
                     <h2 className="text-[17px] font-semibold text-slate-950">{data.conversationTitle}</h2>
                     <div className="flex items-center gap-1.5">
-                      <button type="button" className="rounded-full border border-transparent p-1.5 hover:bg-slate-50">
+                      <button
+                        type="button"
+                        onClick={() => setConversationFilter((current) => (current === "all" ? "eko" : "all"))}
+                        className={[
+                          "rounded-full border p-1.5 transition",
+                          conversationFilter === "eko"
+                            ? "border-blue-200 bg-blue-50 text-blue-600"
+                            : "border-transparent text-slate-500 hover:bg-slate-50",
+                        ].join(" ")}
+                        aria-label={conversationFilter === "eko" ? "显示全部对话" : "只看 Eko 回复"}
+                        title={conversationFilter === "eko" ? "显示全部对话" : "只看 Eko 回复"}
+                      >
                         <SmallIcon type="filter" tone="slate" />
                       </button>
-                      <button type="button" className="rounded-full border border-transparent p-1.5 hover:bg-slate-50">
+                      <button
+                        type="button"
+                        onClick={cycleOutputTab}
+                        className="rounded-full border border-transparent p-1.5 hover:bg-slate-50"
+                        aria-label="切换输出视图"
+                        title="切换输出视图"
+                      >
                         <MoreIcon />
                       </button>
                     </div>
@@ -694,6 +2193,7 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                           <DetailConversationMessage
                             key={message.id ?? `msg-${msgIdx}`}
                             message={message}
+                            selfAuthor={selfAuthor}
                             tone={conversationTone}
                             onActionButtonClick={isCanvasMode ? handleConversationAction : undefined}
                           />
@@ -713,175 +2213,66 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                 </section>
               </div>
 
-              <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2.5 overflow-hidden sm:gap-3">
-                    <section
-                      className={`flex min-h-[220px] max-h-[min(42vh,320px)] min-w-0 shrink-0 flex-col overflow-hidden ${detailDesignTokens.card.pageFrame} px-4 py-3`}
-                    >
-                      <div className="flex min-w-0 flex-col gap-2.5 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
-                        <div className="min-w-0 flex-1">
-                          <h1 className="text-[17px] font-semibold leading-snug tracking-tight text-slate-950 break-words">{data.title}</h1>
-                          <div className="mt-1.5 flex flex-wrap gap-1.5">
-                            <HeaderBadge tone="neutral">飞书</HeaderBadge>
-                            <HeaderBadge tone={isCanvasMode ? "neutral" : "info"}>{isCanvasMode ? "画布" : "文稿"}</HeaderBadge>
-                            <HeaderBadge tone={isCanvasMode ? "info" : "success"}>{isCanvasMode ? "进行中" : "已同步"}</HeaderBadge>
-                          </div>
-                        </div>
-                        <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
-                          <button
-                            type="button"
-                            className="inline-flex h-9 items-center gap-1.5 rounded-[12px] border border-slate-200 bg-white px-3 text-[13px] font-semibold text-slate-700 shadow-[0_4px_12px_rgba(15,23,42,0.04)]"
-                          >
-                            <SmallIcon type="share" tone="slate" />
-                            分享
-                          </button>
-                          <button
-                            type="button"
-                            className="inline-flex h-9 items-center gap-1.5 rounded-[12px] border border-slate-200 bg-white px-3 text-[13px] font-semibold text-slate-700 shadow-[0_4px_12px_rgba(15,23,42,0.04)]"
-                          >
-                            <SmallIcon type="download" tone="slate" />
-                            导出
-                          </button>
-                          {!isCanvasMode ? (
-                            <button
-                              type="button"
-                              className="inline-flex h-9 items-center gap-1.5 rounded-[12px] bg-blue-600 px-3 text-[13px] font-semibold text-white shadow-[0_10px_20px_rgba(37,99,235,0.2)]"
-                            >
-                              <SmallIcon type="sync" tone="blue" />
-                              同步
-                            </button>
-                          ) : null}
-                          <button
-                            type="button"
-                            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[12px] border border-slate-200 bg-white shadow-[0_4px_12px_rgba(15,23,42,0.04)]"
-                          >
-                            <MoreIcon />
-                          </button>
-                        </div>
-                      </div>
-
-                      {!isCanvasMode ? (
-                        <div
-                          className={`mt-2 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden ${detailDesignTokens.card.content} px-3 py-2`}
-                        >
-                          <h3 className="shrink-0 text-[13px] font-semibold text-slate-950">Agent Mission Control</h3>
-                          <AgentRealtimeRibbon phase={phase} wsStatus={wsStatus} useMockFallback={useMockFb} />
-                          {lastErr ? (
-                            <p className="mb-1 shrink-0 text-[11px] font-medium text-rose-600">生成失败：{lastErr}</p>
-                          ) : null}
-                          <div className="mt-1 min-h-0 flex-1 overflow-x-auto overflow-y-hidden pb-0.5">
-                            <Stepper steps={mergedWorkflow} className="mt-0" />
-                          </div>
-                          <StepperStatusLegend />
-                        </div>
-                      ) : (
-                        <div className="mt-2 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-[18px] border border-slate-200 bg-white px-3 py-2 shadow-[0_8px_20px_rgba(15,23,42,0.04)]">
-                          <div className="flex items-start justify-between gap-4">
-                            <div className="min-w-0 flex-1">
-                              <div className="flex flex-wrap items-center gap-2">
-                                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">智能体任务控制</p>
-                                <span className="inline-flex rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] font-semibold text-violet-600">
-                                  画布
-                                </span>
-                              </div>
-                              <h2 className="mt-1 text-[14px] font-semibold leading-snug tracking-tight text-slate-950 break-words">{data.missionTitle}</h2>
-                              <p className="mt-1 max-w-[520px] text-[10px] leading-relaxed text-slate-500">{data.missionSubtitle}</p>
-                            </div>
-                            <div className="flex shrink-0 items-end gap-1.5">
-                              <div className="flex h-[56px] w-[72px] flex-col justify-between overflow-hidden rounded-[10px] border border-slate-200 bg-white px-2 py-1.5 shadow-[0_4px_12px_rgba(15,23,42,0.03)]">
-                                <p className="truncate text-[10px] leading-4 text-slate-400">置信度</p>
-                                <p className="truncate text-[16px] leading-none font-semibold tracking-tight tabular-nums text-violet-600">{data.confidence}</p>
-                              </div>
-                              <div className="flex h-[56px] w-[72px] flex-col justify-between overflow-hidden rounded-[10px] border border-slate-200 bg-white px-2 py-1.5 shadow-[0_4px_12px_rgba(15,23,42,0.03)]">
-                                <p className="truncate text-[10px] leading-4 text-slate-400">上下文质量</p>
-                                <p className="truncate text-[16px] leading-none font-semibold tracking-tight tabular-nums text-amber-600">{data.contextQuality}</p>
-                              </div>
-                            </div>
-                          </div>
-                          <AgentRealtimeRibbon phase={phase} wsStatus={wsStatus} useMockFallback={useMockFb} />
-                          <div className="mt-1 min-h-0 flex-1 overflow-x-auto overflow-y-hidden pb-0.5">
-                            <Stepper steps={mergedWorkflow} className="mt-0" />
-                          </div>
-                          <StepperStatusLegend />
-                        </div>
-                      )}
-                    </section>
-
-                    <section className={`min-h-0 flex flex-1 flex-col overflow-hidden ${detailDesignTokens.card.panel} ${detailDesignTokens.spacing.panelPadding}`}>
-                      <div className="flex min-w-0 items-center justify-between gap-4 overflow-hidden">
-                        <p className="shrink-0 text-[17px] font-semibold text-slate-950">输出内容</p>
-                        <button className="inline-flex h-10 shrink-0 items-center rounded-[14px] border border-slate-200 bg-white px-4 text-[14px] font-medium text-slate-600 shadow-[0_4px_12px_rgba(15,23,42,0.04)]">
-                          {dropdownLabel}
-                        </button>
-                      </div>
-                      <div className="mt-2.5 flex min-w-0 flex-wrap gap-2 overflow-hidden">
-                        {data.outputTabs.map((tab) => (
-                          <button
-                            key={tab.key}
-                            type="button"
-                            onClick={() => setActiveTab(tab.key)}
-                            className={[
-                              "inline-flex h-[48px] min-w-[118px] max-w-[148px] min-w-0 items-center gap-2 overflow-hidden rounded-[16px] border px-3 text-left transition",
-                              activeTab === tab.key ? selectedTone : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50",
-                            ].join(" ")}
-                          >
-                            <div className="flex h-[32px] w-[32px] shrink-0 items-center justify-center rounded-[11px] border border-current/10 bg-white/80">
-                              <SmallIcon type={tab.key === "chat" ? "chat" : tab.key === "doc" ? "doc" : "deck"} tone={tab.key === "chat" ? "green" : tab.key === "doc" ? "blue" : "purple"} />
-                            </div>
-                            <div>
-                              <p className="truncate text-[13px] font-semibold">{tab.label}</p>
-                              <p className="line-clamp-1 text-[10px] leading-[14px] text-slate-400">
-                                {tab.key === "chat" ? "显示即时回复" : tab.key === "doc" ? "显示结构化文稿" : "显示可视化汇报结构"}
-                              </p>
-                            </div>
-                          </button>
-                        ))}
-                      </div>
-
-                      <div className="mt-2.5 min-h-0 flex-1 overflow-hidden rounded-[22px] border border-slate-200 bg-white shadow-[0_8px_24px_rgba(15,23,42,0.03)]">
-                        <AnimatePresence mode="wait">
-                          {activeTab === "doc" ? (
-                            <motion.div key="doc-tab" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.2 }} className="flex h-full min-h-0 flex-col">
-                            <div className="shrink-0 border-b border-slate-100 px-5 py-3">
-                              <h3 className="truncate text-[16px] font-semibold text-slate-950">{data.document.title}</h3>
-                              <p className="mt-1 text-[12px] text-slate-500">{data.document.date}</p>
-                              {docConflict ? (
-                                <p className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-900">
-                                  检测到服务端文稿版本与本地草稿可能冲突，请以服务端为准或稍后刷新。
-                                </p>
-                              ) : null}
-                            </div>
-                            <div className="min-h-0 flex-1 overflow-y-auto px-[18px] py-3 pr-3">
-                              <div className="space-y-[14px] pb-8">
-                                {docStream ? (
-                                  <motion.section
-                                    layout
-                                    initial={{ opacity: 0 }}
-                                    animate={{ opacity: 1 }}
-                                    className="rounded-[18px] border border-blue-200/80 bg-blue-50/40 px-4 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)]"
+              {workspaceExpanded ? (
+                <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
+                    <section className="min-h-0 flex flex-1 flex-col overflow-hidden rounded-[18px] border border-slate-200 bg-white shadow-[0_10px_22px_rgba(148,163,184,0.05)]">
+                      <div className="shrink-0 border-b border-slate-100 bg-white px-3 py-1">
+                          <div className="flex min-h-[70px] min-w-0 flex-col overflow-hidden rounded-[14px] border border-slate-200 bg-white px-3 py-1.5 shadow-[0_4px_12px_rgba(15,23,42,0.03)]">
+                            <div className="flex shrink-0 items-center justify-between gap-3">
+                              <AgentRealtimeRibbon phase={phase} wsStatus={wsStatus} useMockFallback={useMockFb} />
+                              {lastErr ? (
+                                <p className="shrink-0 text-[10px] font-medium text-rose-600">生成失败：{lastErr}</p>
+                              ) : (
+                                <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                                  <button
+                                    type="button"
+                                    role="switch"
+                                    aria-checked={plannerEnabled}
+                                    onClick={() => handlePlannerToggle(!plannerEnabled)}
+                                    className={[
+                                      "inline-flex h-7 shrink-0 items-center gap-2 rounded-full border px-2 text-[10px] font-semibold transition-colors",
+                                      plannerEnabled
+                                        ? "border-blue-200 bg-blue-50 text-blue-700"
+                                        : "border-slate-200 bg-slate-50 text-slate-500",
+                                    ].join(" ")}
                                   >
-                                    <div className="flex items-center justify-between gap-2">
-                                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-blue-600">
-                                        Word 预览 · 流式 Markdown
-                                      </p>
-                                      {agentSlice?.isDocStreaming ? (
-                                        <span className="inline-flex items-center gap-1 text-[11px] font-medium text-blue-600">
-                                          <motion.span
-                                            className="inline-block h-1.5 w-1.5 rounded-full bg-blue-500"
-                                            animate={{ opacity: [0.4, 1, 0.4] }}
-                                            transition={{ repeat: Infinity, duration: 1 }}
-                                          />
-                                          写入中
-                                        </span>
-                                      ) : (
-                                        <span className="text-[11px] text-slate-500">已完成本段</span>
-                                      )}
-                                    </div>
-                                    <div className="prose prose-sm mt-3 max-w-none text-slate-800 prose-headings:my-2 prose-p:my-1.5 prose-ul:my-1.5 prose-li:my-0.5">
-                                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{docStream}</ReactMarkdown>
-                                    </div>
-                                  </motion.section>
-                                ) : null}
-                                {data.document.sections.map((section, secIdx) => (
+                                    <span className={`relative h-3.5 w-6 rounded-full transition-colors ${plannerEnabled ? "bg-blue-600" : "bg-slate-300"}`} aria-hidden>
+                                      <span className={`absolute top-0.5 h-2.5 w-2.5 rounded-full bg-white transition-transform ${plannerEnabled ? "translate-x-3" : "translate-x-0.5"}`} />
+                                    </span>
+                                    任务理解与规划
+                                  </button>
+                                  <StepperStatusLegend />
+                                </div>
+                              )}
+                            </div>
+                            <div className="min-h-0 flex-1 overflow-x-auto overflow-y-hidden">
+                              <Stepper steps={mergedWorkflow} className="mt-0" />
+                            </div>
+                          </div>
+                        </div>
+                      <div className="min-h-0 flex-1 overflow-hidden bg-white">
+                        <AnimatePresence mode="wait">
+                          {displayTab === "doc" ? (
+                            <motion.div key="doc-tab" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.2 }} className="flex h-full min-h-0 flex-col">
+                            {docConflict ? (
+                              <div className="shrink-0 border-b border-amber-100 bg-amber-50 px-4 py-2 text-[11px] text-amber-900">
+                                检测到服务端文稿版本与本地草稿可能冲突，请以服务端为准或稍后刷新。
+                              </div>
+                            ) : null}
+                            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+                              <div className="space-y-[14px] pb-8">
+	                                <ArtifactPresenter
+	                                  artifact={localArtifact ?? data.document.artifact ?? data.artifact}
+	                                  sessionId={data.id}
+	                                  markdown={documentMarkdown}
+	                                  sections={data.document.sections}
+                                    streaming={showDocStream}
+                                    editable={resourceKind === "docx" && !showDocStream}
+                                    onMarkdownChange={handleManualDocumentChange}
+                                    autoSyncState={docAutoSyncState}
+                                    autoSyncError={docAutoSyncError}
+	                                />
+                                {showDocumentSections ? data.document.sections.map((section, secIdx) => (
                                   <section key={`doc-${secIdx}-${section.title}`}>
                                     <h4 className="text-[14px] font-semibold text-slate-950">{section.title}</h4>
                                     {section.body ? (
@@ -927,31 +2318,34 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                                       </div>
                                     ) : null}
                                   </section>
-                                ))}
+                                )) : null}
                               </div>
                             </div>
                             </motion.div>
-                          ) : activeTab === "chat" ? (
-                            <motion.div key="chat-tab" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.2 }} className="rounded-[22px] border border-slate-200 bg-white p-5 shadow-[0_8px_24px_rgba(15,23,42,0.03)]">
-                            <h4 className="text-[17px] font-semibold text-slate-950">{data.chatReply.title}</h4>
-                            <p className="mt-3 text-[15px] leading-8 text-slate-700">{data.chatReply.body}</p>
-                            <p className="mt-5 text-[13px] text-slate-400">{data.chatReply.source}</p>
-                            </motion.div>
                           ) : (
                             <motion.div key="canvas-tab" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.2 }} className="min-h-0 h-full overflow-y-auto px-3 pb-3 pt-1">
+                            <ArtifactPresenter
+                              artifact={canvasSurfaceArtifact}
+                              sessionId={data.id}
+                              markdown={data.document.markdown}
+                              sections={data.document.sections}
+                              streaming={false}
+                            />
+                            {showCanvasScaffold ? (
+                              <>
                             <div className="flex items-start justify-between gap-3">
-                              <div className="min-w-0">
+                              <div className="min-w-0 mt-3">
                                 <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-400">Output Surface</p>
                                 <h3 className="mt-0.5 text-[15px] font-semibold text-slate-950">Canvas Preview</h3>
-                                <p className="mt-0.5 line-clamp-1 text-[11px] text-slate-500">A PPT-like visual surface for storyline arrangement, ready to evolve.</p>
+                                <p className="mt-0.5 line-clamp-1 text-[11px] text-slate-500">实时画板区域，保留节点预览与打开真实画布入口。</p>
                               </div>
-                              <div className="flex shrink-0 items-center gap-2">
+                              <div className="mt-3 flex shrink-0 items-center gap-2">
                                 <Link
-                                  href={`/canvas?session=${encodeURIComponent(data.id)}`}
+                                  href={data.canvas.artifact?.sharingUrl || `/canvas?session=${encodeURIComponent(data.id)}`}
                                   prefetch={false}
                                   className="inline-flex h-8 items-center gap-1.5 rounded-[10px] border border-violet-200 bg-violet-50 px-2.5 text-[12px] font-semibold text-violet-600 shadow-[0_6px_16px_rgba(139,92,246,0.08)] transition hover:bg-violet-100"
                                 >
-                                  打开 Tldraw 画布
+                                  打开画布
                                   <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                                     <path d="M6 4H12V10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
                                     <path d="M11.5 4.5L4 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
@@ -1057,14 +2451,17 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                                 <p className="mt-1 text-[11px] text-slate-700">Canvas preview + synced project record</p>
                               </div>
                             </div>
+                              </>
+                            ) : null}
                             </motion.div>
                           )}
                         </AnimatePresence>
                       </div>
                     </section>
-              </div>
+                </div>
+              ) : null}
 
-              <aside className="min-h-0 w-[300px] shrink-0 space-y-3 overflow-y-auto pr-1 lg:w-[320px]">
+              <aside className="min-h-0 w-[250px] shrink-0 space-y-3 overflow-y-auto pr-1 lg:w-[270px]">
                     {isCanvasMode ? (
                       <>
                         <SectionCard title="上下文与同步" action={<MoreIcon />}>
@@ -1076,7 +2473,7 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                                   <p className="text-[12px] text-slate-400">没有匹配的上下文来源</p>
                                 ) : null}
                                 {filteredContextSources.map((item, index) => {
-                                  const srcIndex = data.contextSources.findIndex((s) => s.id === item.id);
+                                  const srcIndex = runtimeContextSources.findIndex((s) => s.id === item.id);
                                   const iconIdx = srcIndex >= 0 ? srcIndex : index;
                                   return (
                                   <div key={item.id} className={`flex min-w-0 items-start justify-between gap-3 rounded-[18px] border border-slate-200 bg-white px-3 py-2.5 ${index > 0 ? "" : ""}`}>
@@ -1101,7 +2498,7 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                             <div>
                               <h4 className="text-[14px] font-semibold text-slate-950">来源证据</h4>
                               <div className="mt-3 space-y-3">
-                                {data.sourceEvidence.map((item) => (
+                                {runtimeSourceEvidence.map((item) => (
                                   <div key={item.id} className="flex min-w-0 items-start justify-between gap-3 rounded-[18px] border border-slate-200 bg-white px-3 py-2.5">
                                     <div className="flex min-w-0 items-start gap-3">
                                       <div className="mt-[2px] flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-[9px] border border-slate-200 bg-white">
@@ -1190,7 +2587,7 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                               <p className="text-[13px] text-slate-400">没有匹配的上下文来源</p>
                             ) : null}
                             {filteredContextSources.map((item, index) => {
-                              const srcIndex = data.contextSources.findIndex((s) => s.id === item.id);
+                              const srcIndex = runtimeContextSources.findIndex((s) => s.id === item.id);
                               const iconIdx = srcIndex >= 0 ? srcIndex : index;
                               return (
                               <div
@@ -1212,6 +2609,125 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                               </div>
                               );
                             })}
+                            {data.intent === "chat" && data.contextSources.some((item) => item.title.includes("最近群聊上下文")) ? (
+                              <div className="rounded-[14px] border border-emerald-200 bg-emerald-50/70 px-3 py-2.5 text-[12px] leading-5 text-emerald-700">
+                                普通对话已自动使用最近 15 条群聊上下文，无需手动选择消息记录。
+                              </div>
+                            ) : null}
+                            {shouldShowContextSelector ? (
+                              <div className="rounded-[14px] border border-slate-200 bg-slate-50/60">
+                                <button
+                                  type="button"
+                                  onClick={() => setContextExpanded((open) => !open)}
+                                  className="flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left"
+                                >
+                                  <div className="min-w-0">
+                                    <p className="text-[13px] font-semibold text-slate-900">候选群聊消息</p>
+                                    <p className="mt-0.5 text-[12px] text-slate-500">
+                                      已读取 {contextMessages.length} 条，可选择连续范围进入 prompt。
+                                    </p>
+                                  </div>
+                                  <span className="shrink-0 text-[12px] font-semibold text-blue-600">
+                                    {contextExpanded ? "收起" : "展开"}
+                                  </span>
+                                </button>
+                                {contextExpanded ? (
+                                  <div className="border-t border-slate-200 px-3 pb-3 pt-2">
+                                    <div className="grid grid-cols-2 gap-2">
+                                      <label className="text-[12px] font-medium text-slate-600">
+                                        起始
+                                        <select
+                                          value={contextStart}
+                                          onChange={(event) => setContextStart(Number(event.target.value))}
+                                          className="mt-1 h-9 w-full rounded-[10px] border border-slate-200 bg-white px-2 text-[12px] text-slate-700"
+                                        >
+                                          {contextMessages.map((_, index) => (
+                                            <option key={`start-${index}`} value={index}>
+                                              第 {index + 1} 条
+                                            </option>
+                                          ))}
+                                        </select>
+                                      </label>
+                                      <label className="text-[12px] font-medium text-slate-600">
+                                        结束
+                                        <select
+                                          value={contextEnd}
+                                          onChange={(event) => setContextEnd(Number(event.target.value))}
+                                          className="mt-1 h-9 w-full rounded-[10px] border border-slate-200 bg-white px-2 text-[12px] text-slate-700"
+                                        >
+                                          {contextMessages.map((_, index) => (
+                                            <option key={`end-${index}`} value={index}>
+                                              第 {index + 1} 条
+                                            </option>
+                                          ))}
+                                        </select>
+                                      </label>
+                                    </div>
+                                    <div className="mt-3 max-h-[320px] space-y-1.5 overflow-y-auto pr-1">
+                                      {contextMessages.map((message, index) => {
+                                        const startIndex = Math.min(contextStart, contextEnd);
+                                        const endIndex = Math.max(contextStart, contextEnd);
+                                        const selected = index >= startIndex && index <= endIndex;
+                                        const time = message.timestamp
+                                          ? new Date(message.timestamp).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })
+                                          : "";
+                                        return (
+                                          <button
+                                            key={`${message.timestamp ?? index}-${index}`}
+                                            type="button"
+                                            onClick={() => {
+                                              if (index < startIndex) setContextStart(index);
+                                              else if (index > endIndex) setContextEnd(index);
+                                              else {
+                                                setContextStart(index);
+                                                setContextEnd(index);
+                                              }
+                                            }}
+                                            className={[
+                                              "grid w-full grid-cols-[34px_minmax(0,1fr)] gap-2 rounded-[10px] border px-2.5 py-2 text-left text-[12px] transition",
+                                              selected ? "border-blue-200 bg-blue-50 text-slate-900" : "border-slate-200 bg-white text-slate-600 hover:border-slate-300",
+                                            ].join(" ")}
+                                          >
+                                            <span className="pt-0.5 text-[11px] font-semibold text-slate-400">{index + 1}</span>
+                                            <span className="min-w-0">
+                                              <span className="mb-1 flex items-center gap-2 text-[11px] text-slate-400">
+                                                <span>{message.role === "eko" ? "Eko" : "成员"}</span>
+                                                {time ? <span>{time}</span> : null}
+                                              </span>
+                                              <span className="line-clamp-2 leading-5">{message.content}</span>
+                                            </span>
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                    <div className="mt-3 flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-between">
+                                      <p className="min-w-0 text-[12px] text-slate-500">
+                                        选择 {Math.abs(contextEnd - contextStart) + 1} 条消息
+                                      </p>
+                                      <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:flex-nowrap">
+                                        <button
+                                          type="button"
+                                          onClick={handleContextSkipRun}
+                                          disabled={contextSubmitting}
+                                          className="inline-flex h-9 items-center justify-center whitespace-nowrap rounded-[10px] border border-slate-200 bg-white px-3 text-[12px] font-semibold text-slate-600 disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
+                                        >
+                                          {contextSubmitting ? "处理中..." : "不使用上下文"}
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={handleContextSelectionRun}
+                                          disabled={contextSubmitting}
+                                          className="inline-flex h-9 items-center justify-center whitespace-nowrap rounded-[10px] bg-blue-600 px-3 text-[12px] font-semibold text-white disabled:bg-slate-300"
+                                        >
+                                          {contextSubmitting ? "处理中..." : "用选中上下文生成"}
+                                        </button>
+                                      </div>
+                                    </div>
+                                    {contextNotice ? <p className="mt-2 text-[12px] text-slate-500">{contextNotice}</p> : null}
+                                  </div>
+                                ) : null}
+                              </div>
+                            ) : null}
                           </div>
                         </SectionCard>
                         <SectionCard title="关联文件" action={<span className="text-[12px] text-slate-400">查看全部（7）</span>}>
@@ -1228,7 +2744,19 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                             </div>
                             <div className="min-w-0">
                               <p className="break-words text-[13px] leading-6 text-slate-600">{data.memoryNote?.body}</p>
-                              <button className="mt-3 text-[13px] font-semibold text-blue-600">{data.memoryNote?.action}</button>
+                              <button
+                                type="button"
+                                onClick={() => setMemoryExpanded((open) => !open)}
+                                className="mt-3 text-[13px] font-semibold text-blue-600"
+                              >
+                                {memoryExpanded ? "收起记忆上下文" : data.memoryNote?.action}
+                              </button>
+                              {memoryExpanded ? (
+                                <div className="mt-3 rounded-[14px] border border-blue-100 bg-blue-50/60 px-3 py-2 text-[12px] leading-5 text-slate-600">
+                                  <p>已关联 {runtimeContextSources.length} 个上下文来源、{runtimeSourceEvidence.length} 条来源证据。</p>
+                                  <p className="mt-1 text-slate-500">可用顶部搜索框筛选对话、上下文来源与证据。</p>
+                                </div>
+                              ) : null}
                             </div>
                           </div>
                         </SectionCard>

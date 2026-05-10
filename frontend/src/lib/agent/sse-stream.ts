@@ -80,17 +80,45 @@ export async function streamDocumentGeneration(
   }
 }
 
-/** Optional unified agent execute SSE — present when backend adds route. */
-export async function streamAgentExecute(
-  body: { session_id: string; query: string; stream?: boolean },
-  callbacks: StreamCallbacks,
+export type AgentChatStreamEvent = {
+  event:
+    | "turn.started"
+    | "intent.recognized"
+    | "context.loaded"
+    | "retrieval.started"
+    | "retrieval.completed"
+    | "source.bitable.started"
+    | "source.bitable.completed"
+    | "source.bitable.empty"
+    | "source.bitable.failed"
+    | "plan.created"
+    | "plan.summary"
+    | "plan.step"
+    | "tool.selected"
+    | "tool.started"
+    | "tool.completed"
+    | "clarification.requested"
+    | "artifact.archived"
+    | "artifact.archive_failed"
+    | "result.created"
+    | "turn.failed";
+  status?: "pending" | "running" | "completed" | "blocked" | "failed";
+  channel?: "chat" | "status" | "plan" | "sources" | "artifact" | "log" | "error";
+  visibility?: "user" | "detail" | "debug";
+  message?: string;
+  payload?: Record<string, unknown>;
+};
+
+export async function streamAgentChat(
+  body: Record<string, unknown>,
+  onEvent: (event: AgentChatStreamEvent) => void,
 ): Promise<boolean> {
   let res: Response;
   try {
-    res = await fetch(apiUrl("/api/v1/agent/execute"), {
+    res = await fetch(apiUrl("/api/v1/agent/chat/stream"), {
       method: "POST",
       headers: bearerHeaders(),
-      body: JSON.stringify({ ...body, stream: body.stream ?? true }),
+      body: JSON.stringify(body),
     });
   } catch {
     return false;
@@ -101,7 +129,7 @@ export async function streamAgentExecute(
   }
 
   if (!res.ok || !res.body) {
-    callbacks.onError?.(`HTTP ${res.status}`);
+    onEvent({ event: "turn.failed", status: "failed", message: `HTTP ${res.status}`, payload: { error: `HTTP ${res.status}` } });
     return true;
   }
 
@@ -120,37 +148,16 @@ export async function streamAgentExecute(
         if (!line.startsWith("data:")) continue;
         const jsonStr = line.slice(5).trim();
         if (!jsonStr) continue;
-        let data: unknown;
         try {
-          data = JSON.parse(jsonStr) as unknown;
+          const event = JSON.parse(jsonStr) as AgentChatStreamEvent;
+          if (event && typeof event === "object" && typeof event.event === "string") {
+            onEvent(event);
+          }
         } catch {
-          continue;
-        }
-        if (!data || typeof data !== "object") continue;
-        const o = data as Record<string, unknown>;
-        const type = typeof o.type === "string" ? o.type : "";
-
-        if (type === "DOC_STREAM") {
-          const payload = (o.payload ?? {}) as Record<string, unknown>;
-          const chunk =
-            typeof payload.chunk === "string"
-              ? payload.chunk
-              : typeof payload.text === "string"
-                ? payload.text
-                : "";
-          if (chunk) callbacks.onChunk?.(chunk);
-          continue;
-        }
-
-        if (typeof o.chunk === "string") {
-          callbacks.onChunk?.(o.chunk);
-        }
-        if (typeof o.markdown === "string") {
-          callbacks.onChunk?.(o.markdown);
+          /* ignore malformed stream chunks */
         }
       }
     }
-    callbacks.onDone?.();
   } finally {
     reader.releaseLock();
   }

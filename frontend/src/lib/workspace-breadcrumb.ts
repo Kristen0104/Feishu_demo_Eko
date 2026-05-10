@@ -1,4 +1,3 @@
-import { sessionDetailDataMap } from "@/lib/mock/session-detail-data";
 import { resolveWorkspaceNav } from "@/lib/workspace-nav";
 
 export type WorkspaceBreadcrumbSegment = {
@@ -19,9 +18,7 @@ export function resolveWorkspaceBreadcrumb(pathname: string): WorkspaceBreadcrum
   const sessionDetailMatch = /^\/sessions\/([^/]+)$/.exec(path);
   if (sessionDetailMatch?.[1]) {
     const slug = sessionDetailMatch[1];
-    const detail = sessionDetailDataMap[slug];
-    const title = detail?.title ?? slug;
-    return [root, { label: "会话", href: "/sessions" }, { label: title, current: true }];
+    return [root, { label: "会话", href: "/sessions" }, { label: slug, current: true }];
   }
 
   if (path === "/sessions") {

@@ -27,11 +27,14 @@ export type SecurityPreferences = {
 type ProfileStoreState = {
   /** 覆盖默认 mock 的个人字段 */
   profileOverrides: Partial<UserProfile>;
+  profileOwnerEmail: string | null;
   notificationSettings: NotificationSettings;
   securityPreferences: SecurityPreferences;
   /** 演示：上次保存时间文案 */
   lastSavedAt: string | null;
   setProfileOverrides: (patch: Partial<UserProfile>) => void;
+  adoptProfileOwner: (email: string | null) => void;
+  clearProfileState: () => void;
   setNotificationSettings: (patch: Partial<NotificationSettings>) => void;
   setSecurityPreferences: (patch: Partial<SecurityPreferences>) => void;
   markSaved: () => void;
@@ -55,6 +58,7 @@ export const useProfileStore = create<ProfileStoreState>()(
   persist(
     (set) => ({
       profileOverrides: {},
+      profileOwnerEmail: null,
       notificationSettings: defaultNotifications,
       securityPreferences: defaultSecurity,
       lastSavedAt: null,
@@ -62,6 +66,24 @@ export const useProfileStore = create<ProfileStoreState>()(
         set((state) => ({
           profileOverrides: { ...state.profileOverrides, ...patch },
         })),
+      adoptProfileOwner: (email) =>
+        set((state) => {
+          const normalized = email?.trim().toLowerCase() || null;
+          if (state.profileOwnerEmail === normalized) {
+            return {};
+          }
+          return {
+            profileOwnerEmail: normalized,
+            profileOverrides: {},
+            lastSavedAt: null,
+          };
+        }),
+      clearProfileState: () =>
+        set({
+          profileOverrides: {},
+          profileOwnerEmail: null,
+          lastSavedAt: null,
+        }),
       setNotificationSettings: (patch) =>
         set((state) => ({
           notificationSettings: { ...state.notificationSettings, ...patch },
@@ -84,6 +106,7 @@ export const useProfileStore = create<ProfileStoreState>()(
       name: "eko-profile-store",
       partialize: (s) => ({
         profileOverrides: s.profileOverrides,
+        profileOwnerEmail: s.profileOwnerEmail,
         notificationSettings: s.notificationSettings,
         securityPreferences: s.securityPreferences,
         lastSavedAt: s.lastSavedAt,

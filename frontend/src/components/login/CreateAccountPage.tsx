@@ -5,9 +5,11 @@ import { useRouter } from "next/navigation";
 import type { FormEvent } from "react";
 import { useMemo, useState } from "react";
 
-import { BrandMark, FeishuLogo, GoogleLogo } from "@/components/login/brand-icons";
-
-const PENDING_EMAIL_KEY = "eko:register-pending-email";
+import { BrandMark, FeishuLogo } from "@/components/login/brand-icons";
+import { apiUrl } from "@/lib/eko-api";
+import { saveAccessToken } from "@/lib/auth-token";
+import { useAppStore } from "@/store/app-store";
+import { useProfileStore } from "@/store/profile-store";
 
 function FeatureIcon({
   tone,
@@ -29,6 +31,8 @@ function FeatureIcon({
 
 export function CreateAccountPage() {
   const router = useRouter();
+  const setLogin = useAppStore((state) => state.setLogin);
+  const adoptProfileOwner = useProfileStore((state) => state.adoptProfileOwner);
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -56,39 +60,65 @@ export function CreateAccountPage() {
     setSubmitting(true);
     setError("");
 
-    window.setTimeout(() => {
-      if (!fullName.trim()) {
-        setSubmitting(false);
-        setError("请填写姓名。");
-        return;
-      }
-      const trimmedEmail = email.trim().toLowerCase();
-      if (!trimmedEmail || !trimmedEmail.includes("@")) {
-        setSubmitting(false);
-        setError("请填写有效的工作邮箱。");
-        return;
-      }
-      if (password.length < 8) {
-        setSubmitting(false);
-        setError("密码至少 8 位字符。");
-        return;
-      }
-      if (password !== confirmPassword) {
-        setSubmitting(false);
-        setError("两次输入的密码不一致。");
-        return;
-      }
-      if (!agreed) {
-        setSubmitting(false);
-        setError("请阅读并同意服务条款与隐私政策。");
-        return;
-      }
+    const trimmedName = fullName.trim();
+    const trimmedEmail = email.trim().toLowerCase();
 
-      if (typeof window !== "undefined") {
-        sessionStorage.setItem(PENDING_EMAIL_KEY, trimmedEmail);
+    if (!trimmedName) {
+      setSubmitting(false);
+      setError("请填写姓名。");
+      return;
+    }
+    if (!trimmedEmail || !trimmedEmail.includes("@")) {
+      setSubmitting(false);
+      setError("请填写有效的工作邮箱。");
+      return;
+    }
+    if (password.length < 8) {
+      setSubmitting(false);
+      setError("密码至少 8 位字符。");
+      return;
+    }
+    if (password !== confirmPassword) {
+      setSubmitting(false);
+      setError("两次输入的密码不一致。");
+      return;
+    }
+    if (!agreed) {
+      setSubmitting(false);
+      setError("请阅读并同意服务条款与隐私政策。");
+      return;
+    }
+
+    void (async () => {
+      try {
+        const res = await fetch(apiUrl("/api/v1/auth/register"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            display_name: trimmedName,
+            email: trimmedEmail,
+            password,
+          }),
+        });
+        const json = (await res.json()) as {
+          code?: number;
+          message?: string;
+          detail?: string;
+          data?: { access_token?: string };
+        };
+        if (!res.ok || json.code !== 0 || !json.data?.access_token) {
+          throw new Error(json.message || json.detail || res.statusText || "注册失败");
+        }
+        saveAccessToken(json.data.access_token, true);
+        adoptProfileOwner(trimmedEmail);
+        setLogin(trimmedEmail, { remember: true });
+        router.push("/home");
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "注册失败。");
+      } finally {
+        setSubmitting(false);
       }
-      router.push("/login?registered=1");
-    }, 500);
+    })();
   }
 
   return (
@@ -139,7 +169,7 @@ export function CreateAccountPage() {
                   <div className="pt-1">
                     <h2 className="text-[17px] font-semibold tracking-[-0.03em] text-slate-950">安全可控的企业账号体系</h2>
                     <p className="mt-1 max-w-[440px] text-[13px] leading-[1.6] text-slate-500">
-                      支持域校验与 SSO 预留接口；演示环境下仅为前端表单流程。
+                      支持域校验与 SSO 预留接口，当前注册流程已接入后端 JWT。
                     </p>
                   </div>
                 </div>
@@ -175,7 +205,7 @@ export function CreateAccountPage() {
                 <p className="mt-1.5 text-[15px] text-slate-500">注册你的 Eko 工作区账号</p>
               </div>
 
-              <form className="mt-6 space-y-4" onSubmit={handleSubmit}>
+              <form className="mt-6 space-y-4" noValidate onSubmit={handleSubmit}>
                 <label className="block">
                   <span className="mb-1.5 block text-[13px] font-medium text-slate-500">姓名</span>
                   <div className="flex h-[52px] items-center gap-2.5 rounded-[14px] border border-slate-200 px-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.6)]">
@@ -202,8 +232,12 @@ export function CreateAccountPage() {
                       <path d="m5.2 7 6.1 5.2a1 1 0 0 0 1.4 0L18.8 7" />
                     </svg>
                     <input
-                      type="email"
+                      type="text"
+                      inputMode="email"
                       autoComplete="email"
+                      autoCapitalize="none"
+                      autoCorrect="off"
+                      spellCheck={false}
                       value={email}
                       onChange={(event) => setEmail(event.target.value)}
                       placeholder="you@company.com"
@@ -315,31 +349,24 @@ export function CreateAccountPage() {
 
               <div className="mt-6 flex items-center gap-4 text-[12px] text-slate-400">
                 <div className="h-px flex-1 bg-slate-200" />
-                或使用以下方式继续
+                使用企业身份继续
                 <div className="h-px flex-1 bg-slate-200" />
               </div>
 
-              <div className="mt-4 space-y-3">
-                <button
-                  type="button"
-                  className="flex h-[50px] w-full items-center justify-center gap-3 rounded-[14px] border border-slate-200 bg-white text-[15px] font-medium text-slate-900 shadow-[0_8px_20px_rgba(15,23,42,0.05)] transition hover:border-slate-300"
+              <div className="mt-4">
+                <a
+                  href="/login/feishu/start"
+                  className="flex h-[50px] w-full items-center justify-center gap-3 rounded-[14px] border border-slate-200 bg-white text-[15px] font-medium text-slate-700 shadow-[0_8px_20px_rgba(15,23,42,0.05)] transition hover:border-blue-200 hover:text-blue-600"
                 >
                   <FeishuLogo className="h-7 w-7" />
-                  使用飞书注册
-                </button>
-                <button
-                  type="button"
-                  className="flex h-[50px] w-full items-center justify-center gap-3 rounded-[14px] border border-slate-200 bg-white text-[15px] font-medium text-slate-900 shadow-[0_8px_20px_rgba(15,23,42,0.05)] transition hover:border-slate-300"
-                >
-                  <GoogleLogo className="h-7 w-7" />
-                  使用 Google 注册
-                </button>
+                  使用飞书注册 / 登录
+                </a>
               </div>
 
               <div className="mt-5 text-center text-[14px] text-slate-500">
                 已有账号？
                 {" "}
-                <Link href="/login" className="rounded-md font-semibold text-blue-500 outline outline-1 outline-blue-500/40 hover:text-blue-600">
+                <Link href="/login" className="font-semibold text-blue-500 transition hover:text-blue-600">
                   立即登录
                 </Link>
               </div>

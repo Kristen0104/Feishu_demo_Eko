@@ -11,9 +11,10 @@ export type AgentPhase =
 export type RealtimeEnvelope =
   | {
       type:
+        | "SESSION_CONNECTED"
+        | "SESSION_OPENED"
         | "INTENT_RECOGNIZED"
         | "AGENT_PLANNING"
-        | "DOC_STREAM"
         | "CANVAS_UPDATE"
         | "TASK_COMPLETED"
         | "CURSOR_SYNC"

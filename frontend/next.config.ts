@@ -5,10 +5,18 @@ import type { NextConfig } from "next";
 const backendRewriteOrigin =
   process.env.BACKEND_PROXY?.replace(/\/$/, "") ||
   process.env.NEXT_PUBLIC_EKO_API_BASE?.replace(/\/$/, "") ||
-  "";
+  "http://39.104.87.235:8000";
+
+const ngrokDevOrigins = [
+  "*.ngrok-free.dev",
+  "*.ngrok-free.app",
+  "*.ngrok.app",
+  process.env.NGROK_HOST ? process.env.NGROK_HOST.replace(/^https?:\/\//, "") : null,
+].filter((origin): origin is string => Boolean(origin));
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  allowedDevOrigins: ngrokDevOrigins,
   // 避免与家目录中其他 package-lock.json 冲突，消除多 lockfile 警告
   outputFileTracingRoot: path.join(__dirname),
   transpilePackages: ["tldraw", "@tldraw/editor", "@tldraw/store", "@tldraw/tlschema", "@tldraw/state", "@tldraw/utils"],

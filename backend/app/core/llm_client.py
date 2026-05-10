@@ -41,13 +41,21 @@ class LLMRequestError(RuntimeError):
 
 
 class LLMClient:
-    """火山引擎 Doubao LLM 客户端"""
+    """OpenAI-compatible LLM client used by agent/document modules."""
 
     def __init__(self, settings_override: Settings | None = None) -> None:
         active_settings = settings_override or settings
-        self._api_key = active_settings.VOLCENGINE_API_KEY
-        self._endpoint = self._normalize_endpoint(active_settings.VOLCENGINE_ENDPOINT)
-        self._model = active_settings.VOLCENGINE_MODEL
+        if active_settings.AGENT_API_KEY and active_settings.AGENT_API_BASE:
+            self._api_key = active_settings.AGENT_API_KEY
+            self._endpoint = self._normalize_endpoint(active_settings.AGENT_API_BASE)
+            self._model = active_settings.AGENT_MODEL
+            self._supports_thinking_option = True
+        else:
+            self._api_key = active_settings.VOLCENGINE_API_KEY
+            self._endpoint = self._normalize_endpoint(active_settings.VOLCENGINE_ENDPOINT)
+            self._model = active_settings.VOLCENGINE_MODEL
+            self._supports_thinking_option = False
+        self._thinking_enabled = active_settings.AGENT_THINKING_ENABLED
         self._timeout = 300  # 长文档生成允许5分钟超时
 
     @staticmethod
@@ -80,6 +88,8 @@ class LLMClient:
             "temperature": temperature,
             "stream": False,
         }
+        if self._supports_thinking_option and not self._thinking_enabled:
+            payload["thinking"] = {"type": "disabled"}
 
         async with httpx.AsyncClient(timeout=self._timeout, trust_env=False) as client:
             response = await client.post(
@@ -115,6 +125,8 @@ class LLMClient:
             "temperature": temperature,
             "stream": True,
         }
+        if self._supports_thinking_option and not self._thinking_enabled:
+            payload["thinking"] = {"type": "disabled"}
 
         async with httpx.AsyncClient(timeout=self._timeout, trust_env=False) as client:
             async with client.stream(

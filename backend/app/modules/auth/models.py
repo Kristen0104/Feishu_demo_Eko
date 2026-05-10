@@ -15,10 +15,27 @@ def _utcnow() -> datetime:
 
 class User(Base):
     __tablename__ = "users"
+    __table_args__ = (UniqueConstraint("email", name="uq_users_email"),)
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: f"user_{uuid4().hex}")
+    email: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
     display_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    name_en: Mapped[str | None] = mapped_column(String(255), nullable=True)
     avatar_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    phone_ext: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    location: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    time_zone: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    employee_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    job_title: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    department: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    team: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    reports_to: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    joined_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    bio: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    languages: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    password_hash: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False)
 

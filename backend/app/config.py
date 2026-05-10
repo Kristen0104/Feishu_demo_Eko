@@ -22,12 +22,11 @@ class Settings(BaseSettings):
     # Server
     HOST: str = "0.0.0.0"
     PORT: int = 8000
-    GENERATED_ROOT: str = str(Path(__file__).resolve().parent.parent / "generated")
 
     # Database
     POSTGRES_USER: str = "postgres"
     POSTGRES_PASSWORD: str = "postgres"
-    POSTGRES_HOST: str = "localhost"
+    POSTGRES_HOST: str = "39.104.87.235"
     POSTGRES_PORT: int = 5432
     POSTGRES_DB: str = "nexus_pilot"
 
@@ -36,7 +35,7 @@ class Settings(BaseSettings):
         return f"postgresql+asyncpg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
 
     # Redis
-    REDIS_HOST: str = "localhost"
+    REDIS_HOST: str = "39.104.87.235"
     REDIS_PORT: int = 6379
     REDIS_DB: int = 0
     REDIS_PASSWORD: str = ""
@@ -62,6 +61,8 @@ class Settings(BaseSettings):
     CORS_ORIGINS: list[str] = [
         "http://localhost:3000",
         "http://127.0.0.1:3000",
+        "http://localhost:3002",
+        "http://127.0.0.1:3002",
         "http://localhost:1420",
         "http://127.0.0.1:1420",
         "http://localhost:8000",
@@ -74,21 +75,30 @@ class Settings(BaseSettings):
     FEISHU_APP_SECRET: str = ""
     FEISHU_VERIFICATION_TOKEN: str = ""
     FEISHU_ENCRYPT_KEY: str = ""
+    FEISHU_WS_AUTO_START: bool = True
     FEISHU_BASE_URL: str = "https://open.feishu.cn"
     FEISHU_AUTH_BASE_URL: str = "https://accounts.feishu.cn"
-    FEISHU_OAUTH_REDIRECT_URI: str = "http://127.0.0.1:8010/frontend/test.html"
-    FEISHU_OAUTH_SCOPE: str = "contact:user.base:readonly"
+    FEISHU_OAUTH_REDIRECT_URI: str = "http://127.0.0.1:3002/login/feishu/callback"
+    FEISHU_OAUTH_SCOPE: str = "contact:user.base:readonly search:docs:read"
     FEISHU_OAUTH_STATE_TTL_SECONDS: int = 600
-    FRONTEND_LOGIN_SUCCESS_URL: str = "http://127.0.0.1:8010/frontend/test.html"
+    FRONTEND_LOGIN_SUCCESS_URL: str = "http://127.0.0.1:3002/home"
     FEISHU_BITABLE_APP_TOKEN: str = ""
     FEISHU_BITABLE_TABLE_ID: str = ""
     FEISHU_BITABLE_FIELD_TITLE: str = "标题"
     FEISHU_BITABLE_FIELD_URL: str = "文档链接"
 
+    # Bitable Feishu OpenAPI integration
+    BITABLE_ENABLED: bool = False
+    BITABLE_DEFAULT_WORKSPACE_ID: str = "Feishu_demo_Eko"
+    BITABLE_QUERY_LIMIT: int = 8
+    BITABLE_ARCHIVE_ENABLED: bool = False
+    BITABLE_PRESET_BASE_NAME: str = "团队预置多维表格"
+
     # Agent (DeepSeek)
     AGENT_MODEL: str = "deepseek-v4-flash"
     AGENT_API_BASE: str = "https://api.deepseek.com"
     AGENT_API_KEY: str = ""
+    AGENT_THINKING_ENABLED: bool = False
 
     # Volcengine (火山引擎) - 替代方案
     VOLCENGINE_API_KEY: str = ""
@@ -96,14 +106,12 @@ class Settings(BaseSettings):
     VOLCENGINE_MODEL: str = "ep-20260423222610-xbx2l"
 
     AGENT_EMBEDDING_MODEL: str = "text-embedding-3-small"
-    PPT_USE_LIVE_LLM: bool = False
-    PPT_LLM_TIMEOUT_SECONDS: int = 180
-    PPT_LLM_MAX_TOKENS: int = 16000
-    PPT_EXPORT_NODE_BIN: str = "node"
-    PPT_EXPORT_NODE_MODULES: str = ""
-    PPT_EXPORT_VIEWPORT_WIDTH: int = 1600
-    PPT_EXPORT_VIEWPORT_HEIGHT: int = 900
-    PPT_EXPORT_DEVICE_SCALE_FACTOR: int = 2
+    AGENT_EMBEDDING_API_BASE: str | None = None
+    AGENT_EMBEDDING_API_KEY: str | None = None
+    AGENT_EMBEDDING_FAILOVER_ENABLED: bool = False
+    RAG_EMBEDDING_DIMENSIONS: int = 1536
+    RAG_CHUNK_SIZE: int = 450
+    RAG_CHUNK_OVERLAP: int = 80
 
     # AI PPT
     AIPPT_MODEL: str = "deepseek-v4-flash"

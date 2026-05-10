@@ -1,6 +1,6 @@
 import { ProfileOverview } from "@/components/profile/ProfileOverview";
-import { getProfileData } from "@/lib/mock/profile-data";
+import { getDefaultProfile } from "@/lib/default-profile";
 
 export default function ProfileRoutePage() {
-  return <ProfileOverview base={getProfileData()} />;
+  return <ProfileOverview base={getDefaultProfile()} />;
 }

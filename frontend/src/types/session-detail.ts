@@ -26,6 +26,33 @@ export type DetailMessageActionCard = {
   buttons: DetailMessageActionButton[];
 };
 
+export type DetailMessagePlannerCard = {
+  goal: string;
+  intent: string;
+  taskComplexity?: string;
+  missingInfo?: string[];
+  needClarification?: boolean;
+  questions?: string[];
+  assumptions?: string[];
+  clarificationNeeded?: boolean;
+  clarificationQuestion?: string | null;
+  summary: string;
+  steps: Array<{
+    id: string;
+    title: string;
+    description?: string;
+    type?: string;
+    tool?: string;
+    input?: Record<string, unknown>;
+    expectedOutput?: string;
+    dependsOn?: string[];
+  }>;
+  finalOutput?: {
+    format: string;
+    requirements: string[];
+  };
+};
+
 export type DetailMessage = {
   id: string;
   author: string;
@@ -38,6 +65,7 @@ export type DetailMessage = {
   helperText?: string;
   fileCard?: DetailMessageFileCard;
   actionCard?: DetailMessageActionCard;
+  plannerCard?: DetailMessagePlannerCard;
 };
 
 export type DetailSourceItem = {
@@ -45,6 +73,18 @@ export type DetailSourceItem = {
   title: string;
   description: string;
   status: WorkflowStatus;
+};
+
+export type DetailContextMessage = {
+  role: string;
+  content: string;
+  timestamp?: number | null;
+  sender_open_id?: string | null;
+  sender_union_id?: string | null;
+  sender_name?: string | null;
+  platform_user_id?: string | null;
+  platform_display_name?: string | null;
+  avatar_url?: string | null;
 };
 
 export type DetailEvidenceItem = {
@@ -70,6 +110,33 @@ export type DetailDocumentSection = {
   title: string;
   body?: string;
   bullets?: string[];
+};
+
+export type DetailArtifactKind = "ppt" | "docx" | "board";
+
+export type DetailDocumentArtifact = {
+  kind?: DetailArtifactKind | string | null;
+  intent?: string | null;
+  title?: string | null;
+  jobId?: string | null;
+  status?: string | null;
+  progress?: number | null;
+  currentStep?: string | null;
+  downloadUrl?: string | null;
+  errorMessage?: string | null;
+  content?: string | null;
+  sharingUrl?: string | null;
+  whiteboardId?: string | null;
+  previewUrl?: string | null;
+  resultSummary?: string | null;
+  bitableArchiveResults?: Array<{
+    source_id?: string | null;
+    record_id?: string | null;
+    record_url?: string | null;
+    status?: string | null;
+    message?: string | null;
+    error?: string | null;
+  }> | null;
 };
 
 export type DetailDocumentTableRow = {
@@ -141,15 +208,22 @@ export type SessionDetailData = {
   document: {
     title: string;
     date: string;
+    markdown?: string | null;
     sections: DetailDocumentSection[];
     tableRows?: DetailDocumentTableRow[];
+    artifact?: DetailDocumentArtifact;
   };
   canvas: {
     title: string;
     nodes: DetailCanvasNode[];
+    artifact?: DetailDocumentArtifact;
   };
+  artifact?: DetailDocumentArtifact;
+  intent?: string | null;
   disabledCards: Array<{ title: string; subtitle: string }>;
   contextSources: DetailSourceItem[];
+  contextMessages?: DetailContextMessage[];
+  instruction?: string | null;
   sourceEvidence: DetailEvidenceItem[];
   syncActions: DetailSyncAction[];
   statusBadges: HeaderBadge[];

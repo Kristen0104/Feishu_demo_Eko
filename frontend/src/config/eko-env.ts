@@ -13,6 +13,17 @@ export function isWebSocketEnabled(): boolean {
 }
 
 /**
+ * Protocol mock is a demo fallback, not a production substitute for backend realtime.
+ * Production builds only enable it when explicitly requested.
+ */
+export function isProtocolMockFallbackEnabled(): boolean {
+  const raw = process.env.NEXT_PUBLIC_EKO_PROTOCOL_MOCK;
+  if (raw === "true") return true;
+  if (raw === "false") return false;
+  return process.env.NODE_ENV !== "production";
+}
+
+/**
  * Build ws/wss URL for session channel. Prefer NEXT_PUBLIC_EKO_WS_BASE (e.g. ws://127.0.0.1:8000).
  * Falls back to deriving from window location when api base is empty (same host).
  */
@@ -24,7 +35,7 @@ export function buildSessionWebSocketUrl(sessionId: string, token: string | null
   const q = token ? `?token=${encodeURIComponent(token)}` : "";
 
   if (explicit) {
-    return `${explicit}/ws/session/${encId}${q}`;
+    return `${explicit}/api/v1/sync/ws/session/${encId}${q}`;
   }
 
   const api = getApiBaseUrl();
@@ -33,7 +44,7 @@ export function buildSessionWebSocketUrl(sessionId: string, token: string | null
       const base = api.startsWith("http") ? api : `http://${api}`;
       const u = new URL(base);
       u.protocol = u.protocol === "https:" ? "wss:" : "ws:";
-      u.pathname = `/ws/session/${encId}`;
+      u.pathname = `/api/v1/sync/ws/session/${encId}`;
       u.search = token ? `token=${encodeURIComponent(token)}` : "";
       u.hash = "";
       return u.toString();
@@ -42,6 +53,5 @@ export function buildSessionWebSocketUrl(sessionId: string, token: string | null
     }
   }
 
-  const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-  return `${proto}//${window.location.host}/ws/session/${encId}${q}`;
+  return `ws://39.104.87.235:8000/api/v1/sync/ws/session/${encId}${q}`;
 }

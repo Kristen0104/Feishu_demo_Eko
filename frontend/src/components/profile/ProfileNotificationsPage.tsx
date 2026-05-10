@@ -15,7 +15,7 @@ export function ProfileNotificationsPage() {
 
   return (
     <>
-      <SectionCard title="消息与协作" description="控制即时消息类通知；设置保存在本机（Zustand persist）。">
+      <SectionCard title="消息与协作" description="控制即时消息类通知的本地演示开关；暂不回写后端通知服务。">
         <ToggleRow
           label="会话与 @ 提醒"
           description="群聊、私聊中被 @ 或指派任务时通知。"
@@ -24,13 +24,13 @@ export function ProfileNotificationsPage() {
         />
         <ToggleRow
           label="邮件摘要"
-          description="每日一次未读摘要发到工作邮箱（演示）。"
+          description="每日一次未读摘要发到工作邮箱（本地演示）。"
           checked={notificationSettings.emailDigest}
           onChange={(v) => patch({ emailDigest: v })}
         />
       </SectionCard>
 
-      <SectionCard title="日历与安全" description="日程类与安全类提醒通道。">
+      <SectionCard title="日历与安全" description="日程类与安全类提醒通道；当前只保存在本机。">
         <ToggleRow
           label="日历与会议提醒"
           description="会议开始前推送。"
@@ -45,7 +45,7 @@ export function ProfileNotificationsPage() {
         />
       </SectionCard>
 
-      <SectionCard title="产品动态" description="可选接收产品更新与调研邀请（演示）。">
+      <SectionCard title="产品动态" description="可选接收产品更新与调研邀请（本地演示）。">
         <ToggleRow
           label="产品与功能更新"
           checked={notificationSettings.productUpdates}

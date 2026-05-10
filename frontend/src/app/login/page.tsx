@@ -4,7 +4,7 @@ import { LoginPage } from "@/components/login/LoginPage";
 
 export const metadata: Metadata = {
   title: "登录 · Eko",
-  description: "Eko 工作台登录（演示）",
+  description: "Eko 工作台登录",
 };
 
 type LoginSearchParams = Promise<{ registered?: string | string[] }>;

@@ -9,6 +9,5 @@
   <rect x="72" y="332" width="600" height="306" rx="28" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="2"/>
   {{LEFT_CONTENT}}
   <rect x="708" y="226" width="500" height="412" rx="32" fill="{{ACCENT_PALE}}"/>
-  <text x="742" y="262" font-family="Microsoft YaHei, Arial, sans-serif" font-size="20" font-weight="700" fill="{{ACCENT}}">Key Cards</text>
   {{RIGHT_CONTENT}}
 </svg>
