@@ -82,13 +82,16 @@ function SourceIcon({ source, compact }: { source: SessionItem["source"]; compac
 function statusToWorkflow(status: SessionStatus): "completed" | "running" | "pending" | "warning" {
   if (status === "已同步") return "completed";
   if (status === "进行中") return "running";
+  if (status === "待处理") return "warning";
   return "pending";
 }
 
 function mapRemoteStatus(status: string): SessionStatus {
-  if (status === "已同步" || status === "进行中" || status === "草稿" || status === "待处理") return status;
-  if (status === "completed" || status === "done") return "已同步";
-  if (status.includes("失败")) return "待处理";
+  const normalized = status.trim().toLowerCase();
+  if (status === "已同步" || normalized === "completed" || normalized === "done" || normalized === "success") return "已同步";
+  if (status === "进行中" || normalized === "running" || normalized === "processing" || normalized === "queued") return "进行中";
+  if (status.includes("失败") || normalized === "failed" || normalized === "error" || normalized === "cancelled") return "待处理";
+  if (status === "草稿" || status === "待处理") return status;
   return "进行中";
 }
 

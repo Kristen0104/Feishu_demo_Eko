@@ -100,3 +100,4 @@ async def init_db():
 from app.modules.auth import models as _auth_models  # noqa: E402,F401
 from app.modules.team import models as _team_models  # noqa: E402,F401
 from app.modules.rag import models as _rag_models  # noqa: E402,F401
+from app.modules.bitable import models as _bitable_models  # noqa: E402,F401

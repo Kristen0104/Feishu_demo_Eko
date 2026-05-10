@@ -192,29 +192,31 @@ class SyncService:
         role: str,
         content: str,
         replace_last: bool = False,
+        persist: bool = True,
     ) -> None:
         if not content.strip():
             return
-        session = await self.get_session(session_id)
-        messages = [
-            message.model_dump() if hasattr(message, "model_dump") else dict(message)
-            for message in (session.messages if session is not None else [])
-        ]
         message = {
             "role": role,
             "content": content,
         }
-        if messages and messages[-1].get("role") == role and messages[-1].get("content") == content:
-            return
-        if replace_last and messages and messages[-1].get("role") == role:
-            messages[-1] = message
-        else:
-            messages.append(message)
-        await self._manager.update_session(
-            session_id,
-            messages=messages,
-            summary=content,
-        )
+        if persist:
+            session = await self.get_session(session_id)
+            messages = [
+                message.model_dump() if hasattr(message, "model_dump") else dict(message)
+                for message in (session.messages if session is not None else [])
+            ]
+            if messages and messages[-1].get("role") == role and messages[-1].get("content") == content:
+                return
+            if replace_last and messages and messages[-1].get("role") == role:
+                messages[-1] = message
+            else:
+                messages.append(message)
+            await self._manager.update_session(
+                session_id,
+                messages=messages,
+                summary=content,
+            )
         await self.emit(
             session_id,
             {

@@ -68,10 +68,11 @@ class PlannerAgent:
 4. steps 必须按执行顺序排列，depends_on 只能引用前面已经出现的 step id。
 5. step.type 只能使用 reasoning、tool_call、generation、validation、clarification。
 6. step.status 默认 pending，执行中由运行时更新为 in_progress、completed、blocked 或 failed。
-7. tool 可为空；需要工具时使用可用工具名，例如 chat、docx、ppt、ppt_create、ppt_edit、board、docx_edit、knowledge_search、artifact_lookup、sync。
+7. tool 可为空；需要工具时使用可用工具名，例如 chat、docx、ppt、ppt_create、ppt_edit、board、docx_edit、knowledge_search、bitable_schema、bitable_search、bitable_archive、artifact_lookup、sync。
 8. visible_summary 必须是给用户看的中文摘要，风格接近 Claude Code / Codex：先说理解，再说计划，再说当前需要什么。
 9. 重要：当用户请求生成 PPT 但没有明确指定设计模式（template/free_design）时，属于信息不足，必须在 missing_info 中注明，设置 need_clarification=true，并在 questions 中询问用户希望使用模板模式（快速稳定生成）还是自由设计（更强视觉表现）。
 10. requires_context_selection 由你判断。只有当用户明确要求“基于聊天记录/上下文/刚才讨论/群聊消息”等历史消息来生成时，才设为 true；否则必须设为 false。
+11. 当用户请求“结合项目表/排期/负责人/活动数据/状态/数据记录/Bitable/多维表格”时，应考虑 bitable_search；Bitable 查询失败不是任务失败，查询不到时继续使用聊天上下文和 RAG。
 
 输出格式：
 {

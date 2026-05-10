@@ -397,6 +397,7 @@ class FeishuEventProcessor:
             return {"msg": "success"}
 
         instruction = self._normalize_instruction(prompt)
+        sender_profile: dict[str, Any] = {}
         if self._sync_service is not None:
             session = await self._sync_service.get_session(session_id)
             if session is None:
@@ -407,11 +408,14 @@ class FeishuEventProcessor:
                 )
                 logger.info("Feishu /chat rejected missing session=%s", session_id)
                 return {"msg": "success"}
+            if session.user_id:
+                sender_profile["platform_user_id"] = session.user_id
 
         request = AgentChatRequest(
             session_id=session_id,
             message=instruction,
             context=AgentContext(chat_history=[]),
+            sender=sender_profile or None,
         )
         await self._run_agent_stream_to_session(request)
         logger.info("Feishu /chat forwarded message to session=%s", session_id)
@@ -511,7 +515,7 @@ class FeishuEventProcessor:
                 len(context_candidates),
                 waiting_for_selection,
             )
-            if context_candidates and not waiting_for_selection:
+            if not waiting_for_selection:
                 request = AgentChatRequest(
                     session_id=session_id,
                     message=instruction,
@@ -621,6 +625,7 @@ class FeishuEventProcessor:
                         role="assistant",
                         content="\n\n".join(streamed_lines),
                         replace_last=len(streamed_lines) > 1,
+                        persist=False,
                     )
         except Exception as exc:  # noqa: BLE001
             logger.exception("Feishu agent stream failed session=%s", request.session_id)
@@ -634,22 +639,9 @@ class FeishuEventProcessor:
     def _message_from_stream_event(self, event: dict[str, Any]) -> str | None:
         event_type = event.get("event")
         message = event.get("message")
-        if event_type in {
-            "turn.started",
-            "intent.recognized",
-            "context.loaded",
-            "retrieval.started",
-            "retrieval.completed",
-            "plan.created",
-            "plan.summary",
-            "plan.step",
-            "tool.selected",
-            "tool.started",
-            "tool.completed",
-            "clarification.requested",
-            "result.created",
-            "turn.failed",
-        }:
+        channel = event.get("channel")
+        visibility = event.get("visibility")
+        if event_type in {"clarification.requested", "result.created", "turn.failed"} and channel in {"chat", "error"}:
             return message if isinstance(message, str) and message.strip() else None
         return None
 

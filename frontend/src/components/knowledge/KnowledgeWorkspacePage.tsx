@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { deleteRagFile, listRagFiles, searchRag, uploadRagFile, type RagFile, type RagSearchResult } from "@/lib/rag-api";
+import { BitableSourcesPanel } from "@/components/knowledge/BitableSourcesPanel";
 
 const SUPPORTED_EXTENSIONS = [".pdf", ".docx", ".md", ".txt", ".json", ".csv", ".log"];
 
@@ -148,6 +149,8 @@ export function KnowledgeWorkspacePage() {
   return (
     <main className="min-h-0 flex-1 overflow-y-auto bg-[#F8F9FA] px-6 py-6">
       <div className="mx-auto flex w-full max-w-[1180px] flex-col gap-5">
+        <BitableSourcesPanel />
+
         <section className="rounded-[16px] border border-slate-200 bg-white p-5 shadow-[0_12px_30px_rgba(15,23,42,0.04)]">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div className="min-w-0">

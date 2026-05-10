@@ -158,6 +158,10 @@ class AgentEventV1(BaseModel):
         "context.loaded",
         "retrieval.started",
         "retrieval.completed",
+        "source.bitable.started",
+        "source.bitable.completed",
+        "source.bitable.empty",
+        "source.bitable.failed",
         "plan.created",
         "plan.summary",
         "plan.step",
@@ -165,10 +169,14 @@ class AgentEventV1(BaseModel):
         "tool.started",
         "tool.completed",
         "clarification.requested",
+        "artifact.archived",
+        "artifact.archive_failed",
         "result.created",
         "turn.failed",
     ]
     status: Literal["pending", "running", "completed", "blocked", "failed"] = "completed"
+    channel: Literal["chat", "status", "plan", "sources", "artifact", "log", "error"] = "log"
+    visibility: Literal["user", "detail", "debug"] = "detail"
     message: str
     payload: dict[str, Any] = Field(default_factory=dict)
 

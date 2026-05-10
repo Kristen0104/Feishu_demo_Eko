@@ -114,6 +114,12 @@ class AgentRuntime:
             )
         if turn.retrieved_context:
             payload.setdefault("retrieved_context", [chunk.model_dump() for chunk in turn.retrieved_context])
+        if step.tool == "bitable_search":
+            payload.setdefault("query", turn.user_message)
+        if step.tool == "bitable_schema":
+            payload.setdefault("workspace_id", "Feishu_demo_Eko")
+        if step.tool in {"bitable_schema", "bitable_search", "bitable_archive"}:
+            payload.setdefault("created_by", turn.user_id)
         if turn.request.sharing_url:
             payload.setdefault("sharing_url", turn.request.sharing_url)
         if turn.current_artifact is not None and turn.current_artifact.sharing_url:
@@ -137,8 +143,18 @@ class AgentRuntime:
     async def _retrieval_node(self, state: AgentGraphState) -> AgentGraphState:
         turn = state["turn"]
         turn.add_event("retrieval_started", "开始检索相关知识、历史上下文和当前产物。", status="in_progress")
+        turn.add_event("source_bitable_started", "开始读取 Bitable 结构化数据。", status="in_progress")
         chunks = await self._retriever.retrieve(turn.request, current_artifact=turn.current_artifact)
         turn.retrieved_context = chunks
+        bitable_chunks = [chunk for chunk in chunks if chunk.source_type == "bitable"]
+        if bitable_chunks:
+            turn.add_event(
+                "source_bitable_completed",
+                f"已读取 {len(bitable_chunks)} 条 Bitable 记录。",
+                data={"records": [chunk.model_dump() for chunk in bitable_chunks]},
+            )
+        else:
+            turn.add_event("source_bitable_empty", "未读取到可用 Bitable 记录。")
         turn.add_event(
             "retrieval_completed",
             f"已检索到 {len(chunks)} 条相关上下文。",

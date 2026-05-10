@@ -87,6 +87,15 @@ class Settings(BaseSettings):
     FEISHU_BITABLE_FIELD_TITLE: str = "标题"
     FEISHU_BITABLE_FIELD_URL: str = "文档链接"
 
+    # Bitable official CLI integration
+    LARK_CLI_BINARY: str = "lark-cli"
+    LARK_CLI_TIMEOUT_SECONDS: int = 20
+    LARK_CLI_CONFIG_DIR: str | None = None
+    BITABLE_ENABLED: bool = False
+    BITABLE_DEFAULT_WORKSPACE_ID: str = "Feishu_demo_Eko"
+    BITABLE_QUERY_LIMIT: int = 8
+    BITABLE_ARCHIVE_ENABLED: bool = False
+
     # Agent (DeepSeek)
     AGENT_MODEL: str = "deepseek-v4-flash"
     AGENT_API_BASE: str = "https://api.deepseek.com"

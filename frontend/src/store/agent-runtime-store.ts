@@ -1,5 +1,6 @@
 import { create } from "zustand";
 
+import type { AgentChatStreamEvent } from "@/lib/agent/sse-stream";
 import type { AgentPhase } from "@/types/eko-realtime";
 import type { WorkflowStatus } from "@/types/workspace";
 
@@ -198,6 +199,41 @@ function parseRetrievedSources(payload: Record<string, unknown>): RetrievedSourc
     .filter((source): source is RetrievedSourceWire => source !== null);
 }
 
+function inferAgentEventChannel(event: Pick<AgentChatStreamEvent, "event" | "channel">): NonNullable<AgentChatStreamEvent["channel"]> {
+  if (event.channel) return event.channel;
+  switch (event.event) {
+    case "turn.started":
+    case "intent.recognized":
+    case "retrieval.started":
+    case "tool.started":
+      return "status";
+    case "context.loaded":
+    case "retrieval.completed":
+    case "source.bitable.started":
+    case "source.bitable.completed":
+    case "source.bitable.empty":
+    case "source.bitable.failed":
+      return "sources";
+    case "plan.created":
+    case "plan.summary":
+    case "plan.step":
+      return "plan";
+    case "result.created":
+      return "chat";
+    case "artifact.archived":
+    case "artifact.archive_failed":
+      return "artifact";
+    case "clarification.requested":
+      return "chat";
+    case "turn.failed":
+      return "error";
+    case "tool.selected":
+    case "tool.completed":
+    default:
+      return "log";
+  }
+}
+
 export const useAgentRuntimeStore = create<AgentRuntimeStore>((set, get) => ({
   sessions: {},
 
@@ -279,6 +315,10 @@ export const useAgentRuntimeStore = create<AgentRuntimeStore>((set, get) => ({
     const body = raw as Record<string, unknown>;
     const eventName = typeof body.event === "string" ? body.event : "";
     if (eventName) {
+      const channel = inferAgentEventChannel({
+        event: eventName as AgentChatStreamEvent["event"],
+        channel: typeof body.channel === "string" ? (body.channel as AgentChatStreamEvent["channel"]) : undefined,
+      });
       const payload = (body.payload ?? {}) as Record<string, unknown>;
       const sid = typeof payload.session_id === "string" ? payload.session_id : sessionId;
 
@@ -305,7 +345,7 @@ export const useAgentRuntimeStore = create<AgentRuntimeStore>((set, get) => ({
         return;
       }
 
-      if (eventName === "retrieval.completed") {
+      if (eventName === "retrieval.completed" && channel === "sources") {
         get().patchSession(sid, {
           phase: "RETRIEVING",
           retrievedSources: parseRetrievedSources(payload),
@@ -313,7 +353,23 @@ export const useAgentRuntimeStore = create<AgentRuntimeStore>((set, get) => ({
         return;
       }
 
-      if (eventName === "plan.created") {
+      if (eventName === "source.bitable.completed" && channel === "sources") {
+        const bitableSources = parseRetrievedSources({ sources: payload.records });
+        get().patchSession(sid, {
+          phase: "RETRIEVING",
+          retrievedSources: [...slice.retrievedSources.filter((source) => source.sourceType !== "bitable"), ...bitableSources],
+        });
+        return;
+      }
+
+      if (eventName === "source.bitable.failed") {
+        get().patchSession(sid, {
+          lastError: typeof body.message === "string" ? body.message : "Bitable 查询失败",
+        });
+        return;
+      }
+
+      if (eventName === "plan.created" && channel === "plan") {
         const planPayload = payload.plan && typeof payload.plan === "object" ? (payload.plan as Record<string, unknown>) : payload;
         const planningPlan = parsePlanningPayload(planPayload);
         get().patchSession(sid, {
@@ -324,7 +380,7 @@ export const useAgentRuntimeStore = create<AgentRuntimeStore>((set, get) => ({
         return;
       }
 
-      if (eventName === "plan.step") {
+      if (eventName === "plan.step" && channel === "plan") {
         const stepPayload = payload.step && typeof payload.step === "object" ? (payload.step as Record<string, unknown>) : null;
         if (stepPayload) {
           const parsed = parsePlanningPayload({ steps: [stepPayload] });

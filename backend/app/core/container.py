@@ -13,6 +13,7 @@ ROUTER_REGISTRY: Final[tuple[tuple[str, str], ...]] = (
     ("app.modules.canvas.ui_router", ""),
     ("app.modules.agent.router", "/api/v1/agent"),
     ("app.modules.rag.router", "/api/v1/rag"),
+    ("app.modules.bitable.router", "/api/v1/bitable"),
     ("app.modules.feishu.router", "/api/v1/feishu"),
     ("app.modules.aippt.router", "/api/v1/ppt"),
     ("app.modules.workspace.router", "/api/v1/workspace"),

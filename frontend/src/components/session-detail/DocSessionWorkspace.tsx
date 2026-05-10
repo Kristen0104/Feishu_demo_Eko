@@ -35,6 +35,45 @@ import { useSessionWorkspaceSearch } from "@/components/workspace/session-worksp
 import { DetailConversationMessage } from "./DetailConversationMessage";
 import { detailDesignTokens } from "./designTokens";
 
+type AgentEventChannel = "chat" | "status" | "plan" | "sources" | "artifact" | "log" | "error";
+
+function inferAgentEventChannel(event: {
+  event?: string | null;
+  channel?: AgentEventChannel | null;
+}): AgentEventChannel {
+  if (event.channel) return event.channel;
+  switch (event.event) {
+    case "turn.started":
+    case "intent.recognized":
+    case "retrieval.started":
+    case "tool.started":
+      return "status";
+    case "context.loaded":
+    case "retrieval.completed":
+    case "source.bitable.started":
+    case "source.bitable.completed":
+    case "source.bitable.empty":
+    case "source.bitable.failed":
+      return "sources";
+    case "plan.created":
+    case "plan.summary":
+    case "plan.step":
+      return "plan";
+    case "result.created":
+    case "clarification.requested":
+      return "chat";
+    case "artifact.archived":
+    case "artifact.archive_failed":
+      return "artifact";
+    case "turn.failed":
+      return "error";
+    case "tool.selected":
+    case "tool.completed":
+    default:
+      return "log";
+  }
+}
+
 function SmallIcon({
   type,
   tone = "blue",
@@ -328,6 +367,7 @@ type AgentChatResponseWire = {
     sharing_url?: string | null;
     result_summary?: string | null;
     error_message?: string | null;
+    bitable_archive_results?: DetailDocumentArtifact["bitableArchiveResults"];
   } | null;
   plan?: {
     goal?: string | null;
@@ -408,6 +448,7 @@ function toDetailArtifact(artifact?: AgentChatResponseWire["artifact"]): DetailD
     sharingUrl: artifact.sharing_url,
     resultSummary: artifact.result_summary,
     errorMessage: artifact.error_message,
+    bitableArchiveResults: artifact.bitable_archive_results ?? null,
   };
 }
 
@@ -494,8 +535,11 @@ function ragSnippet(content: string) {
 function ragSourcesToContextSources(sources: RetrievedSourceWire[]): DetailSourceItem[] {
   return sources.map((source, index) => ({
     id: `rag:${source.sourceId}:${index}`,
-    title: source.title || "RAG 命中资料",
-    description: `RAG${ragScoreLabel(source.score)} · ${ragSnippet(source.content)}`,
+    title: source.title || (source.sourceType === "bitable" ? "Bitable 数据" : "RAG 命中资料"),
+    description:
+      source.sourceType === "bitable"
+        ? `Bitable${ragScoreLabel(source.score)} · ${ragSnippet(source.content)}`
+        : `RAG${ragScoreLabel(source.score)} · ${ragSnippet(source.content)}`,
     status: "completed",
   }));
 }
@@ -503,9 +547,9 @@ function ragSourcesToContextSources(sources: RetrievedSourceWire[]): DetailSourc
 function ragSourcesToEvidence(sources: RetrievedSourceWire[]): DetailEvidenceItem[] {
   return sources.map((source, index) => ({
     id: `rag:evidence:${source.sourceId}:${index}`,
-    title: source.title || "RAG 命中资料",
+    title: source.title || (source.sourceType === "bitable" ? "Bitable 数据" : "RAG 命中资料"),
     description: ragSnippet(source.content),
-    tone: source.sourceType === "chat_history" ? "chat" : source.sourceType === "artifact" ? "record" : "document",
+    tone: source.sourceType === "chat_history" ? "chat" : source.sourceType === "artifact" || source.sourceType === "bitable" ? "record" : "document",
   }));
 }
 
@@ -1740,58 +1784,15 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
           },
           (event: AgentChatStreamEvent) => {
             const payload = event.payload ?? {};
+            const channel = inferAgentEventChannel(event);
             store.patchSession(data.id, { useMockFallback: false });
+            store.ingestEnvelope(data.id, event);
             if (event.event === "turn.started") {
               const planningEnabled = payload.planning_enabled !== false;
               updateStreamMessage(isExistingDocumentEdit ? "好的，直接修改当前文档。" : event.message || "收到。我开始处理。", {
                 helperText: planningEnabled ? "理解与规划中" : "直接执行中",
                 replace: isExistingDocumentEdit,
               });
-              return;
-            }
-            if (event.event === "intent.recognized") {
-              store.patchSession(data.id, { phase: "ANALYZING" });
-              if (isExistingDocumentEdit) return;
-              const intent = typeof payload.intent === "string" ? payload.intent : "chat";
-              updateStreamMessage(event.message || `我判断这次要走 ${intent} 能力。`, { sent: true });
-              return;
-            }
-            if (event.event === "retrieval.started") {
-              store.ingestEnvelope(data.id, event);
-              if (isExistingDocumentEdit) return;
-              updateStreamMessage(event.message || "正在检索 RAG 知识库。", { helperText: "RAG 检索中", replace: true });
-              return;
-            }
-            if (event.event === "retrieval.completed") {
-              store.ingestEnvelope(data.id, event);
-              if (isExistingDocumentEdit) return;
-              const sources = Array.isArray(payload.sources) ? payload.sources : [];
-              updateStreamMessage(event.message || `已检索到 ${sources.length} 条 RAG 来源。`, { sent: true });
-              return;
-            }
-            if (event.event === "plan.created") {
-              const planningPlan = toPlanningPlan(payload.plan as AgentChatResponseWire["plan"]);
-              if (planningPlan) {
-                store.patchSession(data.id, {
-                  phase: "RETRIEVING",
-                  planningPlan,
-                  planningSteps: planningPlan.steps,
-                });
-                updateStreamMessage(planningMessageBody(planningPlan), {
-                  plannerCard: planningPlan,
-                  sent: true,
-                });
-              }
-              return;
-            }
-            if (event.event === "plan.summary") {
-              if (isExistingDocumentEdit) return;
-              updateStreamMessage(event.message ? `计划：${event.message}` : "计划已生成。", { sent: true });
-              return;
-            }
-            if (event.event === "plan.step") {
-              if (isExistingDocumentEdit) return;
-              updateStreamMessage(event.message || "继续执行下一步。", { sent: true });
               return;
             }
             if (event.event === "clarification.requested") {
@@ -1805,14 +1806,6 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
               );
               return;
             }
-            if (event.event === "tool.started") {
-              store.patchSession(data.id, { phase: "GENERATING" });
-              updateStreamMessage(isExistingDocumentEdit ? "正在修改当前文档..." : event.message || "好的，我现在调用对应能力。", {
-                sent: true,
-                replace: isExistingDocumentEdit,
-              });
-              return;
-            }
             if (event.event === "result.created") {
               applyResponse(payload.response as AgentChatResponseWire);
               return;
@@ -1820,6 +1813,10 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
             if (event.event === "turn.failed") {
               const error = typeof payload.error === "string" ? payload.error : "";
               streamError = error || event.message || "处理失败，请稍后重试。";
+              return;
+            }
+            if (channel === "chat" && event.message && !isExistingDocumentEdit) {
+              updateStreamMessage(event.message, { sent: true });
             }
           },
         );
@@ -1900,6 +1897,8 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
 
       for (const event of events) {
         const payload = event.payload ?? {};
+        const channel = inferAgentEventChannel(event);
+        useAgentRuntimeStore.getState().ingestEnvelope(data.id, event);
         if (event.event === "turn.started") {
           const message = options.skipContext
             ? "收到。本次将忽略群聊消息记录，直接继续处理。"
@@ -1908,41 +1907,6 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
             helperText: payload.planning_enabled !== false ? "理解与规划中" : "直接执行中",
             replace: true,
           });
-          continue;
-        }
-        if (event.event === "intent.recognized") {
-          const intent = typeof payload.intent === "string" ? payload.intent : "chat";
-          updateReplayMessage(event.message || `我判断这次要走 ${intent} 能力。`, { sent: true });
-          continue;
-        }
-        if (event.event === "retrieval.started") {
-          updateReplayMessage(event.message || "正在检索 RAG 知识库。", { helperText: "RAG 检索中", replace: true });
-          continue;
-        }
-        if (event.event === "retrieval.completed") {
-          const sources = Array.isArray(payload.sources) ? payload.sources : [];
-          updateReplayMessage(event.message || `已检索到 ${sources.length} 条 RAG 来源。`, { sent: true });
-          continue;
-        }
-          if (event.event === "plan.created") {
-            const planningPlan = toPlanningPlan(payload.plan as AgentChatResponseWire["plan"]);
-            if (planningPlan) {
-              useAgentRuntimeStore.getState().patchSession(data.id, {
-                phase: "RETRIEVING",
-                planningPlan,
-                planningSteps: planningPlan.steps,
-                lastError: null,
-              });
-              updateReplayMessage(planningMessageBody(planningPlan), { sent: true });
-            }
-            continue;
-          }
-        if (event.event === "plan.summary") {
-          updateReplayMessage(event.message ? `计划：${event.message}` : "计划已生成。", { sent: true });
-          continue;
-        }
-        if (event.event === "plan.step") {
-          updateReplayMessage(event.message || "继续执行下一步。", { sent: true });
           continue;
         }
         if (event.event === "clarification.requested") {
@@ -1955,8 +1919,8 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
           );
           continue;
         }
-        if (event.event === "tool.started") {
-          updateReplayMessage(event.message || "好的，我现在调用对应能力。", { sent: true });
+        if (channel === "chat" && event.message) {
+          updateReplayMessage(event.message, { sent: true });
         }
       }
     };
@@ -1991,7 +1955,7 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
           author: "Eko",
           role: "eko",
           time: "刚刚",
-          body: [planningPlan ? planningMessageBody(planningPlan) : "", body.data?.message || "已基于选中的上下文生成回复。"].filter(Boolean).join("\n\n"),
+          body: body.data?.message || "已基于选中的上下文完成处理。",
           avatar: "E",
           sent: true,
         },
@@ -2060,46 +2024,13 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
         };
         for (const event of events) {
           const eventPayload = event.payload ?? {};
+          const channel = inferAgentEventChannel(event);
+          useAgentRuntimeStore.getState().ingestEnvelope(data.id, event);
           if (event.event === "turn.started") {
             updateReplayMessage("收到。本次将忽略群聊消息记录，直接继续处理。", {
               helperText: eventPayload.planning_enabled !== false ? "理解与规划中" : "直接执行中",
               replace: true,
             });
-            continue;
-          }
-          if (event.event === "intent.recognized") {
-            const intent = typeof eventPayload.intent === "string" ? eventPayload.intent : "chat";
-            updateReplayMessage(event.message || `我判断这次要走 ${intent} 能力。`, { sent: true });
-            continue;
-          }
-          if (event.event === "retrieval.started") {
-            updateReplayMessage(event.message || "正在检索 RAG 知识库。", { helperText: "RAG 检索中", replace: true });
-            continue;
-          }
-          if (event.event === "retrieval.completed") {
-            const sources = Array.isArray(eventPayload.sources) ? eventPayload.sources : [];
-            updateReplayMessage(event.message || `已检索到 ${sources.length} 条 RAG 来源。`, { sent: true });
-            continue;
-          }
-          if (event.event === "plan.created") {
-            const planningPlan = toPlanningPlan(eventPayload.plan as AgentChatResponseWire["plan"]);
-            if (planningPlan) {
-              useAgentRuntimeStore.getState().patchSession(data.id, {
-                phase: "RETRIEVING",
-                planningPlan,
-                planningSteps: planningPlan.steps,
-                lastError: null,
-              });
-              updateReplayMessage(planningMessageBody(planningPlan), { sent: true });
-            }
-            continue;
-          }
-          if (event.event === "plan.summary") {
-            updateReplayMessage(event.message ? `计划：${event.message}` : "计划已生成。", { sent: true });
-            continue;
-          }
-          if (event.event === "plan.step") {
-            updateReplayMessage(event.message || "继续执行下一步。", { sent: true });
             continue;
           }
           if (event.event === "clarification.requested") {
@@ -2112,8 +2043,8 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
             );
             continue;
           }
-          if (event.event === "tool.started") {
-            updateReplayMessage(event.message || "好的，我现在调用对应能力。", { sent: true });
+          if (channel === "chat" && event.message) {
+            updateReplayMessage(event.message, { sent: true });
           }
         }
         const planningPlan = plannerEnabled ? toPlanningPlan(payload?.plan) : null;
@@ -2134,7 +2065,7 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
           author: "Eko",
           role: "eko",
           time: "刚刚",
-          body: [finalPlanningPlan ? planningMessageBody(finalPlanningPlan) : "", body.data?.message || "已忽略群聊消息记录，直接生成回复。"].filter(Boolean).join("\n\n"),
+          body: body.data?.message || "已忽略群聊消息记录，直接完成处理。",
           avatar: "E",
           sent: true,
         },
