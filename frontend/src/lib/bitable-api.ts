@@ -88,6 +88,19 @@ export type BitableQueryResponse = {
   failures: Array<{ source_id: string; message: string }>;
 };
 
+export type BitableArchiveResult = {
+  source_id: string;
+  record_id?: string | null;
+  record_url?: string | null;
+  status: "created" | "updated" | "skipped" | "failed";
+  message: string;
+  error?: string | null;
+};
+
+export type BitableArchiveResponse = {
+  results: BitableArchiveResult[];
+};
+
 export type BitableDiscoveryStatus = {
   bound: boolean;
   needs_reauth: boolean;
@@ -161,6 +174,21 @@ export async function queryBitableRecords(query: string, limit = 5, workspaceId 
   return fetchEkoJson("/api/v1/bitable/query", {
     method: "POST",
     body: JSON.stringify({ workspace_id: workspaceId, query, limit }),
+  });
+}
+
+export async function archiveBitableArtifact(
+  artifact: Record<string, unknown>,
+  sessionId: string,
+  workspaceId = "Feishu_demo_Eko",
+): Promise<BitableArchiveResponse> {
+  return fetchEkoJson("/api/v1/bitable/archive", {
+    method: "POST",
+    body: JSON.stringify({
+      workspace_id: workspaceId,
+      session_id: sessionId,
+      artifact,
+    }),
   });
 }
 

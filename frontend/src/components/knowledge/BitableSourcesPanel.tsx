@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 import {
+  archiveBitableArtifact,
   createBitableSource,
   deleteBitableSource,
   getBitableDiscoveryStatus,
@@ -189,6 +190,7 @@ export function BitableSourcesPanel() {
   const [loadingFields, setLoadingFields] = useState(false);
   const [saving, setSaving] = useState(false);
   const [checkingId, setCheckingId] = useState<string | null>(null);
+  const [archivingId, setArchivingId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   const fieldOptions = useMemo(() => fields.map(fieldName).filter(Boolean), [fields]);
@@ -504,6 +506,35 @@ export function BitableSourcesPanel() {
     }
   }
 
+  async function handleTestArchive(source: BitableSource) {
+    setArchivingId(source.id);
+    setNotice(null);
+    try {
+      const result = await archiveBitableArtifact(
+        {
+          kind: "docx",
+          title: `Eko 归档测试 - ${source.name}`,
+          result_summary: "这是一条用于验证 Eko 正式成果能否写入多维表格的测试记录。",
+          status: "completed",
+          sharing_url: "https://example.feishu.cn/docx/eko-bitable-archive-test",
+        },
+        `bitable-archive-test-${source.id}`,
+        WORKSPACE_ID,
+      );
+      const matched = result.results.find((item) => item.source_id === source.id) || result.results[0];
+      if (!matched) {
+        setNotice("没有找到可归档的表格。请确认用途包含“归档成果”，并且后端已开启 Bitable 归档。");
+        return;
+      }
+      const suffix = matched.record_url ? ` ${matched.record_url}` : "";
+      setNotice(`归档测试：${matched.status}。${matched.message}${suffix}`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "归档测试失败");
+    } finally {
+      setArchivingId(null);
+    }
+  }
+
   function updateDraft<K extends keyof SelectorDraft>(key: K, value: SelectorDraft[K]) {
     setDraft((current) => ({ ...current, [key]: value }));
   }
@@ -732,6 +763,11 @@ export function BitableSourcesPanel() {
                   <button type="button" onClick={() => void handleInspect(source)} disabled={checkingId === source.id} className="h-8 rounded-[9px] bg-blue-50 px-3 text-[12px] font-semibold text-blue-700 transition hover:bg-blue-100 disabled:text-blue-300">
                     {checkingId === source.id ? "检查中" : "检查"}
                   </button>
+                  {source.purpose === "archive" || source.purpose === "both" ? (
+                    <button type="button" onClick={() => void handleTestArchive(source)} disabled={archivingId === source.id || !source.enabled} className="h-8 rounded-[9px] bg-emerald-50 px-3 text-[12px] font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:text-emerald-300">
+                      {archivingId === source.id ? "写入中" : "测试归档"}
+                    </button>
+                  ) : null}
                   <button type="button" onClick={() => void handleToggle(source)} className="h-8 rounded-[9px] bg-slate-100 px-3 text-[12px] font-semibold text-slate-700 transition hover:bg-slate-200">
                     {source.enabled ? "停用" : "启用"}
                   </button>
