@@ -23,6 +23,13 @@ export type SyncSession = {
     current_step?: string | null;
     download_url?: string | null;
     error_message?: string | null;
+    content?: string | null;
+    sharing_url?: string | null;
+    preview_url?: string | null;
+    result_summary?: string | null;
+    rag_return_file_id?: string | null;
+    rag_return_source?: string | null;
+    rag_return_message?: string | null;
     bitable_archive_results?: Array<{
       source_id?: string | null;
       record_id?: string | null;

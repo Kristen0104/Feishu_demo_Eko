@@ -86,6 +86,11 @@ export type BitableRecordContext = {
 export type BitableQueryResponse = {
   records: BitableRecordContext[];
   failures: Array<{ source_id: string; message: string }>;
+  context_text?: string;
+  source_snapshot?: {
+    sources?: BitableSource[];
+    fields?: string[];
+  };
 };
 
 export type BitableDiscoveryStatus = {

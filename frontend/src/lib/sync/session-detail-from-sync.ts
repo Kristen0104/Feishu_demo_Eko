@@ -41,6 +41,9 @@ type SyncSessionArtifact = {
   whiteboard_id?: string | null;
   preview_url?: string | null;
   result_summary?: string | null;
+  rag_return_file_id?: string | null;
+  rag_return_source?: string | null;
+  rag_return_message?: string | null;
   bitable_archive_results?: BitableArchiveResult[] | null;
 };
 
@@ -253,6 +256,14 @@ function buildSourceEvidence(session: SyncSession): DetailEvidenceItem[] {
     { id: `${session.session_id}:source`, title: "飞书群聊事件", description: "由 @机器人 message 触发的新会话。", tone: "chat" },
   ];
   const archives = Array.isArray(session.artifact?.bitable_archive_results) ? session.artifact.bitable_archive_results : [];
+  if (session.artifact?.rag_return_file_id || session.artifact?.rag_return_message) {
+    evidence.push({
+      id: `${session.session_id}:rag-return:${session.artifact.rag_return_file_id || "artifact"}`,
+      title: "知识库回流",
+      description: session.artifact.rag_return_message || session.artifact.rag_return_source || "产物已加入本地知识库演示索引。",
+      tone: "document",
+    });
+  }
   for (const item of archives) {
     evidence.push({
       id: `${session.session_id}:bitable:${item.source_id || item.record_id || evidence.length}`,
@@ -270,6 +281,14 @@ function buildSources(session: SyncSession): DetailSourceItem[] {
     { id: `${session.session_id}:ctx`, title: "最近群聊上下文", description: `已读取 ${contextSize} 条相关消息。`, status: "completed" },
   ];
   const archives = Array.isArray(session.artifact?.bitable_archive_results) ? session.artifact.bitable_archive_results : [];
+  if (session.artifact?.rag_return_file_id || session.artifact?.rag_return_message) {
+    sources.push({
+      id: `${session.session_id}:rag-return:${session.artifact.rag_return_file_id || "artifact"}`,
+      title: "回流知识库",
+      description: session.artifact.rag_return_message || session.artifact.rag_return_source || "产物已加入本地知识库演示索引。",
+      status: "completed",
+    });
+  }
   for (const item of archives) {
     sources.push({
       id: `${session.session_id}:archive:${item.source_id || item.record_id || sources.length}`,
@@ -304,6 +323,13 @@ function buildSyncActions(session: SyncSession): DetailSyncAction[] {
     },
   ];
   const archives = Array.isArray(session.artifact?.bitable_archive_results) ? session.artifact.bitable_archive_results : [];
+  if (session.artifact?.rag_return_file_id || session.artifact?.rag_return_message) {
+    actions.push({
+      id: `${session.session_id}:rag-return:${session.artifact.rag_return_file_id || "artifact"}`,
+      title: "回流知识库",
+      status: "completed",
+    });
+  }
   for (const item of archives) {
     actions.push({
       id: `${session.session_id}:bitable-sync:${item.source_id || item.record_id || actions.length}`,
@@ -436,6 +462,9 @@ export function buildSessionDetailData(session: SyncSession): SessionDetailData 
             whiteboardId: artifact.whiteboard_id ?? null,
             previewUrl: artifact.preview_url ?? null,
             resultSummary: artifact.result_summary ?? null,
+            ragReturnFileId: artifact.rag_return_file_id ?? null,
+            ragReturnSource: artifact.rag_return_source ?? null,
+            ragReturnMessage: artifact.rag_return_message ?? null,
             bitableArchiveResults: artifact.bitable_archive_results ?? null,
           }
         : undefined,
@@ -457,6 +486,9 @@ export function buildSessionDetailData(session: SyncSession): SessionDetailData 
               whiteboardId: artifact.whiteboard_id ?? null,
               previewUrl: artifact.preview_url ?? null,
               resultSummary: artifact.result_summary ?? null,
+              ragReturnFileId: artifact.rag_return_file_id ?? null,
+              ragReturnSource: artifact.rag_return_source ?? null,
+              ragReturnMessage: artifact.rag_return_message ?? null,
               bitableArchiveResults: artifact.bitable_archive_results ?? null,
             }
           : undefined,
@@ -477,6 +509,9 @@ export function buildSessionDetailData(session: SyncSession): SessionDetailData 
           whiteboardId: artifact.whiteboard_id ?? null,
           previewUrl: artifact.preview_url ?? null,
           resultSummary: artifact.result_summary ?? null,
+          ragReturnFileId: artifact.rag_return_file_id ?? null,
+          ragReturnSource: artifact.rag_return_source ?? null,
+          ragReturnMessage: artifact.rag_return_message ?? null,
           bitableArchiveResults: artifact.bitable_archive_results ?? null,
         }
       : undefined,

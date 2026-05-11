@@ -20,6 +20,7 @@ import {
   type BitableDiscoveryStatus,
   type BitableFieldOption,
   type BitablePurpose,
+  type BitableQueryResponse,
   type BitableSource,
   type BitableTableOption,
   type BitableViewOption,
@@ -183,6 +184,7 @@ export function BitableSourcesPanel() {
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
   const [query, setQuery] = useState("项目排期 负责人 状态");
   const [queryResult, setQueryResult] = useState("");
+  const [queryData, setQueryData] = useState<BitableQueryResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingBases, setLoadingBases] = useState(false);
   const [loadingTables, setLoadingTables] = useState(false);
@@ -508,6 +510,30 @@ export function BitableSourcesPanel() {
     setDraft((current) => ({ ...current, [key]: value }));
   }
 
+  async function handleQueryForContext() {
+    if (!query.trim()) return;
+    setQueryResult("检索中...");
+    setQueryData(null);
+    try {
+      const result = await queryBitableRecords(query.trim(), 5, WORKSPACE_ID);
+      setQueryData(result);
+      if (!result.records.length) {
+        setQueryResult(result.failures.length ? `未命中记录；失败 ${result.failures.length} 个 source。` : "未命中记录。");
+        return;
+      }
+      setQueryResult(result.context_text || result.records.map((record) => `${record.title}\n${record.content}`).join("\n\n"));
+    } catch (error) {
+      setQueryResult(error instanceof Error ? error.message : "查询失败");
+    }
+  }
+
+  async function handleCopyContextText() {
+    const text = queryData?.context_text || queryResult;
+    if (!text.trim() || typeof navigator === "undefined" || !navigator.clipboard) return;
+    await navigator.clipboard.writeText(text);
+    setNotice("已复制 Bitable 生成依据，可粘贴给 Agent 使用。");
+  }
+
   function updateAdvanced<K extends keyof AdvancedDraft>(key: K, value: AdvancedDraft[K]) {
     setAdvancedDraft((current) => ({ ...current, [key]: value }));
   }
@@ -763,13 +789,49 @@ export function BitableSourcesPanel() {
           <h3 className="text-[14px] font-semibold text-slate-950">查询验证</h3>
           <div className="mt-3 flex flex-col gap-2 sm:flex-row">
             <input value={query} onChange={(event) => setQuery(event.target.value)} className="h-10 min-w-0 flex-1 rounded-[11px] border border-slate-200 px-3 text-[13px] outline-none focus:border-blue-500" />
-            <button type="button" onClick={() => void handleQuery()} className="h-10 rounded-[11px] bg-blue-600 px-4 text-[13px] font-semibold text-white transition hover:bg-blue-700 active:translate-y-px">
+            <button type="button" onClick={() => void handleQueryForContext()} className="h-10 rounded-[11px] bg-blue-600 px-4 text-[13px] font-semibold text-white transition hover:bg-blue-700 active:translate-y-px">
               查询
             </button>
           </div>
-          <pre className="mt-3 max-h-[180px] overflow-y-auto whitespace-pre-wrap rounded-[12px] bg-slate-50 p-3 text-[12px] leading-5 text-slate-600">
+          <pre className="hidden mt-3 max-h-[180px] overflow-y-auto whitespace-pre-wrap rounded-[12px] bg-slate-50 p-3 text-[12px] leading-5 text-slate-600">
             {queryResult || "检索结果会显示在这里。"}
           </pre>
+          <div className="mt-3 rounded-[12px] border border-slate-200 bg-slate-50 p-3">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-[12px] font-semibold text-slate-700">本地模拟生成依据</p>
+              <button type="button" onClick={() => void handleCopyContextText()} disabled={!queryResult.trim()} className="h-8 rounded-[9px] border border-slate-200 bg-white px-3 text-[12px] font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-40">
+                复制为生成依据
+              </button>
+            </div>
+            {queryData?.source_snapshot?.fields?.length ? (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {queryData.source_snapshot.fields.map((field) => (
+                  <span key={field} className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-500 ring-1 ring-slate-200">{field}</span>
+                ))}
+              </div>
+            ) : null}
+            {queryData?.records.length ? (
+              <div className="mt-3 max-h-[230px] space-y-2 overflow-y-auto pr-1">
+                {queryData.records.map((record) => (
+                  <article key={record.record_id} className="rounded-[11px] border border-slate-200 bg-white p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-[13px] font-semibold text-slate-900">{record.title}</p>
+                        <p className="mt-1 text-[12px] text-slate-500">{record.source_name} / {record.table_name || record.table_id}</p>
+                      </div>
+                      <span className="shrink-0 rounded-full bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700">{Math.round(record.score * 100)}%</span>
+                    </div>
+                    <p className="mt-2 line-clamp-3 whitespace-pre-wrap text-[12px] leading-5 text-slate-600">{record.content}</p>
+                    {record.record_url ? <p className="mt-2 truncate text-[11px] text-slate-400">模拟记录：{record.record_url}</p> : null}
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <pre className="mt-3 max-h-[180px] overflow-y-auto whitespace-pre-wrap rounded-[10px] bg-white p-3 text-[12px] leading-5 text-slate-600">
+                {queryResult || "检索结果会显示在这里。"}
+              </pre>
+            )}
+          </div>
         </div>
       </div>
     </section>

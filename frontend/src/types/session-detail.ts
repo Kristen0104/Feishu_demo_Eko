@@ -129,6 +129,9 @@ export type DetailDocumentArtifact = {
   whiteboardId?: string | null;
   previewUrl?: string | null;
   resultSummary?: string | null;
+  ragReturnFileId?: string | null;
+  ragReturnSource?: string | null;
+  ragReturnMessage?: string | null;
   bitableArchiveResults?: Array<{
     source_id?: string | null;
     record_id?: string | null;

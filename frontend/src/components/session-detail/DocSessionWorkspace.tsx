@@ -325,20 +325,38 @@ function normalizeArtifactKind(artifact?: SessionDetailData["artifact"]): "ppt" 
   return "unknown";
 }
 
-function normalizeArtifactState(status?: string | null) {
+function normalizeArtifactState(status?: string | null, currentStep?: string | null) {
   const normalized = (status ?? "").toLowerCase();
-  if (normalized === "done" || normalized === "completed" || normalized === "已同步") {
+  const step = (currentStep ?? "").toLowerCase();
+
+  if (normalized === "done" || normalized === "completed" || normalized === "已同步" || normalized === "confirmed") {
     return { label: "已完成", tone: "emerald", progress: 100 };
   }
   if (normalized === "failed" || normalized.includes("失败")) {
-    return { label: "失败", tone: "rose", progress: 100 };
+    return { label: "生成失败", tone: "rose", progress: 100 };
   }
   if (normalized === "queued") {
-    return { label: "排队中", tone: "blue", progress: 8 };
+    return { label: "排队中", tone: "blue", progress: 10 };
   }
-  if (normalized === "进行中" || normalized === "running" || normalized === "generating_slides" || normalized === "generating_notes" || normalized === "exporting" || normalized === "generating_design" || normalized === "parsing_file") {
-    return { label: "进行中", tone: "blue", progress: 48 };
+
+  // 根据当前步骤返回更详细的状态
+  if (step === "generating_outline" || step.includes("大纲")) {
+    return { label: "生成大纲", tone: "blue", progress: 25 };
   }
+  if (step === "generating_slides" || step.includes("页面") || step.includes("幻灯片")) {
+    return { label: "生成页面", tone: "blue", progress: 50 };
+  }
+  if (step === "generating_design" || step.includes("设计") || step.includes("样式")) {
+    return { label: "应用设计", tone: "blue", progress: 70 };
+  }
+  if (step === "exporting" || step.includes("导出")) {
+    return { label: "导出文件", tone: "blue", progress: 90 };
+  }
+
+  if (normalized === "进行中" || normalized === "running") {
+    return { label: "生成中", tone: "blue", progress: 45 };
+  }
+
   return { label: status || "待处理", tone: "slate", progress: 0 };
 }
 
@@ -366,6 +384,9 @@ type AgentChatResponseWire = {
     preview_url?: string | null;
     sharing_url?: string | null;
     result_summary?: string | null;
+    rag_return_file_id?: string | null;
+    rag_return_source?: string | null;
+    rag_return_message?: string | null;
     error_message?: string | null;
     bitable_archive_results?: DetailDocumentArtifact["bitableArchiveResults"];
   } | null;
@@ -451,6 +472,9 @@ function toDetailArtifact(artifact?: AgentChatResponseWire["artifact"]): DetailD
     previewUrl: artifact.preview_url,
     sharingUrl: artifact.sharing_url,
     resultSummary: artifact.result_summary,
+    ragReturnFileId: artifact.rag_return_file_id ?? null,
+    ragReturnSource: artifact.rag_return_source ?? null,
+    ragReturnMessage: artifact.rag_return_message ?? null,
     errorMessage: artifact.error_message,
     bitableArchiveResults: artifact.bitable_archive_results ?? null,
   };
@@ -606,7 +630,7 @@ function ArtifactPresenter({
   onConfirmArtifact?: () => void;
 }) {
   const kind = normalizeArtifactKind(artifact);
-  const state = normalizeArtifactState(artifact?.status);
+  const state = normalizeArtifactState(artifact?.status, artifact?.currentStep);
   const title =
     kind === "ppt" ? artifact?.title || "AI PPT" : kind === "board" ? artifact?.title || "飞书画板" : artifact?.title || "文档产物";
   const [pptPreview, setPptPreview] = useState<PPTPreview | null>(null);
@@ -639,6 +663,10 @@ function ArtifactPresenter({
       : [1, 2, 3].map((slide) => ({ slide_number: slide, title: slide === 1 ? "封面" : slide === 2 ? "内容" : "结尾", template: "" }));
   const selectedSlide =
     previewSlides.find((slide) => slide.slide_number === selectedSlideNumber) ?? previewSlides[0];
+  const pptStatus = String(pptPreview?.status ?? artifact?.status ?? "").toLowerCase();
+  const pptProgress = typeof pptPreview?.progress === "number" ? pptPreview.progress : typeof artifact?.progress === "number" ? artifact.progress : state.progress;
+  const pptIsRunning = kind === "ppt" && Boolean(artifact?.jobId) && !["done", "completed", "failed", "confirmed"].includes(pptStatus);
+  const pptCanConfirm = kind === "ppt" && Boolean(artifact?.jobId) && !pptIsRunning && pptStatus !== "failed" && pptStatus !== "confirmed";
   const pptPreviewKey = useMemo(() => {
     if (!artifact?.jobId) return "ppt:placeholder";
     const slideCount = pptPreview?.slides?.length ?? 0;
@@ -676,7 +704,7 @@ function ArtifactPresenter({
         ? "border-emerald-200 bg-emerald-50 text-emerald-700"
         : saveState === "saved" || saveState === "saving"
           ? "border-blue-200 bg-blue-50 text-blue-700"
-          : "border-amber-200 bg-amber-50 text-amber-700";
+          : "border-amber-200 bg-amber-50 text-amber-700 animate-pulse";
   const autoSyncLabel =
     autoSyncState === "dirty"
       ? "待自动同步"
@@ -705,6 +733,8 @@ function ArtifactPresenter({
     if (!artifactSharingUrl || typeof navigator === "undefined" || !navigator.clipboard) return;
     await navigator.clipboard.writeText(artifactSharingUrl);
   }, [artifactSharingUrl]);
+
+  const returnMessage = artifact?.ragReturnMessage;
 
   const handleSaveDoc = useCallback(() => {
     if (typeof window === "undefined" || !docMarkdown.trim()) return;
@@ -767,12 +797,15 @@ function ArtifactPresenter({
           if (!cancelled) setPptPreview(null);
         });
     fetchPreview();
+    if (!pptIsRunning) return () => {
+      cancelled = true;
+    };
     const interval = setInterval(fetchPreview, 3000);
     return () => {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [jobId, kind, artifact?.status]);
+  }, [jobId, kind, artifact?.status, pptIsRunning]);
 
   useEffect(() => {
     if (kind !== "board") return;
@@ -836,6 +869,48 @@ function ArtifactPresenter({
                     </div>
                     <h3 className="text-lg font-semibold text-slate-800">{selectedSlide.title || title}</h3>
                     <p className="mt-1 text-sm text-slate-400">第 {selectedSlide.slide_number} 页</p>
+                    <p className="mt-2 text-xs text-slate-400">预览图加载失败，仍可下载完整 PPT 查看</p>
+                  </div>
+                </div>
+              ) : pptIsRunning ? (
+                <div className="flex h-full flex-col p-6">
+                  <div className="flex min-w-0 items-center justify-between gap-3">
+                    <h3 className="truncate text-[18px] font-semibold text-slate-950">{title}</h3>
+                    <span className={`rounded-full px-3 py-1 text-[12px] font-semibold ${
+                      state.tone === 'blue' ? 'bg-blue-50 text-blue-700' : 'bg-slate-100 text-slate-700'
+                    }`}>{state.label}</span>
+                  </div>
+                  <div className="mt-8 flex-1 flex flex-col items-center justify-center">
+                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mb-4" />
+                    <p className="text-lg font-medium text-slate-800">正在生成 PPT 内容</p>
+                    <p className="mt-2 text-sm text-slate-500">
+                      {state.label === '生成大纲' ? '正在梳理演示结构和内容框架' :
+                       state.label === '生成页面' ? '正在创建幻灯片内容和排版' :
+                       state.label === '应用设计' ? '正在应用模板样式和视觉效果' :
+                       state.label === '导出文件' ? '正在生成最终 PPT 文件' :
+                       '请稍候，这可能需要几分钟时间'}
+                    </p>
+                    {artifact?.resultSummary && (
+                      <p className="mt-4 text-xs text-slate-400 max-w-md text-center">{artifact.resultSummary}</p>
+                    )}
+                  </div>
+                </div>
+              ) : state.tone === 'rose' ? (
+                <div className="flex h-full flex-col p-6">
+                  <div className="flex min-w-0 items-center justify-between gap-3">
+                    <h3 className="truncate text-[18px] font-semibold text-slate-950">{title}</h3>
+                    <span className="rounded-full bg-rose-50 px-3 py-1 text-[12px] font-semibold text-rose-700">{state.label}</span>
+                  </div>
+                  <div className="mt-8 flex-1 flex flex-col items-center justify-center">
+                    <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-rose-50">
+                      <svg className="h-8 w-8 text-rose-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+                      </svg>
+                    </div>
+                    <h3 className="text-lg font-semibold text-slate-800">PPT 生成失败</h3>
+                    <p className="mt-2 text-sm text-slate-500 text-center max-w-md">
+                      {artifact?.errorMessage || '生成过程中遇到问题，请点击重试按钮重新生成'}
+                    </p>
                   </div>
                 </div>
               ) : (
@@ -844,33 +919,92 @@ function ArtifactPresenter({
                     <h3 className="truncate text-[18px] font-semibold text-slate-950">{title}</h3>
                     <span className="rounded-full bg-emerald-50 px-3 py-1 text-[12px] font-semibold text-emerald-700">{state.label}</span>
                   </div>
-                  <div className="mt-8 animate-pulse space-y-4">
-                    <div className="h-4 w-7/12 rounded-full bg-slate-200" />
-                    <div className="h-3 w-10/12 rounded-full bg-slate-100" />
-                    <div className="h-3 w-8/12 rounded-full bg-slate-100" />
-                    <div className="h-56 rounded-[16px] bg-slate-100" />
+                  <div className="mt-8 flex-1 flex flex-col items-center justify-center">
+                    <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-emerald-50">
+                      <svg className="h-8 w-8 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                    </div>
+                    <h3 className="text-lg font-semibold text-slate-800">PPT 生成完成</h3>
+                    <p className="mt-2 text-sm text-slate-500">共 {previewSlides.length} 页内容已准备就绪</p>
+                    <p className="mt-4 text-xs text-slate-400">可以点击下方缩略图查看各页内容，或下载完整文件</p>
                   </div>
                 </div>
               )}
             </div>
             <div className="flex flex-wrap items-center justify-end gap-2">
+              <span className={`inline-flex h-9 items-center rounded-[12px] border px-3 text-[12px] font-semibold shadow-[0_8px_18px_rgba(15,23,42,0.04)] ${
+                state.tone === 'emerald' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' :
+                state.tone === 'rose' ? 'border-rose-200 bg-rose-50 text-rose-700' :
+                'border-slate-200 bg-white text-slate-600'
+              }`}>
+                {state.label} {pptIsRunning ? `${Math.max(0, Math.min(100, Math.round(pptProgress)))}%` : ''}
+              </span>
               {artifact?.errorMessage ? <span className="rounded-full bg-rose-50 px-3 py-2 text-[12px] font-semibold text-rose-700">{artifact.errorMessage}</span> : null}
-              {artifactSharingUrl ? (
-                <>
-                  <button type="button" onClick={handleCopyArtifactLink} className="inline-flex h-9 items-center justify-center rounded-[12px] border border-slate-200 bg-white px-3 text-[13px] font-semibold text-slate-600 shadow-[0_8px_18px_rgba(15,23,42,0.06)] hover:border-blue-200 hover:text-blue-600">
-                    复制链接
-                  </button>
-                  <a href={artifactSharingUrl} target="_blank" rel="noreferrer" className="inline-flex h-9 items-center justify-center rounded-[12px] bg-slate-900 px-3 text-[13px] font-semibold text-white shadow-[0_10px_20px_rgba(15,23,42,0.14)] hover:bg-blue-600">
-                    打开飞书
-                  </a>
-                </>
-              ) : null}
-              {artifact?.downloadUrl ? (
-                <a href={artifact.downloadUrl} target="_blank" rel="noreferrer" className="inline-flex h-9 items-center justify-center rounded-[12px] bg-blue-600 px-3 text-[13px] font-semibold text-white shadow-[0_10px_20px_rgba(37,99,235,0.18)]">
+
+              {/* 操作按钮组 */}
+              {artifactSharingUrl && !pptIsRunning && state.tone !== 'rose' && (
+                <button type="button" onClick={handleCopyArtifactLink} className="inline-flex h-9 items-center justify-center rounded-[12px] border border-slate-200 bg-white px-3 text-[13px] font-semibold text-slate-600 shadow-[0_8px_18px_rgba(15,23,42,0.06)] hover:border-blue-200 hover:text-blue-600">
+                  复制链接
+                </button>
+              )}
+
+              {artifact?.downloadUrl && !pptIsRunning && state.tone !== 'rose' && (
+                <a href={artifact.downloadUrl} target="_blank" rel="noreferrer" className="inline-flex h-9 items-center justify-center rounded-[12px] bg-blue-600 px-3 text-[13px] font-semibold text-white shadow-[0_10px_20px_rgba(37,99,235,0.18)] hover:bg-blue-700">
                   下载 PPT
                 </a>
-              ) : null}
+              )}
+
+              {/* 失败重试按钮 */}
+              {state.tone === 'rose' && (
+                <button type="button" className="inline-flex h-9 items-center justify-center rounded-[12px] bg-rose-600 px-3 text-[13px] font-semibold text-white shadow-[0_10px_20px_rgba(225,29,72,0.18)] hover:bg-rose-700">
+                  重试生成
+                </button>
+              )}
+
+              {artifactSharingUrl && !pptIsRunning && state.tone !== 'rose' && (
+                <a href={artifactSharingUrl} target="_blank" rel="noreferrer" className="inline-flex h-9 items-center justify-center rounded-[12px] bg-slate-900 px-3 text-[13px] font-semibold text-white shadow-[0_10px_20px_rgba(15,23,42,0.14)] hover:bg-blue-600">
+                  打开飞书
+                </a>
+              )}
             </div>
+
+            {/* 确认按钮 */}
+            {pptCanConfirm ? (
+              <div className="flex justify-end">
+                <button type="button" onClick={onConfirmArtifact} disabled={saveState === "saving"} className="inline-flex h-9 items-center justify-center rounded-[12px] border border-emerald-200 bg-emerald-50 px-3 text-[13px] font-semibold text-emerald-700 shadow-[0_8px_18px_rgba(15,23,42,0.04)] hover:bg-emerald-100 disabled:opacity-50">
+                  {saveState === "saving" ? "确认中..." : saveState === "confirmed" ? "已确认" : "确认当前 PPT"}
+                </button>
+              </div>
+            ) : null}
+            {/* PPT 生成步骤指示器 */}
+            {pptIsRunning && (
+              <div className="mb-3">
+                <div className="flex justify-between mb-2">
+                  <div className={`text-xs font-medium ${state.progress >= 10 ? 'text-blue-600' : 'text-slate-400'}`}>生成大纲</div>
+                  <div className={`text-xs font-medium ${state.progress >= 50 ? 'text-blue-600' : 'text-slate-400'}`}>生成页面</div>
+                  <div className={`text-xs font-medium ${state.progress >= 70 ? 'text-blue-600' : 'text-slate-400'}`}>应用设计</div>
+                  <div className={`text-xs font-medium ${state.progress >= 90 ? 'text-blue-600' : 'text-slate-400'}`}>导出文件</div>
+                </div>
+                <div className="h-1.5 overflow-hidden rounded-full bg-slate-100">
+                  <div className="h-full rounded-full bg-blue-600 transition-all duration-500" style={{ width: `${Math.max(4, Math.min(100, Math.round(pptProgress)))}%` }} />
+                </div>
+              </div>
+            )}
+            {/* 非运行状态也显示进度条 */}
+            {!pptIsRunning && (
+              <div className="mb-3">
+                <div className="h-1.5 overflow-hidden rounded-full bg-slate-100">
+                  <div
+                    className={`h-full rounded-full transition-all duration-500 ${
+                      state.tone === 'emerald' ? 'bg-emerald-500' :
+                      state.tone === 'rose' ? 'bg-rose-500' : 'bg-slate-300'
+                    }`}
+                    style={{ width: `${Math.max(4, Math.min(100, Math.round(pptProgress)))}%` }}
+                  />
+                </div>
+              </div>
+            )}
             <div className="flex min-w-0 gap-2 overflow-x-auto pb-1">
               {previewSlides.slice(0, 8).map((slide) => (
                 <button
@@ -917,8 +1051,11 @@ function ArtifactPresenter({
                       }
                     />
                   ) : (
-                    <div className="mx-2 mb-2 flex aspect-[16/9] items-center justify-center rounded-[10px] bg-slate-100 text-[11px] font-medium text-slate-400">
-                      {slide.slide_number}
+                    <div className="mx-2 mb-2 flex aspect-[16/9] items-center justify-center rounded-[10px] bg-gradient-to-br from-slate-50 to-slate-100 text-[11px] font-medium text-slate-500">
+                      <div className="text-center">
+                        <div className="text-lg mb-1">{slide.slide_number}</div>
+                        <div className="text-[9px] text-slate-400 line-clamp-1 px-1">{slide.title || '幻灯片'}</div>
+                      </div>
                     </div>
                   )}
                 </button>
@@ -1027,7 +1164,12 @@ function ArtifactPresenter({
               </p>
             </div>
             <div className="flex shrink-0 items-center gap-2">
-              {kind === "docx" && saveLabel ? (
+              {returnMessage ? (
+                <span className="inline-flex h-8 items-center justify-center rounded-[10px] border border-emerald-200 bg-emerald-50 px-2.5 text-[12px] font-semibold text-emerald-700" title={artifact?.ragReturnSource || returnMessage}>
+                  {returnMessage}
+                </span>
+              ) : null}
+              {(kind === "docx" || kind === "ppt") && saveLabel ? (
                 <span className={`inline-flex h-8 items-center justify-center rounded-[10px] border px-2.5 text-[12px] font-semibold ${saveClass}`} title={saveError || saveLabel}>
                   {saveLabel}
                 </span>
@@ -1064,7 +1206,7 @@ function ArtifactPresenter({
               ) : null}
               {canEditDocument ? (
                 <button type="button" onClick={onConfirmArtifact} disabled={saveState === "saving"} className="inline-flex h-8 items-center justify-center rounded-[10px] border border-emerald-200 bg-emerald-50 px-2.5 text-[12px] font-semibold text-emerald-700 hover:bg-emerald-100 disabled:opacity-50">
-                  确认产物
+                  {saveState === "saving" ? "确认中..." : saveState === "confirmed" ? "已确认" : "确认产物"}
                 </button>
               ) : null}
               {canEditDocument ? (
@@ -1601,8 +1743,15 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
         setManualDocumentMarkdown(null);
         setDocAutoSyncState("idle");
         setDocAutoSyncError(null);
-        setDocSaveState("idle");
         setDocSaveError(null);
+      }
+      // 根据后端状态初始化保存状态
+      if (data.artifact.status === "confirmed") {
+        setDocSaveState("confirmed");
+      } else if (data.artifact.status === "edited") {
+        setDocSaveState("saved");
+      } else {
+        setDocSaveState("idle");
       }
     }
   }, [data.artifact, localArtifact]);
@@ -1615,6 +1764,22 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
       docAutoSyncAbortRef.current?.abort();
     };
   }, []);
+
+  // 页面离开拦截，防止未保存修改丢失
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      // 画板类型实时同步，不需要拦截
+      if (resourceKind === "board") return;
+
+      if (docSaveState === "dirty") {
+        e.preventDefault();
+        e.returnValue = "您有未保存的修改，确定要离开吗？";
+        return e.returnValue;
+      }
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [docSaveState, resourceKind]);
 
   const handleManualDocumentChange = useCallback(
     (nextMarkdown: string) => {
@@ -1734,6 +1899,9 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
         });
         const persisted = toDetailArtifact(session.artifact as AgentChatResponseWire["artifact"]);
         setLocalArtifact(persisted ?? nextArtifact);
+        if (nextStatus === "confirmed" && persisted?.ragReturnMessage) {
+          setDocSaveError(persisted.ragReturnMessage);
+        }
         setManualDocumentMarkdown(null);
         setDocAutoSyncState("idle");
         setDocAutoSyncError(null);
@@ -1752,8 +1920,64 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
   }, [persistDocumentArtifact]);
 
   const handleConfirmDocumentArtifact = useCallback(() => {
+    if (docSaveState === "dirty") {
+      setDocSaveError("当前正文有未保存修改，请先保存草稿后再确认产物。");
+      return;
+    }
     void persistDocumentArtifact("confirmed");
-  }, [persistDocumentArtifact]);
+  }, [docSaveState, persistDocumentArtifact]);
+
+  const handleConfirmArtifact = useCallback(() => {
+    if (resourceKind === "ppt" && resourceArtifact) {
+      const nextArtifact: DetailDocumentArtifact = {
+        ...resourceArtifact,
+        kind: "ppt",
+        status: "confirmed",
+        currentStep: "PPT 已确认",
+        resultSummary: "工具端已确认当前 PPT 版本。",
+      };
+      setDocSaveState("saving");
+      setDocSaveError(null);
+      void fetchEkoJson<SyncArtifactUpdateWire>(`/api/v1/sync/sessions/${encodeURIComponent(data.id)}/artifact`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          artifact: {
+            kind: nextArtifact.kind,
+            intent: nextArtifact.intent,
+            title: nextArtifact.title,
+            job_id: nextArtifact.jobId,
+            status: nextArtifact.status,
+            progress: nextArtifact.progress,
+            current_step: nextArtifact.currentStep,
+            download_url: nextArtifact.downloadUrl,
+            error_message: nextArtifact.errorMessage,
+            sharing_url: nextArtifact.sharingUrl,
+            preview_url: nextArtifact.previewUrl,
+            result_summary: nextArtifact.resultSummary,
+            bitable_archive_results: nextArtifact.bitableArchiveResults,
+          },
+          status: "已确认",
+          summary: nextArtifact.resultSummary,
+          message: nextArtifact.resultSummary,
+        }),
+      })
+        .then((session) => {
+          const persisted = toDetailArtifact(session.artifact as AgentChatResponseWire["artifact"]);
+          setLocalArtifact(persisted ?? nextArtifact);
+          if (persisted?.ragReturnMessage) {
+            setDocSaveError(persisted.ragReturnMessage);
+          }
+          setDocSaveState("confirmed");
+          setRuntimeSessionPatch(data.id, { status: "已确认", updatedAt: "刚刚" });
+        })
+        .catch((error) => {
+          setDocSaveState("failed");
+          setDocSaveError(error instanceof Error ? error.message : "确认 PPT 失败");
+        });
+      return;
+    }
+    handleConfirmDocumentArtifact();
+  }, [data.id, handleConfirmDocumentArtifact, resourceArtifact, resourceKind, setRuntimeSessionPatch]);
 
   const handleCancelDocumentEdit = useCallback(() => {
     setManualDocumentMarkdown(null);
@@ -2409,7 +2633,7 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                                     saveError={docSaveError}
                                     onSaveDraft={handleSaveDocumentDraft}
                                     onCancelEdit={handleCancelDocumentEdit}
-                                    onConfirmArtifact={handleConfirmDocumentArtifact}
+                                    onConfirmArtifact={handleConfirmArtifact}
   	                                />
                                 {showDocumentSections ? data.document.sections.map((section, secIdx) => (
                                   <section key={`doc-${secIdx}-${section.title}`}>

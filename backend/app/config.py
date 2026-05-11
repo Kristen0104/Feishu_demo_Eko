@@ -6,6 +6,7 @@
 from functools import lru_cache
 from pathlib import Path
 from pydantic import ConfigDict
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
 
 APP_DIR = Path(__file__).resolve().parent
@@ -18,6 +19,17 @@ class Settings(BaseSettings):
     APP_NAME: str = "Eko"
     APP_VERSION: str = "v1.2"
     DEBUG: bool = False
+
+    @field_validator("DEBUG", mode="before")
+    @classmethod
+    def parse_debug_flag(cls, value):
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"release", "prod", "production"}:
+                return False
+            if normalized in {"debug", "dev", "development"}:
+                return True
+        return value
 
     # Server
     HOST: str = "0.0.0.0"
