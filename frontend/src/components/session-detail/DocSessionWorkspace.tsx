@@ -2921,16 +2921,16 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                                         );
                                       })}
                                     </div>
-                                    <div className="mt-3 flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-between">
-                                      <p className="min-w-0 text-[12px] text-slate-500">
+                                    <div className="mt-3 flex flex-col gap-3">
+                                      <p className="text-[12px] text-slate-500">
                                         选择 {Math.abs(contextEnd - contextStart) + 1} 条消息
                                       </p>
-                                      <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:flex-nowrap">
+                                      <div className="flex w-full flex-wrap items-center justify-end gap-2">
                                         <button
                                           type="button"
                                           onClick={handleContextSkipRun}
                                           disabled={contextSubmitting}
-                                          className="inline-flex h-9 items-center justify-center whitespace-nowrap rounded-[10px] border border-slate-200 bg-white px-3 text-[12px] font-semibold text-slate-600 disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
+                                          className="inline-flex min-h-9 flex-1 items-center justify-center whitespace-nowrap rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-[12px] font-semibold text-slate-600 disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400 sm:flex-none"
                                         >
                                           {contextSubmitting ? "处理中..." : "不使用上下文"}
                                         </button>
@@ -2938,7 +2938,7 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                                           type="button"
                                           onClick={handleContextSelectionRun}
                                           disabled={contextSubmitting}
-                                          className="inline-flex h-9 items-center justify-center whitespace-nowrap rounded-[10px] bg-blue-600 px-3 text-[12px] font-semibold text-white disabled:bg-slate-300"
+                                          className="inline-flex min-h-9 flex-1 items-center justify-center whitespace-nowrap rounded-[10px] bg-blue-600 px-3 py-2 text-[12px] font-semibold text-white disabled:bg-slate-300 sm:flex-none"
                                         >
                                           {contextSubmitting ? "处理中..." : "用选中上下文生成"}
                                         </button>
