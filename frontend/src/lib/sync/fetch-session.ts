@@ -66,6 +66,8 @@ export type SyncSession = {
     platform_display_name?: string | null;
     avatar_url?: string | null;
   }>;
+  collaborator_user_ids?: string[];
+  collaborator_emails?: string[];
 };
 
 export type FetchSyncSessionResult =

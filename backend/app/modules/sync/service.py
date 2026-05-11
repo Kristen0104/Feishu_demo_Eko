@@ -35,6 +35,8 @@ class SyncService:
         artifact: dict[str, Any] | None = None,
         selected_context_messages: list[dict[str, Any]] | None = None,
         messages: list[dict[str, Any]] | None = None,
+        collaborator_user_ids: list[str] | None = None,
+        collaborator_emails: list[str] | None = None,
     ) -> SyncSessionSchema:
         record = await self._manager.register_session(
             session_id,
@@ -52,6 +54,8 @@ class SyncService:
             artifact=artifact,
             selected_context_messages=selected_context_messages,
             messages=messages,
+            collaborator_user_ids=collaborator_user_ids,
+            collaborator_emails=collaborator_emails,
         )
         return self._to_schema(record)
 
@@ -73,6 +77,28 @@ class SyncService:
 
     async def emit(self, session_id: str, envelope: dict[str, Any]) -> None:
         await self._manager.emit(session_id, envelope)
+
+    async def add_session_participant(
+        self,
+        session_id: str,
+        *,
+        invitee_user_id: str | None,
+        invitee_email: str | None,
+    ) -> None:
+        record = await self._manager.get_session(session_id)
+        if record is None:
+            return
+        collaborator_user_ids = list(record.collaborator_user_ids or [])
+        collaborator_emails = list(record.collaborator_emails or [])
+        if invitee_user_id and invitee_user_id not in collaborator_user_ids:
+            collaborator_user_ids.append(invitee_user_id)
+        if invitee_email and invitee_email not in collaborator_emails:
+            collaborator_emails.append(invitee_email)
+        await self._manager.update_session(
+            session_id,
+            collaborator_user_ids=collaborator_user_ids,
+            collaborator_emails=collaborator_emails,
+        )
 
     async def publish_session_opened(
         self,
@@ -367,6 +393,8 @@ class SyncService:
             context_messages=record.context_messages or [],
             selected_context_messages=getattr(record, "selected_context_messages", None) or [],
             messages=record.messages or [],
+            collaborator_user_ids=getattr(record, "collaborator_user_ids", None) or [],
+            collaborator_emails=getattr(record, "collaborator_emails", None) or [],
         )
 
     def _compact_artifact(self, artifact: dict[str, Any] | None) -> dict[str, Any] | None:

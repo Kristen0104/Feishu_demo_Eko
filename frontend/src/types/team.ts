@@ -27,3 +27,36 @@ export type TeamMember = {
   createdAt: string;
 };
 
+export type SessionInviteStatus = "pending" | "accepted" | "declined" | "dismissed" | "expired";
+
+export type SessionInviteDto = {
+  id: string;
+  session_id: string;
+  session_title: string;
+  inviter_user_id: string;
+  inviter_name: string;
+  invitee_user_id: string | null;
+  invitee_email: string;
+  invitee_name: string | null;
+  status: SessionInviteStatus;
+  is_expired: boolean;
+  created_at: string;
+  expires_at: string;
+  responded_at: string | null;
+};
+
+export type SessionInvite = {
+  id: string;
+  sessionId: string;
+  sessionTitle: string;
+  inviterUserId: string;
+  inviterName: string;
+  inviteeUserId: string | null;
+  inviteeEmail: string;
+  inviteeName: string | null;
+  status: SessionInviteStatus;
+  isExpired: boolean;
+  createdAt: string;
+  expiresAt: string;
+  respondedAt: string | null;
+};

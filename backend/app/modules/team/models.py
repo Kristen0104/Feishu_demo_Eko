@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from uuid import uuid4
 
@@ -54,3 +54,20 @@ class TeamMember(Base):
 
     team: Mapped[Team] = relationship(back_populates="members")
 
+
+class SessionCollaborationInvite(Base):
+    __tablename__ = "session_collaboration_invites"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: f"sci_{uuid4().hex}")
+    team_id: Mapped[str] = mapped_column(ForeignKey("teams.id"), nullable=False, index=True)
+    session_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    session_title: Mapped[str] = mapped_column(String(255), nullable=False)
+    inviter_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    inviter_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    invitee_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    invitee_email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    invitee_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: _utcnow() + timedelta(hours=24), nullable=False, index=True)
+    responded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

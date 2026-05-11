@@ -37,6 +37,8 @@ class SessionRecord:
     context_messages: list[dict[str, Any]] | None = None
     selected_context_messages: list[dict[str, Any]] | None = None
     messages: list[dict[str, Any]] | None = None
+    collaborator_user_ids: list[str] | None = None
+    collaborator_emails: list[str] | None = None
     opened_at: str = ""
     updated_at: str = ""
 
@@ -108,6 +110,8 @@ class SyncConnectionManager:
             context_messages=data.get("context_messages") if isinstance(data.get("context_messages"), list) else [],
             selected_context_messages=data.get("selected_context_messages") if isinstance(data.get("selected_context_messages"), list) else [],
             messages=data.get("messages") if isinstance(data.get("messages"), list) else [],
+            collaborator_user_ids=data.get("collaborator_user_ids") if isinstance(data.get("collaborator_user_ids"), list) else [],
+            collaborator_emails=data.get("collaborator_emails") if isinstance(data.get("collaborator_emails"), list) else [],
             opened_at=str(data.get("opened_at", "")),
             updated_at=str(data.get("updated_at", "")),
         )
@@ -302,6 +306,8 @@ class SyncConnectionManager:
         intent: str | None = None,
         artifact: dict[str, Any] | None = None,
         messages: list[dict[str, Any]] | None = None,
+        collaborator_user_ids: list[str] | None = None,
+        collaborator_emails: list[str] | None = None,
     ) -> SessionRecord:
         now = datetime.now(timezone.utc).isoformat()
         record = SessionRecord(
@@ -320,6 +326,8 @@ class SyncConnectionManager:
             context_messages=context_messages or [],
             selected_context_messages=selected_context_messages or [],
             messages=messages or [],
+            collaborator_user_ids=collaborator_user_ids or [],
+            collaborator_emails=collaborator_emails or [],
             opened_at=now,
             updated_at=now,
         )
@@ -340,6 +348,8 @@ class SyncConnectionManager:
         context_messages: list[dict[str, Any]] | None | object = _UNSET,
         selected_context_messages: list[dict[str, Any]] | None | object = _UNSET,
         messages: list[dict[str, Any]] | None | object = _UNSET,
+        collaborator_user_ids: list[str] | None | object = _UNSET,
+        collaborator_emails: list[str] | None | object = _UNSET,
     ) -> SessionRecord | None:
         async with self._lock:
             record = self._sessions.get(session_id)
@@ -363,6 +373,10 @@ class SyncConnectionManager:
             record.selected_context_messages = selected_context_messages
         if messages is not _UNSET:
             record.messages = messages
+        if collaborator_user_ids is not _UNSET:
+            record.collaborator_user_ids = collaborator_user_ids
+        if collaborator_emails is not _UNSET:
+            record.collaborator_emails = collaborator_emails
         record.updated_at = datetime.now(timezone.utc).isoformat()
         async with self._lock:
             self._sessions[session_id] = record
@@ -374,7 +388,7 @@ class SyncConnectionManager:
             memory_records = {
                 record.session_id: record
                 for record in self._sessions.values()
-                if user_id is None or record.user_id == user_id
+                if user_id is None or record.user_id == user_id or user_id in (record.collaborator_user_ids or [])
             }
         redis_client = redis_module.redis_client
         if redis_client is not None:
@@ -384,7 +398,7 @@ class SyncConnectionManager:
                     record = await asyncio.wait_for(self._load_session_from_redis(session_id), timeout=1.0)
                     if record is None:
                         continue
-                    if user_id is not None and record.user_id != user_id:
+                    if user_id is not None and record.user_id != user_id and user_id not in (record.collaborator_user_ids or []):
                         continue
                     existing = memory_records.get(record.session_id)
                     if existing is None or record.updated_at >= existing.updated_at:
@@ -401,7 +415,7 @@ class SyncConnectionManager:
             memory_record = self._sessions.get(session_id)
         redis_record: SessionRecord | None = None
         if memory_record is not None:
-            if user_id is not None and memory_record.user_id != user_id:
+            if user_id is not None and memory_record.user_id != user_id and user_id not in (memory_record.collaborator_user_ids or []):
                 return None
             try:
                 redis_record = await asyncio.wait_for(self._load_session_from_redis(session_id), timeout=1.0)
@@ -410,7 +424,7 @@ class SyncConnectionManager:
                 return memory_record
             if redis_record is None or redis_record.updated_at <= memory_record.updated_at:
                 return memory_record
-            if user_id is not None and redis_record.user_id != user_id:
+            if user_id is not None and redis_record.user_id != user_id and user_id not in (redis_record.collaborator_user_ids or []):
                 return None
             async with self._lock:
                 self._sessions[session_id] = redis_record
@@ -421,7 +435,7 @@ class SyncConnectionManager:
             logger.warning("Sync Redis session load skipped: %s", exc)
             return None
         if record is not None:
-            if user_id is not None and record.user_id != user_id:
+            if user_id is not None and record.user_id != user_id and user_id not in (record.collaborator_user_ids or []):
                 return None
             async with self._lock:
                 self._sessions[session_id] = record

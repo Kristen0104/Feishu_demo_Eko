@@ -8,6 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.modules.auth.dependencies import get_auth_repository
 from app.modules.auth.repository import AuthRepository
+from app.modules.sync.dependencies import get_sync_service
+from app.modules.sync.service import SyncService
 from app.modules.team.repository import TeamRepository
 from app.modules.team.service import TeamService
 
@@ -19,6 +21,6 @@ def get_team_repository(db: Annotated[AsyncSession, Depends(get_db)]) -> TeamRep
 def get_team_service(
     repository: Annotated[TeamRepository, Depends(get_team_repository)],
     auth_repository: Annotated[AuthRepository, Depends(get_auth_repository)],
+    sync_service: Annotated[SyncService, Depends(get_sync_service)],
 ) -> TeamService:
-    return TeamService(repository, auth_repository)
-
+    return TeamService(repository, auth_repository, sync_service)

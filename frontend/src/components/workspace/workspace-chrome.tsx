@@ -2,15 +2,17 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useId, useRef, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { ChevronCollapseIcon } from "@/components/Icons";
 import { detailDesignTokens } from "@/components/session-detail/designTokens";
 import { cn } from "@/components/UiPrimitives";
+import { fetchMySessionInvites, updateSessionInvite } from "@/lib/team-api";
 import type { WorkspaceBreadcrumbSegment } from "@/lib/workspace-breadcrumb";
 import type { WorkspaceNavKey } from "@/lib/workspace-nav";
 import { useAppStore } from "@/store/app-store";
 import type { SessionListPageData } from "@/types/session";
+import type { SessionInvite } from "@/types/team";
 
 import { SessionWorkspaceSearchProvider, useSessionWorkspaceSearch } from "@/components/workspace/session-workspace-search";
 
@@ -50,6 +52,95 @@ function BellIcon() {
       />
       <path d="M8.3 15.2C8.55 16.11 9.2 16.7 10 16.7C10.8 16.7 11.45 16.11 11.7 15.2" stroke="#0F172A" strokeWidth="1.5" strokeLinecap="round" />
     </svg>
+  );
+}
+
+function formatInviteExpiry(expiresAt: string): string {
+  const expires = new Date(expiresAt).getTime();
+  if (!Number.isFinite(expires)) return "24 小时内有效";
+  const diffMs = expires - Date.now();
+  if (diffMs <= 0) return "已过期";
+  const hours = Math.ceil(diffMs / (60 * 60 * 1000));
+  return hours >= 24 ? "24 小时内有效" : `${hours} 小时内有效`;
+}
+
+function SessionInviteToast() {
+  const [invites, setInvites] = useState<SessionInvite[]>([]);
+  const [visible, setVisible] = useState(false);
+  const pendingInvites = useMemo(
+    () => invites.filter((invite) => invite.status === "pending" && !invite.isExpired),
+    [invites],
+  );
+  const firstInvite = pendingInvites[0];
+
+  const loadInvites = async () => {
+    try {
+      const data = await fetchMySessionInvites();
+      setInvites(data);
+      if (data.some((invite) => invite.status === "pending" && !invite.isExpired)) {
+        setVisible(true);
+      }
+    } catch {
+      /* keep the workspace quiet if auth/session is not ready */
+    }
+  };
+
+  useEffect(() => {
+    const initialTimer = window.setTimeout(() => void loadInvites(), 0);
+    const timer = window.setInterval(() => void loadInvites(), 15000);
+    return () => {
+      window.clearTimeout(initialTimer);
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  if (!visible || !firstInvite) return null;
+
+  return (
+    <div className="absolute right-5 top-[86px] z-50 w-[330px] rounded-[18px] border border-slate-200 bg-white p-4 shadow-[0_22px_60px_rgba(15,23,42,0.18)]">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-[13px] font-semibold text-blue-600">新的会话协作邀请</p>
+          <h3 className="mt-1 line-clamp-2 text-[15px] font-semibold text-slate-950">{firstInvite.sessionTitle}</h3>
+          <p className="mt-1 text-[12px] text-slate-500">
+            {firstInvite.inviterName} 邀请你加入 · {formatInviteExpiry(firstInvite.expiresAt)}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => setVisible(false)}
+          className="rounded-full px-2 py-1 text-[14px] text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+          aria-label="关闭邀请提示"
+        >
+          ×
+        </button>
+      </div>
+      <div className="mt-4 flex items-center gap-2">
+        <Link
+          href={`/sessions/${encodeURIComponent(firstInvite.sessionId)}`}
+          prefetch={false}
+          onClick={() => {
+            void updateSessionInvite(firstInvite.id, "accepted").then(loadInvites);
+          }}
+          className="rounded-[11px] bg-blue-600 px-3 py-2 text-[13px] font-semibold text-white"
+        >
+          加入会话
+        </Link>
+        <button
+          type="button"
+          onClick={() => {
+            void updateSessionInvite(firstInvite.id, "dismissed").then(loadInvites);
+            setVisible(false);
+          }}
+          className="rounded-[11px] border border-slate-200 bg-white px-3 py-2 text-[13px] font-semibold text-slate-600"
+        >
+          稍后
+        </button>
+        {pendingInvites.length > 1 ? (
+          <span className="ml-auto text-[12px] text-slate-400">还有 {pendingInvites.length - 1} 条</span>
+        ) : null}
+      </div>
+    </div>
   );
 }
 
@@ -408,6 +499,7 @@ export function WorkspaceChrome({
     <SessionWorkspaceSearchProvider>
       <main className="h-screen overflow-hidden overflow-x-hidden bg-[radial-gradient(circle_at_top,#EDF4FF_0%,#F5F8FD_45%,#EEF3FF_100%)] p-5 text-slate-900">
         <div className="relative mx-auto flex h-[calc(100vh-40px)] min-w-0 max-w-[1680px] flex-col overflow-hidden rounded-[32px] border border-white/70 bg-white/70 shadow-[0_28px_72px_rgba(148,163,184,0.18)] backdrop-blur-sm">
+          <SessionInviteToast />
           <WorkspaceTopBar
             teamName={data.teamName}
             teamMembersLabel={data.teamMembersLabel}

@@ -15,6 +15,7 @@ import { useEkoSessionRealtime } from "@/hooks/useEkoSessionRealtime";
 import { apiUrl, fetchEkoJson } from "@/lib/eko-api";
 import { fetchSyncSession } from "@/lib/sync/fetch-session";
 import { streamAgentChat, type AgentChatStreamEvent } from "@/lib/agent/sse-stream";
+import { createSessionInvite, fetchMySessionInvites, fetchSessionInvites, fetchTeamMembers, updateSessionInvite } from "@/lib/team-api";
 import { useAppStore } from "@/store/app-store";
 import { useAgentRuntimeStore, type PlanningPlanWire, type PlanningStepWire, type RetrievedSourceWire } from "@/store/agent-runtime-store";
 import {
@@ -28,6 +29,7 @@ import {
   DetailTabKey,
   SessionDetailData,
 } from "@/types/session-detail";
+import type { SessionInvite, TeamMember } from "@/types/team";
 import type { WorkflowStatus } from "@/types/workspace";
 import type { WorkflowStep } from "@/types/workspace";
 
@@ -1286,6 +1288,31 @@ function AgentRealtimeRibbon({
   );
 }
 
+function formatInviteExpiry(expiresAt: string): string {
+  const expires = new Date(expiresAt).getTime();
+  if (!Number.isFinite(expires)) return "24 小时内有效";
+  const diffMs = expires - Date.now();
+  if (diffMs <= 0) return "已过期";
+  const hours = Math.ceil(diffMs / (60 * 60 * 1000));
+  if (hours >= 24) return "24 小时内有效";
+  return `${hours} 小时内有效`;
+}
+
+function inviteStatusLabel(invite: SessionInvite): string {
+  if (invite.isExpired || invite.status === "expired") return "已过期";
+  if (invite.status === "accepted") return "已加入";
+  if (invite.status === "declined") return "已拒绝";
+  if (invite.status === "dismissed") return "已忽略";
+  return "待确认";
+}
+
+function inviteStatusClass(invite: SessionInvite): string {
+  if (invite.isExpired || invite.status === "expired") return "bg-slate-100 text-slate-500";
+  if (invite.status === "accepted") return "bg-emerald-50 text-emerald-700";
+  if (invite.status === "pending") return "bg-blue-50 text-blue-700";
+  return "bg-amber-50 text-amber-700";
+}
+
 export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
   const { query: workspaceSearchQuery } = useSessionWorkspaceSearch();
   const setRuntimeSessionPatch = useAppStore((state) => state.setRuntimeSessionPatch);
@@ -1358,6 +1385,15 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
   const [contextNotice, setContextNotice] = useState<string | null>(null);
   const [conversationFilter, setConversationFilter] = useState<"all" | "eko">("all");
   const [memoryExpanded, setMemoryExpanded] = useState(false);
+  const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
+  const [sessionInvites, setSessionInvites] = useState<SessionInvite[]>([]);
+  const [mySessionInvites, setMySessionInvites] = useState<SessionInvite[]>([]);
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const [inviteMemberId, setInviteMemberId] = useState("");
+  const [inviteNotice, setInviteNotice] = useState<string | null>(null);
+  const [inviteError, setInviteError] = useState<string | null>(null);
+  const [inviteSubmitting, setInviteSubmitting] = useState(false);
+  const [inviteInboxOpen, setInviteInboxOpen] = useState(false);
   const canvasSyncActions = useMemo<DetailSyncAction[]>(
     () =>
       isCanvasMode
@@ -1391,6 +1427,18 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
       return blob.includes(searchNeedle);
     });
   }, [conversationFilter, messages, searchNeedle]);
+  const inviteableMembers = useMemo(
+    () => teamMembers.filter((member) => !member.isCurrentUser && member.status === "active"),
+    [teamMembers],
+  );
+  const pendingSessionInvites = useMemo(
+    () => sessionInvites.filter((invite) => invite.status === "pending" && !invite.isExpired),
+    [sessionInvites],
+  );
+  const pendingMyInvites = useMemo(
+    () => mySessionInvites.filter((invite) => invite.status === "pending" && !invite.isExpired),
+    [mySessionInvites],
+  );
   const runtimeContextSources = useMemo(
     () => mergeById(data.contextSources, ragSourcesToContextSources(agentSlice?.retrievedSources ?? [])),
     [agentSlice?.retrievedSources, data.contextSources],
@@ -1414,6 +1462,60 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
     const timer = window.setTimeout(() => setCanvasNotice(null), 2400);
     return () => window.clearTimeout(timer);
   }, [canvasNotice]);
+
+  const loadSessionCollaborationData = useCallback(async () => {
+    try {
+      const [members, invites, mine] = await Promise.all([
+        fetchTeamMembers(),
+        fetchSessionInvites(data.id),
+        fetchMySessionInvites(),
+      ]);
+      setTeamMembers(members);
+      setSessionInvites(invites);
+      setMySessionInvites(mine);
+      if (!inviteMemberId) {
+        const firstInviteable = members.find((member) => !member.isCurrentUser && member.status === "active");
+        setInviteMemberId(firstInviteable?.id ?? "");
+      }
+    } catch (error) {
+      setInviteError(error instanceof Error ? error.message : "加载协作邀请失败");
+    }
+  }, [data.id, inviteMemberId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const [members, invites, mine] = await Promise.all([
+          fetchTeamMembers(),
+          fetchSessionInvites(data.id),
+          fetchMySessionInvites(),
+        ]);
+        if (cancelled) return;
+        setTeamMembers(members);
+        setSessionInvites(invites);
+        setMySessionInvites(mine);
+        const firstInviteable = members.find((member) => !member.isCurrentUser && member.status === "active");
+        setInviteMemberId((current) => current || firstInviteable?.id || "");
+      } catch {
+        if (!cancelled) {
+          setTeamMembers([]);
+        }
+      }
+    };
+    void load();
+    const timer = window.setInterval(load, 15000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [data.id]);
+
+  useEffect(() => {
+    if (pendingMyInvites.length > 0) {
+      setInviteInboxOpen(true);
+    }
+  }, [pendingMyInvites.length]);
 
   const handleRealtimeEnvelope = useCallback((raw: unknown) => {
     if (!raw || typeof raw !== "object") return;
@@ -2139,8 +2241,41 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
     setCanvasNotice("已切换输出视图。");
   }
 
+  async function handleSendSessionInvite() {
+    const member = inviteableMembers.find((item) => item.id === inviteMemberId);
+    if (!member) {
+      setInviteError("请选择团队成员。");
+      return;
+    }
+    setInviteSubmitting(true);
+    setInviteError(null);
+    setInviteNotice(null);
+    try {
+      await createSessionInvite(data.id, { memberId: member.id });
+      await loadSessionCollaborationData();
+      setInviteNotice(`已邀请 ${member.displayName || member.email}，24 小时内有效。`);
+      setInviteOpen(false);
+    } catch (error) {
+      setInviteError(error instanceof Error ? error.message : "发送邀请失败");
+    } finally {
+      setInviteSubmitting(false);
+    }
+  }
+
+  async function handleInviteAction(invite: SessionInvite, action: "accepted" | "declined" | "dismissed") {
+    try {
+      await updateSessionInvite(invite.id, action);
+      await loadSessionCollaborationData();
+      if (action === "accepted") {
+        setInviteNotice(`已加入「${invite.sessionTitle}」。`);
+      }
+    } catch (error) {
+      setInviteError(error instanceof Error ? error.message : "处理邀请失败");
+    }
+  }
+
   return (
-    <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden overflow-x-hidden bg-[#FAFBFC] text-slate-900">
+    <div className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden overflow-x-hidden bg-[#FAFBFC] text-slate-900">
       <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
         <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-5 pb-5 pt-2 sm:px-6 sm:pb-6 sm:pt-3">
           <div className="flex h-full min-h-0 min-w-0 gap-4 overflow-hidden lg:gap-5">
@@ -2155,9 +2290,36 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                 ].join(" ")}
               >
                 <section className="flex h-full min-h-0 flex-col overflow-hidden rounded-[28px] border border-slate-200/90 bg-white px-5 py-4 shadow-[0_14px_32px_rgba(148,163,184,0.08)]">
-                  <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between">
                     <h2 className="text-[17px] font-semibold text-slate-950">{data.conversationTitle}</h2>
                     <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setInviteError(null);
+                          setInviteNotice(null);
+                          setInviteOpen(true);
+                        }}
+                        className="rounded-full border border-transparent p-1.5 text-slate-500 transition hover:bg-slate-50 hover:text-blue-600"
+                        aria-label="邀请团队成员协作"
+                        title="邀请团队成员协作"
+                      >
+                        <SmallIcon type="share" tone="blue" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setInviteInboxOpen((open) => !open)}
+                        className="relative rounded-full border border-transparent p-1.5 text-slate-500 transition hover:bg-slate-50 hover:text-blue-600"
+                        aria-label="会话邀请"
+                        title="会话邀请"
+                      >
+                        <SmallIcon type="alert" tone={pendingMyInvites.length > 0 ? "orange" : "slate"} />
+                        {pendingMyInvites.length > 0 ? (
+                          <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-semibold leading-none text-white">
+                            {pendingMyInvites.length}
+                          </span>
+                        ) : null}
+                      </button>
                       <button
                         type="button"
                         onClick={() => setConversationFilter((current) => (current === "all" ? "eko" : "all"))}
@@ -2183,6 +2345,65 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                       </button>
                     </div>
                   </div>
+                  {inviteNotice || inviteError || inviteInboxOpen ? (
+                    <div className="mt-3 space-y-2 border-t border-slate-100 pt-3">
+                      {inviteNotice ? (
+                        <div className="rounded-[12px] border border-emerald-100 bg-emerald-50 px-3 py-2 text-[12px] font-medium text-emerald-700">
+                          {inviteNotice}
+                        </div>
+                      ) : null}
+                      {inviteError ? (
+                        <div className="rounded-[12px] border border-rose-100 bg-rose-50 px-3 py-2 text-[12px] font-medium text-rose-700">
+                          {inviteError}
+                        </div>
+                      ) : null}
+                      {inviteInboxOpen ? (
+                        <div className="rounded-[14px] border border-slate-200 bg-slate-50/80 p-3">
+                          <div className="mb-2 flex items-center justify-between gap-2">
+                            <p className="text-[13px] font-semibold text-slate-800">会话邀请</p>
+                            <button
+                              type="button"
+                              onClick={() => setInviteInboxOpen(false)}
+                              className="text-[12px] font-semibold text-slate-400 hover:text-slate-600"
+                            >
+                              收起
+                            </button>
+                          </div>
+                          {pendingMyInvites.length === 0 ? (
+                            <p className="text-[12px] text-slate-500">暂无待处理邀请。</p>
+                          ) : (
+                            <div className="space-y-2">
+                              {pendingMyInvites.slice(0, 3).map((invite) => (
+                                <div key={invite.id} className="rounded-[12px] bg-white px-3 py-2 shadow-[0_2px_8px_rgba(15,23,42,0.04)]">
+                                  <p className="line-clamp-1 text-[13px] font-semibold text-slate-800">{invite.sessionTitle}</p>
+                                  <p className="mt-0.5 text-[11px] text-slate-500">
+                                    {invite.inviterName} 邀请 · {formatInviteExpiry(invite.expiresAt)}
+                                  </p>
+                                  <div className="mt-2 flex items-center gap-2">
+                                    <Link
+                                      href={`/sessions/${encodeURIComponent(invite.sessionId)}`}
+                                      prefetch={false}
+                                      onClick={() => void handleInviteAction(invite, "accepted")}
+                                      className="rounded-[9px] bg-blue-600 px-2.5 py-1 text-[12px] font-semibold text-white"
+                                    >
+                                      加入
+                                    </Link>
+                                    <button
+                                      type="button"
+                                      onClick={() => void handleInviteAction(invite, "declined")}
+                                      className="rounded-[9px] border border-slate-200 bg-white px-2.5 py-1 text-[12px] font-semibold text-slate-600"
+                                    >
+                                      拒绝
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
                   <div className="mt-4 min-h-0 flex-1 border-t border-slate-100 pt-4">
                     <div className="flex h-full min-h-0 flex-col">
                       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
@@ -2737,6 +2958,42 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                             ))}
                           </div>
                         </SectionCard>
+                        <SectionCard
+                          title="协作邀请"
+                          action={
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setInviteError(null);
+                                setInviteNotice(null);
+                                setInviteOpen(true);
+                              }}
+                              className="text-[12px] font-semibold text-blue-600"
+                            >
+                              邀请成员
+                            </button>
+                          }
+                        >
+                          <div className="space-y-2.5">
+                            {sessionInvites.length === 0 ? (
+                              <p className="text-[13px] leading-6 text-slate-500">还没有会话协作者邀请。</p>
+                            ) : (
+                              sessionInvites.slice(0, 4).map((invite) => (
+                                <div key={invite.id} className="flex items-center justify-between gap-3 rounded-[12px] border border-slate-100 bg-slate-50/70 px-3 py-2">
+                                  <div className="min-w-0">
+                                    <p className="truncate text-[13px] font-semibold text-slate-800">{invite.inviteeName || invite.inviteeEmail}</p>
+                                    <p className="text-[11px] text-slate-500">
+                                      {invite.inviterName} 发起 · {formatInviteExpiry(invite.expiresAt)}
+                                    </p>
+                                  </div>
+                                  <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${inviteStatusClass(invite)}`}>
+                                    {inviteStatusLabel(invite)}
+                                  </span>
+                                </div>
+                              ))
+                            )}
+                          </div>
+                        </SectionCard>
                         <SectionCard title="AI 记忆与上下文">
                           <div className="flex items-start gap-3">
                             <div className="flex h-10 w-10 items-center justify-center rounded-[14px] bg-blue-50">
@@ -2781,8 +3038,71 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                     )}
               </aside>
             </div>
-          </section>
+        </section>
+      </div>
+      {inviteOpen ? (
+        <div className="absolute inset-0 z-40 flex items-center justify-center bg-slate-950/25 px-4">
+          <div className="w-full max-w-[420px] rounded-[22px] border border-slate-200 bg-white p-5 shadow-[0_24px_70px_rgba(15,23,42,0.22)]">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-[17px] font-semibold text-slate-950">邀请团队成员</h3>
+                <p className="mt-1 text-[13px] leading-5 text-slate-500">成员会收到网页提示，邀请会保留 24 小时。</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setInviteOpen(false)}
+                className="rounded-full px-2 py-1 text-[14px] text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+                aria-label="关闭"
+              >
+                ×
+              </button>
+            </div>
+            <label className="mt-5 block">
+              <span className="mb-1.5 block text-[13px] font-medium text-slate-500">团队成员</span>
+              <select
+                value={inviteMemberId}
+                onChange={(event) => setInviteMemberId(event.target.value)}
+                className="h-[44px] w-full rounded-[12px] border border-slate-200 bg-white px-3 text-[14px] text-slate-800 outline-none transition focus:border-blue-300 focus:ring-2 focus:ring-blue-100"
+              >
+                {inviteableMembers.length === 0 ? (
+                  <option value="">暂无可邀请成员</option>
+                ) : (
+                  inviteableMembers.map((member) => (
+                    <option key={member.id} value={member.id}>
+                      {member.displayName || member.email}
+                    </option>
+                  ))
+                )}
+              </select>
+            </label>
+            {pendingSessionInvites.length > 0 ? (
+              <p className="mt-3 text-[12px] text-slate-500">当前已有 {pendingSessionInvites.length} 个待确认邀请。</p>
+            ) : null}
+            {inviteError ? (
+              <div className="mt-3 rounded-[12px] border border-rose-100 bg-rose-50 px-3 py-2 text-[12px] font-medium text-rose-700">
+                {inviteError}
+              </div>
+            ) : null}
+            <div className="mt-5 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setInviteOpen(false)}
+                className="rounded-[11px] border border-slate-200 bg-white px-4 py-2 text-[13px] font-semibold text-slate-600 transition hover:bg-slate-50"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleSendSessionInvite()}
+                disabled={inviteSubmitting || !inviteMemberId}
+                className="rounded-[11px] bg-blue-600 px-4 py-2 text-[13px] font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+              >
+                {inviteSubmitting ? "发送中" : "发送邀请"}
+              </button>
+            </div>
+          </div>
         </div>
+      ) : null}
     </div>
   );
 }

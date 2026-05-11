@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.team.models import Team, TeamMember, TeamMemberRole, TeamMemberStatus
+from app.modules.team.models import SessionCollaborationInvite, Team, TeamMember, TeamMemberRole, TeamMemberStatus
 
 
 DEFAULT_TEAM_ID = "team_default"
@@ -119,6 +119,98 @@ class TeamRepository:
             return
         await self._session.delete(member)
         await self._commit()
+
+    async def create_session_invite(
+        self,
+        *,
+        team_id: str,
+        session_id: str,
+        session_title: str,
+        inviter_user_id: str,
+        inviter_name: str,
+        invitee_user_id: str | None,
+        invitee_email: str,
+        invitee_name: str | None,
+        expires_at: datetime,
+    ) -> SessionCollaborationInvite:
+        now = datetime.now(UTC)
+        existing = await self._session.scalar(
+            select(SessionCollaborationInvite).where(
+                SessionCollaborationInvite.team_id == team_id,
+                SessionCollaborationInvite.session_id == session_id,
+                SessionCollaborationInvite.invitee_email == invitee_email,
+                SessionCollaborationInvite.status == "pending",
+            )
+        )
+        if existing is not None:
+            existing.session_title = session_title
+            existing.inviter_user_id = inviter_user_id
+            existing.inviter_name = inviter_name
+            existing.invitee_user_id = invitee_user_id or existing.invitee_user_id
+            existing.invitee_name = invitee_name or existing.invitee_name
+            existing.created_at = now
+            existing.expires_at = expires_at
+            await self._session.flush()
+            await self._commit()
+            return existing
+
+        invite = SessionCollaborationInvite(
+            team_id=team_id,
+            session_id=session_id,
+            session_title=session_title,
+            inviter_user_id=inviter_user_id,
+            inviter_name=inviter_name,
+            invitee_user_id=invitee_user_id,
+            invitee_email=invitee_email,
+            invitee_name=invitee_name,
+            status="pending",
+            created_at=now,
+            expires_at=expires_at,
+        )
+        self._session.add(invite)
+        await self._session.flush()
+        await self._commit()
+        return invite
+
+    async def list_session_invites(self, team_id: str, session_id: str) -> list[SessionCollaborationInvite]:
+        invites = list(
+            await self._session.scalars(
+                select(SessionCollaborationInvite).where(
+                    SessionCollaborationInvite.team_id == team_id,
+                    SessionCollaborationInvite.session_id == session_id,
+                )
+            )
+        )
+        return sorted(invites, key=lambda invite: invite.created_at, reverse=True)
+
+    async def list_invites_for_user(self, *, team_id: str, user_id: str, email: str | None) -> list[SessionCollaborationInvite]:
+        conditions = [SessionCollaborationInvite.invitee_user_id == user_id]
+        if email:
+            conditions.append(SessionCollaborationInvite.invitee_email == email)
+        invites = list(
+            await self._session.scalars(
+                select(SessionCollaborationInvite).where(
+                    SessionCollaborationInvite.team_id == team_id,
+                    or_(*conditions),
+                )
+            )
+        )
+        return sorted(invites, key=lambda invite: invite.created_at, reverse=True)
+
+    async def get_session_invite_by_id(self, team_id: str, invite_id: str) -> SessionCollaborationInvite | None:
+        return await self._session.scalar(
+            select(SessionCollaborationInvite).where(
+                SessionCollaborationInvite.team_id == team_id,
+                SessionCollaborationInvite.id == invite_id,
+            )
+        )
+
+    async def update_session_invite_status(self, invite: SessionCollaborationInvite, status: str) -> SessionCollaborationInvite:
+        invite.status = status
+        invite.responded_at = datetime.now(UTC)
+        await self._session.flush()
+        await self._commit()
+        return invite
 
     async def _commit(self) -> None:
         commit = getattr(self._session, "commit", None)
