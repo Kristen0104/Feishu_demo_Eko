@@ -2,10 +2,27 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { deleteRagFile, listRagFiles, searchRag, uploadRagFile, type RagFile, type RagSearchResult } from "@/lib/rag-api";
+import {
+  deleteRagFile,
+  getRagFileContent,
+  listRagFiles,
+  searchRag,
+  updateRagFile,
+  uploadRagFile,
+  type RagFile,
+  type RagSearchResult,
+} from "@/lib/rag-api";
 import { BitableSourcesPanel } from "@/components/knowledge/BitableSourcesPanel";
 
 const SUPPORTED_EXTENSIONS = [".pdf", ".docx", ".md", ".txt", ".json", ".csv", ".log"];
+
+type EditDraft = {
+  filename: string;
+  source: string;
+  note: string;
+  content: string;
+  originalContent: string;
+};
 
 function formatBytes(size: number) {
   if (size < 1024) return `${size} B`;
@@ -30,6 +47,10 @@ export function KnowledgeWorkspacePage() {
   const [searching, setSearching] = useState(false);
   const [deletingFileId, setDeletingFileId] = useState<string | null>(null);
   const [confirmDeleteFileId, setConfirmDeleteFileId] = useState<string | null>(null);
+  const [editingFileId, setEditingFileId] = useState<string | null>(null);
+  const [savingFileId, setSavingFileId] = useState<string | null>(null);
+  const [loadingContentFileId, setLoadingContentFileId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState<EditDraft>({ filename: "", source: "", note: "", content: "", originalContent: "" });
   const [notice, setNotice] = useState<string | null>(null);
 
   const selectedFileSupported = useMemo(() => {
@@ -146,6 +167,89 @@ export function KnowledgeWorkspacePage() {
     }
   }
 
+  async function startEdit(file: RagFile) {
+    setEditingFileId(file.file_id);
+    setLoadingContentFileId(file.file_id);
+    setConfirmDeleteFileId(null);
+    setNotice(null);
+    setEditDraft({
+      filename: file.filename,
+      source: file.source,
+      note: typeof file.metadata.note === "string" ? file.metadata.note : "",
+      content: "",
+      originalContent: "",
+    });
+    try {
+      const detail = await getRagFileContent(file.file_id);
+      setEditDraft({
+        filename: detail.filename,
+        source: detail.source,
+        note: typeof detail.metadata.note === "string" ? detail.metadata.note : "",
+        content: detail.content,
+        originalContent: detail.content,
+      });
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "加载正文失败");
+    } finally {
+      setLoadingContentFileId(null);
+    }
+  }
+
+  function cancelEdit() {
+    setEditingFileId(null);
+    setSavingFileId(null);
+    setLoadingContentFileId(null);
+    setEditDraft({ filename: "", source: "", note: "", content: "", originalContent: "" });
+  }
+
+  async function handleSaveEdit(file: RagFile) {
+    const filename = editDraft.filename.trim();
+    const source = editDraft.source.trim();
+    const content = editDraft.content;
+    const trimmedContent = content.trim();
+    const contentChanged = content !== editDraft.originalContent;
+    if (!filename) {
+      setNotice("资料名称不能为空。");
+      return;
+    }
+    if (!source) {
+      setNotice("资料来源不能为空。");
+      return;
+    }
+    if (contentChanged && !trimmedContent) {
+      setNotice("正文内容不能为空。");
+      return;
+    }
+    setSavingFileId(file.file_id);
+    setNotice(null);
+    try {
+      const updated = await updateRagFile(file.file_id, {
+        filename,
+        source,
+        metadata: { ...file.metadata, note: editDraft.note.trim() },
+        ...(contentChanged ? { content } : {}),
+      });
+      setFiles((current) => current.map((item) => (item.file_id === updated.file_id ? updated : item)));
+      setResults((current) =>
+        current.map((item) =>
+          item.source_id === updated.file_id
+            ? {
+                ...item,
+                title: updated.filename,
+                metadata: { ...item.metadata, source: updated.source, ...updated.metadata },
+              }
+            : item,
+        ),
+      );
+      setNotice(contentChanged ? `已保存并重新索引 ${updated.filename}，当前 ${updated.chunk_count} chunks。` : "已保存资料信息。");
+      cancelEdit();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "保存失败");
+    } finally {
+      setSavingFileId(null);
+    }
+  }
+
   return (
     <main className="min-h-0 flex-1 overflow-y-auto bg-[#F8F9FA] px-6 py-6">
       <div className="mx-auto flex w-full max-w-[1180px] flex-col gap-5">
@@ -216,22 +320,89 @@ export function KnowledgeWorkspacePage() {
                     <div className="flex min-w-0 items-start justify-between gap-2">
                       <div className="min-w-0">
                         <p className="truncate text-[13px] font-semibold text-slate-900">{file.filename}</p>
-                        <p className="mt-1 text-[12px] text-slate-500">{file.chunk_count} chunks</p>
+                        <p className="mt-1 truncate text-[12px] text-slate-500">{file.chunk_count} chunks · {file.source}</p>
+                        {typeof file.metadata.note === "string" && file.metadata.note ? (
+                          <p className="mt-1 line-clamp-2 text-[12px] text-slate-500">{file.metadata.note}</p>
+                        ) : null}
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => void handleDelete(file)}
-                        disabled={deletingFileId === file.file_id}
-                        className={[
-                          "shrink-0 rounded-[9px] px-2.5 py-1 text-[11px] font-semibold transition disabled:bg-slate-100 disabled:text-slate-400",
-                          confirmDeleteFileId === file.file_id
-                            ? "bg-rose-600 text-white hover:bg-rose-700"
-                            : "bg-rose-50 text-rose-600 hover:bg-rose-100",
-                        ].join(" ")}
-                      >
-                        {deletingFileId === file.file_id ? "删除中" : confirmDeleteFileId === file.file_id ? "确认删除" : "删除"}
-                      </button>
+                      <div className="flex shrink-0 gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => void startEdit(file)}
+                          className="rounded-[9px] bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-700 transition hover:bg-slate-200"
+                        >
+                          {editingFileId === file.file_id ? "预览中" : "编辑"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleDelete(file)}
+                          disabled={deletingFileId === file.file_id || editingFileId === file.file_id}
+                          className={[
+                            "rounded-[9px] px-2.5 py-1 text-[11px] font-semibold transition disabled:bg-slate-100 disabled:text-slate-400",
+                            confirmDeleteFileId === file.file_id
+                              ? "bg-rose-600 text-white hover:bg-rose-700"
+                              : "bg-rose-50 text-rose-600 hover:bg-rose-100",
+                          ].join(" ")}
+                        >
+                          {deletingFileId === file.file_id ? "删除中" : confirmDeleteFileId === file.file_id ? "确认删除" : "删除"}
+                        </button>
+                      </div>
                     </div>
+                    {editingFileId === file.file_id ? (
+                      <div className="mt-3 space-y-2 rounded-[12px] border border-blue-100 bg-blue-50/40 p-3">
+                        <label className="block text-[12px] font-semibold text-slate-600">
+                          资料名称
+                          <input
+                            value={editDraft.filename}
+                            onChange={(event) => setEditDraft((draft) => ({ ...draft, filename: event.target.value }))}
+                            className="mt-1 h-9 w-full rounded-[10px] border border-slate-200 bg-white px-2.5 text-[12px] text-slate-800 outline-none focus:border-blue-400"
+                          />
+                        </label>
+                        <label className="block text-[12px] font-semibold text-slate-600">
+                          来源标识
+                          <input
+                            value={editDraft.source}
+                            onChange={(event) => setEditDraft((draft) => ({ ...draft, source: event.target.value }))}
+                            className="mt-1 h-9 w-full rounded-[10px] border border-slate-200 bg-white px-2.5 text-[12px] text-slate-800 outline-none focus:border-blue-400"
+                          />
+                        </label>
+                        <label className="block text-[12px] font-semibold text-slate-600">
+                          备注
+                          <textarea
+                            value={editDraft.note}
+                            onChange={(event) => setEditDraft((draft) => ({ ...draft, note: event.target.value }))}
+                            className="mt-1 h-16 w-full resize-none rounded-[10px] border border-slate-200 bg-white px-2.5 py-2 text-[12px] leading-5 text-slate-800 outline-none focus:border-blue-400"
+                          />
+                        </label>
+                        <label className="block text-[12px] font-semibold text-slate-600">
+                          正文内容
+                          <textarea
+                            value={editDraft.content}
+                            onChange={(event) => setEditDraft((draft) => ({ ...draft, content: event.target.value }))}
+                            disabled={loadingContentFileId === file.file_id}
+                            className="mt-1 h-40 w-full resize-y rounded-[10px] border border-slate-200 bg-white px-2.5 py-2 text-[12px] leading-5 text-slate-800 outline-none focus:border-blue-400 disabled:bg-slate-100 disabled:text-slate-400"
+                            placeholder={loadingContentFileId === file.file_id ? "正在加载正文..." : "编辑正文后保存，会重新切分并写入向量库"}
+                          />
+                        </label>
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() => void handleSaveEdit(file)}
+                            disabled={savingFileId === file.file_id}
+                            className="h-8 rounded-[9px] bg-blue-600 px-3 text-[12px] font-semibold text-white transition hover:bg-blue-700 disabled:bg-slate-300"
+                          >
+                            {savingFileId === file.file_id ? "保存中" : "保存"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={cancelEdit}
+                            className="h-8 rounded-[9px] bg-white px-3 text-[12px] font-semibold text-slate-600 ring-1 ring-slate-200 transition hover:bg-slate-50"
+                          >
+                            取消
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
                 ))}
               </div>

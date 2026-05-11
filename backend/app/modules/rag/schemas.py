@@ -14,11 +14,22 @@ class RagFileSchema(BaseModel):
     created_at: str | None = None
 
 
+class RagFileContentSchema(RagFileSchema):
+    content: str
+
+
 class RagFileCreateRequest(BaseModel):
     filename: str
     source: str
     content: str
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class RagFileUpdateRequest(BaseModel):
+    filename: str | None = None
+    source: str | None = None
+    metadata: dict[str, Any] | None = None
+    content: str | None = None
 
 
 class RagSearchResultSchema(BaseModel):

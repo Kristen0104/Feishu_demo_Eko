@@ -25,6 +25,17 @@ export type RagSearchResponse = {
   results: RagSearchResult[];
 };
 
+export type RagFileContent = RagFile & {
+  content: string;
+};
+
+export type RagFileUpdatePayload = {
+  filename?: string;
+  source?: string;
+  metadata?: Record<string, unknown>;
+  content?: string;
+};
+
 export function listRagFiles(): Promise<RagFile[]> {
   return fetchEkoJson<RagFile[]>("/api/v1/rag/files", { cache: "no-store" });
 }
@@ -73,6 +84,19 @@ export async function uploadRagFile(file: File, metadata?: Record<string, unknow
 export function deleteRagFile(fileId: string): Promise<boolean> {
   return fetchEkoJson<boolean>(`/api/v1/rag/files/${encodeURIComponent(fileId)}`, {
     method: "DELETE",
+  });
+}
+
+export function getRagFileContent(fileId: string): Promise<RagFileContent> {
+  return fetchEkoJson<RagFileContent>(`/api/v1/rag/files/${encodeURIComponent(fileId)}/content`, {
+    cache: "no-store",
+  });
+}
+
+export function updateRagFile(fileId: string, payload: RagFileUpdatePayload): Promise<RagFile> {
+  return fetchEkoJson<RagFile>(`/api/v1/rag/files/${encodeURIComponent(fileId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
   });
 }
 

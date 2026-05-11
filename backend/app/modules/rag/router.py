@@ -7,7 +7,13 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 
 from app.modules.rag.dependencies import get_rag_service
 from app.modules.rag.file_parser import parse_rag_upload
-from app.modules.rag.schemas import RagFileCreateRequest, RagFileSchema, RagSearchResponse
+from app.modules.rag.schemas import (
+    RagFileContentSchema,
+    RagFileCreateRequest,
+    RagFileSchema,
+    RagFileUpdateRequest,
+    RagSearchResponse,
+)
 from app.modules.rag.service import RagService
 from app.shared.responses import ApiResponse
 
@@ -25,6 +31,21 @@ async def list_rag_files(
     return ApiResponse.success(await rag_service.list_files())
 
 
+@router.get(
+    "/files/{file_id}/content",
+    response_model=ApiResponse[RagFileContentSchema],
+    summary="读取 RAG 文件可编辑正文",
+)
+async def get_rag_file_content(
+    file_id: str,
+    rag_service: Annotated[RagService, Depends(get_rag_service)],
+) -> ApiResponse[RagFileContentSchema]:
+    content = await rag_service.get_file_content(file_id)
+    if content is None:
+        raise HTTPException(status_code=404, detail="RAG file not found")
+    return ApiResponse.success(content)
+
+
 @router.delete(
     "/files/{file_id}",
     response_model=ApiResponse[bool],
@@ -38,6 +59,24 @@ async def delete_rag_file(
     if not deleted:
         raise HTTPException(status_code=404, detail="RAG file not found")
     return ApiResponse.success(True)
+
+
+@router.patch(
+    "/files/{file_id}",
+    response_model=ApiResponse[RagFileSchema],
+    summary="更新 RAG 文件资料与可选内容",
+)
+async def update_rag_file(
+    file_id: str,
+    payload: RagFileUpdateRequest,
+    rag_service: Annotated[RagService, Depends(get_rag_service)],
+) -> ApiResponse[RagFileSchema]:
+    if payload.content is not None and not payload.content.strip():
+        raise HTTPException(status_code=400, detail="content must not be empty")
+    updated = await rag_service.update_file(file_id, payload)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="RAG file not found")
+    return ApiResponse.success(updated)
 
 
 @router.post(

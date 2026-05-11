@@ -12,13 +12,22 @@ class RagRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def create_file(self, *, filename: str, source: str, content_hash: str, metadata: dict[str, Any]) -> RagFile:
+    async def create_file(
+        self,
+        *,
+        filename: str,
+        source: str,
+        content_hash: str,
+        metadata: dict[str, Any],
+        raw_content: str,
+    ) -> RagFile:
         existing = await self._session.scalar(
             select(RagFile).where(RagFile.source == source, RagFile.content_hash == content_hash)
         )
         if existing is not None:
             existing.filename = filename
             existing.file_metadata = metadata
+            existing.raw_content = raw_content
             await self._session.flush()
             return existing
 
@@ -29,10 +38,67 @@ class RagRepository:
             status="indexed",
             source=source,
             content_hash=content_hash,
+            raw_content=raw_content,
             file_metadata=metadata,
         )
         self._session.add(file)
         await self._session.flush()
+        return file
+
+    async def get_file(self, file_id: str) -> RagFile | None:
+        return await self._session.get(RagFile, file_id)
+
+    async def count_chunks(self, file_id: str) -> int:
+        return int(
+            await self._session.scalar(
+                select(func.count(RagChunk.id)).where(RagChunk.file_id == file_id)
+            )
+            or 0
+        )
+
+    async def get_content_from_chunks(self, file_id: str) -> str | None:
+        result = await self._session.execute(
+            select(RagChunk.content)
+            .where(RagChunk.file_id == file_id)
+            .order_by(RagChunk.chunk_index)
+        )
+        chunks = [content for content in result.scalars().all() if content]
+        if not chunks:
+            return None
+        return "\n\n".join(chunks)
+
+    async def update_file(
+        self,
+        file_id: str,
+        *,
+        filename: str | None = None,
+        source: str | None = None,
+        content_hash: str | None = None,
+        raw_content: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> RagFile | None:
+        file = await self.get_file(file_id)
+        if file is None:
+            return None
+        if filename is not None:
+            file.filename = filename
+        if source is not None:
+            file.source = source
+            file.file_path = source[:512]
+        if content_hash is not None:
+            file.content_hash = content_hash
+        if raw_content is not None:
+            file.raw_content = raw_content
+        if metadata is not None:
+            file.file_metadata = metadata
+        if source is not None or metadata is not None:
+            next_metadata = metadata if metadata is not None else file.file_metadata or {}
+            next_source = source if source is not None else file.source
+            result = await self._session.execute(select(RagChunk).where(RagChunk.file_id == file_id))
+            for chunk in result.scalars():
+                chunk.chunk_metadata = {"source": next_source, **next_metadata}
+        await self._session.commit()
+        await self._session.refresh(file)
         return file
 
     async def replace_chunks(self, file_id: str, chunks: list[dict[str, Any]]) -> None:

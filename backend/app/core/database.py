@@ -90,6 +90,7 @@ async def init_db():
         )
         await conn.execute(text("ALTER TABLE rag_files ADD COLUMN IF NOT EXISTS source VARCHAR(1024)"))
         await conn.execute(text("ALTER TABLE rag_files ADD COLUMN IF NOT EXISTS content_hash VARCHAR(64)"))
+        await conn.execute(text("ALTER TABLE rag_files ADD COLUMN IF NOT EXISTS raw_content TEXT"))
         await conn.execute(text("ALTER TABLE rag_files ADD COLUMN IF NOT EXISTS file_metadata JSONB DEFAULT '{}'::jsonb"))
         await conn.execute(text("UPDATE rag_files SET source = COALESCE(source, file_path, filename, id) WHERE source IS NULL"))
         await conn.execute(text("UPDATE rag_files SET content_hash = COALESCE(content_hash, id) WHERE content_hash IS NULL"))

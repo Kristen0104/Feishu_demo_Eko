@@ -6,7 +6,13 @@ from typing import Any
 from app.config import settings
 from app.modules.rag.embeddings import EmbeddingClient, build_embedding_client
 from app.modules.rag.repository import RagRepository
-from app.modules.rag.schemas import RagFileCreateRequest, RagFileSchema, RagSearchResultSchema
+from app.modules.rag.schemas import (
+    RagFileContentSchema,
+    RagFileCreateRequest,
+    RagFileSchema,
+    RagFileUpdateRequest,
+    RagSearchResultSchema,
+)
 from app.modules.rag.splitter import TextSplitter
 
 
@@ -35,6 +41,7 @@ class RagService:
             source=payload.source,
             content_hash=content_hash,
             metadata=payload.metadata,
+            raw_content=payload.content,
         )
         await self._repository.replace_chunks(
             file.id,
@@ -52,6 +59,68 @@ class RagService:
             ],
         )
         return self._file_schema(file, len(chunks))
+
+    async def get_file_content(self, file_id: str) -> RagFileContentSchema | None:
+        file = await self._repository.get_file(file_id)
+        if file is None:
+            return None
+        chunk_count = await self._repository.count_chunks(file_id)
+        raw_content = getattr(file, "raw_content", None)
+        content = raw_content if isinstance(raw_content, str) and raw_content else await self._repository.get_content_from_chunks(file_id)
+        return RagFileContentSchema(
+            **self._file_schema(file, chunk_count).model_dump(),
+            content=content or "",
+        )
+
+    async def update_file(self, file_id: str, payload: RagFileUpdateRequest) -> RagFileSchema | None:
+        existing = await self._repository.get_file(file_id)
+        if existing is None:
+            return None
+
+        filename = payload.filename.strip() if isinstance(payload.filename, str) else None
+        source = payload.source.strip() if isinstance(payload.source, str) else None
+        if filename == "":
+            filename = None
+        if source == "":
+            source = None
+
+        metadata = payload.metadata
+        content_hash: str | None = None
+        if payload.content is not None:
+            content = payload.content
+            chunks = self._splitter.split(content)
+            embeddings = await self._embedding_client.embed([chunk.content for chunk in chunks])
+            content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+            chunk_source = source or existing.source
+            chunk_title = filename or existing.filename
+            next_metadata = metadata if metadata is not None else existing.file_metadata or {}
+            await self._repository.replace_chunks(
+                file_id,
+                [
+                    {
+                        "file_id": file_id,
+                        "chunk_index": chunk.index,
+                        "title": chunk_title,
+                        "content": chunk.content,
+                        "token_count": len(chunk.content),
+                        "embedding": embedding,
+                        "metadata": {"source": chunk_source, **next_metadata},
+                    }
+                    for chunk, embedding in zip(chunks, embeddings, strict=True)
+                ],
+            )
+
+        updated = await self._repository.update_file(
+            file_id,
+            filename=filename,
+            source=source,
+            content_hash=content_hash,
+            raw_content=payload.content,
+            metadata=metadata,
+        )
+        if updated is None:
+            return None
+        return self._file_schema(updated, await self._repository.count_chunks(file_id))
 
     async def list_files(self) -> list[RagFileSchema]:
         return [self._file_schema(file, chunk_count) for file, chunk_count in await self._repository.list_files()]
