@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, WebSocket
 
 from app.core.security import AuthContext, get_auth_context
 from app.modules.sync.dependencies import get_sync_service
-from app.modules.sync.schemas import SyncChannelSchema, SyncContextSelectionRequest
+from app.modules.sync.schemas import SyncArtifactUpdateRequest, SyncChannelSchema, SyncContextSelectionRequest
 from app.modules.sync.service import SyncService
 from app.shared.responses import ApiResponse
 
@@ -61,6 +61,29 @@ async def delete_sync_session(
 ) -> dict[str, object]:
     deleted = await sync_service.delete_session(session_id)
     return ApiResponse.success({"session_id": session_id, "deleted": deleted}).model_dump()
+
+
+@router.patch(
+    "/sessions/{session_id}/artifact",
+    summary="Update session artifact",
+)
+async def update_session_artifact(
+    session_id: str,
+    request: SyncArtifactUpdateRequest,
+    auth_context: Annotated[AuthContext, Depends(get_auth_context)],
+    sync_service: Annotated[SyncService, Depends(get_sync_service)],
+) -> dict[str, object]:
+    session = await sync_service.update_session_artifact(
+        session_id,
+        artifact=request.artifact,
+        status=request.status,
+        summary=request.summary,
+        message=request.message,
+        user_id=auth_context.user_id,
+    )
+    if session is None:
+        raise HTTPException(status_code=404, detail="session not found")
+    return ApiResponse.success(session).model_dump()
 
 
 @router.post(

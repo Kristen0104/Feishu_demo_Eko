@@ -345,6 +345,44 @@ class SyncService:
             return
         await self._manager.update_session(session_id, artifact=artifact)
 
+    async def update_session_artifact(
+        self,
+        session_id: str,
+        *,
+        artifact: dict[str, Any],
+        status: str | None = None,
+        summary: str | None = None,
+        message: str | None = None,
+        user_id: str | None = None,
+    ) -> SyncSessionSchema | None:
+        session = await self._manager.get_session(session_id, user_id=user_id)
+        if session is None:
+            return None
+        next_artifact = dict(session.artifact or {})
+        next_artifact.update(artifact)
+        intent = str(next_artifact.get("intent") or session.intent or next_artifact.get("kind") or "")
+        next_summary = summary or message or session.summary
+        await self._manager.update_session(
+            session_id,
+            status=status or session.status,
+            summary=next_summary,
+            intent=intent or session.intent,
+            artifact=next_artifact,
+        )
+        await self.emit(
+            session_id,
+            {
+                "type": "ARTIFACT_UPDATED",
+                "session_id": session_id,
+                "payload": {
+                    "artifact": next_artifact,
+                    "status": status or session.status,
+                    "message": message or "Artifact updated.",
+                },
+            },
+        )
+        return await self.get_session(session_id, user_id=user_id)
+
     def _to_schema(self, record: SessionRecord | None, *, compact_artifact: bool = False) -> SyncSessionSchema:
         if record is None:  # pragma: no cover - defensive guard
             raise ValueError("session record is missing")

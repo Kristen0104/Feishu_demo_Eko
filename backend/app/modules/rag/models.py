@@ -29,6 +29,7 @@ class RagFile(Base):
     status: Mapped[str | None] = mapped_column(String(32), default="indexed", nullable=True)
     source: Mapped[str] = mapped_column(String(1024), nullable=False, index=True)
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    raw_content: Mapped[str | None] = mapped_column(Text, nullable=True)
     file_metadata: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False)

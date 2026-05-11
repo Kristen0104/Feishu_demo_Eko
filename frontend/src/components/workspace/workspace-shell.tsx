@@ -9,9 +9,13 @@ import { resolveWorkspaceBreadcrumb } from "@/lib/workspace-breadcrumb";
 import { resolveWorkspaceNav } from "@/lib/workspace-nav";
 import type { SessionListPageData } from "@/types/session";
 
-/** 会话详情页由内层三栏自己管理滚动；其余工作台页面在主内容区纵向滚动 */
+/** 会话详情页和知识管理页由内层分栏自己管理滚动；其余工作台页面在主内容区纵向滚动 */
 function isSessionDetailRoute(pathname: string) {
   return /^\/sessions\/[^/]+$/.test(pathname);
+}
+
+function usesInnerScrollLayout(pathname: string) {
+  return isSessionDetailRoute(pathname) || pathname.startsWith("/knowledge");
 }
 
 export function WorkspaceShell({
@@ -24,7 +28,7 @@ export function WorkspaceShell({
   const pathname = usePathname() ?? "";
   const { activeNav } = resolveWorkspaceNav(pathname);
   const breadcrumb = resolveWorkspaceBreadcrumb(pathname);
-  const clipInnerLayout = isSessionDetailRoute(pathname);
+  const clipInnerLayout = usesInnerScrollLayout(pathname);
   const contentKey = pathname.startsWith("/profile") ? `profile:${pathname}` : "workspace-content";
 
   return (

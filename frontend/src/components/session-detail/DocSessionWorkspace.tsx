@@ -13,7 +13,7 @@ import { Stepper } from "@/components/Stepper";
 import { EvidencePill, HeaderBadge, StatusPill } from "@/components/UiPrimitives";
 import { useEkoSessionRealtime } from "@/hooks/useEkoSessionRealtime";
 import { apiUrl, fetchEkoJson } from "@/lib/eko-api";
-import { fetchSyncSession } from "@/lib/sync/fetch-session";
+import { fetchSyncSession, type SyncSession } from "@/lib/sync/fetch-session";
 import { streamAgentChat, type AgentChatStreamEvent } from "@/lib/agent/sse-stream";
 import { useAppStore } from "@/store/app-store";
 import { useAgentRuntimeStore, type PlanningPlanWire, type PlanningStepWire, type RetrievedSourceWire } from "@/store/agent-runtime-store";
@@ -424,6 +424,10 @@ type BoardImagePreview = {
   preview_url: string;
 };
 
+type ArtifactSaveState = "idle" | "dirty" | "saving" | "saved" | "confirmed" | "failed";
+
+type SyncArtifactUpdateWire = SyncSession;
+
 type DocumentAutoSyncWire = {
   session_id: string;
   status: "completed" | "failed" | string;
@@ -582,8 +586,11 @@ function ArtifactPresenter({
   streaming = false,
   editable = false,
   onMarkdownChange,
-  autoSyncState = "idle",
-  autoSyncError,
+  saveState = "idle",
+  saveError,
+  onSaveDraft,
+  onCancelEdit,
+  onConfirmArtifact,
 }: {
   artifact?: SessionDetailData["artifact"];
   sessionId: string;
@@ -592,8 +599,11 @@ function ArtifactPresenter({
   streaming?: boolean;
   editable?: boolean;
   onMarkdownChange?: (nextMarkdown: string) => void;
-  autoSyncState?: DocumentAutoSyncState;
-  autoSyncError?: string | null;
+  saveState?: ArtifactSaveState;
+  saveError?: string | null;
+  onSaveDraft?: () => void;
+  onCancelEdit?: () => void;
+  onConfirmArtifact?: () => void;
 }) {
   const kind = normalizeArtifactKind(artifact);
   const state = normalizeArtifactState(artifact?.status);
@@ -644,6 +654,29 @@ function ArtifactPresenter({
   const docEditorHeight = Math.min(2400, Math.max(560, docMarkdown.split(/\r?\n/).length * 28 + 120));
   const canEditDocument = kind === "docx" && editable && !streaming;
   const isDocEditorOpen = canEditDocument && isDocEditing;
+  const autoSyncState =
+    saveState === "dirty" ? "dirty" : saveState === "saving" ? "syncing" : saveState === "failed" ? "failed" : saveState === "idle" ? "idle" : "synced";
+  const autoSyncError = saveError;
+  const saveLabel =
+    saveState === "dirty"
+      ? "未保存"
+      : saveState === "saving"
+        ? "保存中"
+        : saveState === "saved"
+          ? "已保存草稿"
+          : saveState === "confirmed"
+            ? "已确认"
+            : saveState === "failed"
+              ? "保存失败"
+              : "";
+  const saveClass =
+    saveState === "failed"
+      ? "border-rose-200 bg-rose-50 text-rose-600"
+      : saveState === "confirmed"
+        ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+        : saveState === "saved" || saveState === "saving"
+          ? "border-blue-200 bg-blue-50 text-blue-700"
+          : "border-amber-200 bg-amber-50 text-amber-700";
   const autoSyncLabel =
     autoSyncState === "dirty"
       ? "待自动同步"
@@ -994,7 +1027,12 @@ function ArtifactPresenter({
               </p>
             </div>
             <div className="flex shrink-0 items-center gap-2">
-              {kind === "docx" && autoSyncLabel ? (
+              {kind === "docx" && saveLabel ? (
+                <span className={`inline-flex h-8 items-center justify-center rounded-[10px] border px-2.5 text-[12px] font-semibold ${saveClass}`} title={saveError || saveLabel}>
+                  {saveLabel}
+                </span>
+              ) : null}
+              {kind === "docx" && autoSyncLabel && false ? (
                 <span className={`inline-flex h-8 items-center justify-center rounded-[10px] border px-2.5 text-[12px] font-semibold ${autoSyncClass}`} title={autoSyncError || autoSyncLabel}>
                   {autoSyncLabel}
                 </span>
@@ -1012,6 +1050,21 @@ function ArtifactPresenter({
               {kind === "docx" ? (
                 <button type="button" onClick={handleSaveDoc} className="inline-flex h-8 items-center justify-center rounded-[10px] border border-slate-200 bg-white px-2.5 text-[12px] font-semibold text-slate-600 hover:border-blue-200 hover:text-blue-600">
                   下载文档
+                </button>
+              ) : null}
+              {canEditDocument && isDocEditorOpen ? (
+                <>
+                  <button type="button" onClick={onCancelEdit} disabled={saveState === "saving"} className="inline-flex h-8 items-center justify-center rounded-[10px] border border-slate-200 bg-white px-2.5 text-[12px] font-semibold text-slate-600 hover:border-blue-200 hover:text-blue-600 disabled:opacity-50">
+                    取消
+                  </button>
+                  <button type="button" onClick={onSaveDraft} disabled={saveState === "saving" || saveState === "idle"} className="inline-flex h-8 items-center justify-center rounded-[10px] border border-blue-200 bg-blue-50 px-2.5 text-[12px] font-semibold text-blue-700 hover:bg-blue-100 disabled:opacity-50">
+                    保存草稿
+                  </button>
+                </>
+              ) : null}
+              {canEditDocument ? (
+                <button type="button" onClick={onConfirmArtifact} disabled={saveState === "saving"} className="inline-flex h-8 items-center justify-center rounded-[10px] border border-emerald-200 bg-emerald-50 px-2.5 text-[12px] font-semibold text-emerald-700 hover:bg-emerald-100 disabled:opacity-50">
+                  确认产物
                 </button>
               ) : null}
               {canEditDocument ? (
@@ -1314,6 +1367,8 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
   const [manualDocumentMarkdown, setManualDocumentMarkdown] = useState<string | null>(null);
   const [docAutoSyncState, setDocAutoSyncState] = useState<DocumentAutoSyncState>("idle");
   const [docAutoSyncError, setDocAutoSyncError] = useState<string | null>(null);
+  const [docSaveState, setDocSaveState] = useState<ArtifactSaveState>("idle");
+  const [docSaveError, setDocSaveError] = useState<string | null>(null);
   const docAutoSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const docAutoSyncAbortRef = useRef<AbortController | null>(null);
   const docAutoSyncSeqRef = useRef(0);
@@ -1431,8 +1486,10 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
         setManualDocumentMarkdown(null);
         if (normalizedArtifact.status === "completed" || normalizedArtifact.status === "done" || normalizedArtifact.status === "已同步") {
           setDocAutoSyncState("synced");
+          setDocSaveState("idle");
         }
         setDocAutoSyncError(null);
+        setDocSaveError(null);
       }
       return;
     }
@@ -1544,6 +1601,8 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
         setManualDocumentMarkdown(null);
         setDocAutoSyncState("idle");
         setDocAutoSyncError(null);
+        setDocSaveState("idle");
+        setDocSaveError(null);
       }
     }
   }, [data.artifact, localArtifact]);
@@ -1560,7 +1619,10 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
   const handleManualDocumentChange = useCallback(
     (nextMarkdown: string) => {
       setManualDocumentMarkdown(nextMarkdown);
+      setDocSaveState(nextMarkdown.trim() ? "dirty" : "idle");
+      setDocSaveError(null);
       setDocAutoSyncError(null);
+      return;
       if (!nextMarkdown.trim()) {
         setDocAutoSyncState("idle");
         if (docAutoSyncTimerRef.current) {
@@ -1624,6 +1686,80 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
     },
     [data.document.title, data.id, data.title, resourceArtifact, setRuntimeSessionPatch],
   );
+
+  const persistDocumentArtifact = useCallback(
+    async (nextStatus: "edited" | "confirmed") => {
+      const content = (manualDocumentMarkdown ?? currentDocumentMarkdown).trim();
+      if (!content) {
+        setDocSaveState("failed");
+        setDocSaveError("文档内容不能为空");
+        return;
+      }
+      const title = resourceArtifact?.title || data.document.title || data.title || "Eko 文档";
+      const nextArtifact: DetailDocumentArtifact = {
+        ...(resourceArtifact ?? {}),
+        kind: "docx",
+        title,
+        content,
+        status: nextStatus,
+        currentStep: nextStatus === "confirmed" ? "产物已确认" : "草稿已保存",
+        resultSummary: nextStatus === "confirmed" ? "工具端已确认当前产物。" : "工具端已保存编辑草稿。",
+      };
+
+      setDocSaveState("saving");
+      setDocSaveError(null);
+      try {
+        const session = await fetchEkoJson<SyncArtifactUpdateWire>(`/api/v1/sync/sessions/${encodeURIComponent(data.id)}/artifact`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            artifact: {
+              kind: nextArtifact.kind,
+              intent: nextArtifact.intent,
+              title: nextArtifact.title,
+              content: nextArtifact.content,
+              status: nextArtifact.status,
+              current_step: nextArtifact.currentStep,
+              download_url: nextArtifact.downloadUrl,
+              error_message: nextArtifact.errorMessage,
+              sharing_url: nextArtifact.sharingUrl,
+              whiteboard_id: nextArtifact.whiteboardId,
+              preview_url: nextArtifact.previewUrl,
+              result_summary: nextArtifact.resultSummary,
+              bitable_archive_results: nextArtifact.bitableArchiveResults,
+            },
+            status: nextStatus === "confirmed" ? "已确认" : "已编辑",
+            summary: nextArtifact.resultSummary,
+            message: nextArtifact.resultSummary,
+          }),
+        });
+        const persisted = toDetailArtifact(session.artifact as AgentChatResponseWire["artifact"]);
+        setLocalArtifact(persisted ?? nextArtifact);
+        setManualDocumentMarkdown(null);
+        setDocAutoSyncState("idle");
+        setDocAutoSyncError(null);
+        setDocSaveState(nextStatus === "confirmed" ? "confirmed" : "saved");
+        setRuntimeSessionPatch(data.id, { status: nextStatus === "confirmed" ? "已确认" : "已编辑", updatedAt: "刚刚" });
+      } catch (error) {
+        setDocSaveState("failed");
+        setDocSaveError(error instanceof Error ? error.message : "保存产物失败");
+      }
+    },
+    [currentDocumentMarkdown, data.document.title, data.id, data.title, manualDocumentMarkdown, resourceArtifact, setRuntimeSessionPatch],
+  );
+
+  const handleSaveDocumentDraft = useCallback(() => {
+    void persistDocumentArtifact("edited");
+  }, [persistDocumentArtifact]);
+
+  const handleConfirmDocumentArtifact = useCallback(() => {
+    void persistDocumentArtifact("confirmed");
+  }, [persistDocumentArtifact]);
+
+  const handleCancelDocumentEdit = useCallback(() => {
+    setManualDocumentMarkdown(null);
+    setDocSaveState("idle");
+    setDocSaveError(null);
+  }, []);
 
   useEffect(() => {
     const status = (localArtifact?.status ?? "").toLowerCase();
@@ -2269,9 +2405,12 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                                     streaming={showDocStream}
                                     editable={resourceKind === "docx" && !showDocStream}
                                     onMarkdownChange={handleManualDocumentChange}
-                                    autoSyncState={docAutoSyncState}
-                                    autoSyncError={docAutoSyncError}
-	                                />
+                                    saveState={docSaveState}
+                                    saveError={docSaveError}
+                                    onSaveDraft={handleSaveDocumentDraft}
+                                    onCancelEdit={handleCancelDocumentEdit}
+                                    onConfirmArtifact={handleConfirmDocumentArtifact}
+  	                                />
                                 {showDocumentSections ? data.document.sections.map((section, secIdx) => (
                                   <section key={`doc-${secIdx}-${section.title}`}>
                                     <h4 className="text-[14px] font-semibold text-slate-950">{section.title}</h4>

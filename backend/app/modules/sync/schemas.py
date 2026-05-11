@@ -58,3 +58,10 @@ class SyncContextSelectionRequest(BaseModel):
     start_index: int = Field(ge=0)
     end_index: int = Field(ge=0)
     skip_context: bool = False
+
+
+class SyncArtifactUpdateRequest(BaseModel):
+    artifact: dict[str, Any]
+    status: str | None = None
+    summary: str | None = None
+    message: str | None = None
