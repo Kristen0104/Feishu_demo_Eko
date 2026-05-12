@@ -38,6 +38,13 @@ import { DetailConversationMessage } from "./DetailConversationMessage";
 import { detailDesignTokens } from "./designTokens";
 
 type AgentEventChannel = "chat" | "status" | "plan" | "sources" | "artifact" | "log" | "error";
+type MobileDetailTab = "chat" | "output" | "context";
+
+const MOBILE_DETAIL_TABS: Array<{ key: MobileDetailTab; label: string }> = [
+  { key: "chat", label: "对话" },
+  { key: "output", label: "输出" },
+  { key: "context", label: "上下文" },
+];
 
 function inferAgentEventChannel(event: {
   event?: string | null;
@@ -1319,6 +1326,7 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
   const conversationOpen = useAppStore((s) => s.sessionDetailChatOpen);
   const agentSlice = useAgentRuntimeStore((s) => s.sessions[data.id]);
   const [activeTab, setActiveTab] = useState<DetailTabKey>(data.defaultTab);
+  const [mobileTab, setMobileTab] = useState<MobileDetailTab>("output");
   const [messages, setMessages] = useState(data.messages);
   const selfAuthor = useMemo(() => {
     const counts = new Map<string, number>();
@@ -1615,6 +1623,13 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
     resourceKind === "board" ? "canvas" : resourceKind === "ppt" || resourceKind === "docx" || showDocStream ? "doc" : null;
   const workspaceExpanded = resourceTab !== null;
   const displayTab = resourceTab ?? activeTab;
+
+  useEffect(() => {
+    if (!workspaceExpanded && mobileTab === "output") {
+      setMobileTab("chat");
+    }
+  }, [mobileTab, workspaceExpanded]);
+
   const mergedWorkflow = useMemo(
     () => mergeWorkflowSteps(data.workflow, plannerEnabled ? agentSlice?.planningSteps ?? [] : [], resourceKind, phase, detailArtifact?.status),
     [agentSlice?.planningSteps, data.workflow, detailArtifact?.status, phase, plannerEnabled, resourceKind],
@@ -2277,19 +2292,42 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
   return (
     <div className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden overflow-x-hidden bg-[#FAFBFC] text-slate-900">
       <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
-        <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-5 pb-5 pt-2 sm:px-6 sm:pb-6 sm:pt-3">
-          <div className="flex h-full min-h-0 min-w-0 gap-4 overflow-hidden lg:gap-5">
+        <section className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-3 pb-3 pt-2 sm:px-4 lg:px-5 lg:pb-5 lg:pt-2 xl:px-6 xl:pb-6 xl:pt-3">
+          <div className="shrink-0 border-b border-slate-200 bg-white/95 px-1 py-2 backdrop-blur lg:hidden">
+            <div className="grid grid-cols-3 rounded-[12px] bg-slate-100 p-1">
+              {MOBILE_DETAIL_TABS.map((tab) => {
+                const active = mobileTab === tab.key;
+                return (
+                  <button
+                    key={tab.key}
+                    type="button"
+                    onClick={() => setMobileTab(tab.key)}
+                    className={[
+                      "h-9 rounded-[10px] text-[13px] font-semibold transition",
+                      active ? "bg-white text-blue-600 shadow-[0_4px_12px_rgba(15,23,42,0.08)]" : "text-slate-500",
+                    ].join(" ")}
+                  >
+                    {tab.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <div className="flex min-h-0 min-w-0 flex-1 gap-0 overflow-hidden lg:gap-5">
               <div
                 className={[
-                  "min-h-0 overflow-hidden transition-[width,opacity,transform] duration-300 ease-out",
+                  "min-h-0 w-full flex-1 transition-[width,opacity,transform] duration-300 ease-out",
+                  "overflow-y-auto overflow-x-hidden lg:overflow-hidden",
+                  mobileTab === "chat" ? "flex" : "hidden",
+                  "lg:block",
                   workspaceExpanded
                     ? conversationOpen
-                      ? "w-[260px] opacity-100"
-                      : "pointer-events-none w-0 -translate-x-4 opacity-0"
-                    : "w-full flex-1 opacity-100",
+                      ? "lg:w-[260px] lg:flex-none lg:opacity-100"
+                      : "lg:pointer-events-none lg:w-0 lg:flex-none lg:-translate-x-4 lg:opacity-0"
+                    : "lg:w-full lg:flex-1 lg:opacity-100",
                 ].join(" ")}
               >
-                <section className="flex h-full min-h-0 flex-col overflow-hidden rounded-[28px] border border-slate-200/90 bg-white px-5 py-4 shadow-[0_14px_32px_rgba(148,163,184,0.08)]">
+                <section className="flex h-full min-h-0 w-full flex-col overflow-hidden rounded-[18px] border border-slate-200/90 bg-white px-3 py-3 shadow-[0_14px_32px_rgba(148,163,184,0.08)] sm:px-4 lg:rounded-[28px] lg:px-5 lg:py-4">
                     <div className="flex items-center justify-between">
                     <h2 className="text-[17px] font-semibold text-slate-950">{data.conversationTitle}</h2>
                     <div className="flex items-center gap-1.5">
@@ -2435,9 +2473,15 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
               </div>
 
               {workspaceExpanded ? (
-                <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
+                <div
+                  className={[
+                    "min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden lg:overflow-hidden",
+                    mobileTab === "output" ? "flex" : "hidden",
+                    "lg:flex",
+                  ].join(" ")}
+                >
                     <section className="min-h-0 flex flex-1 flex-col overflow-hidden rounded-[18px] border border-slate-200 bg-white shadow-[0_10px_22px_rgba(148,163,184,0.05)]">
-                      <div className="shrink-0 border-b border-slate-100 bg-white px-3 py-1">
+                      <div className="shrink-0 border-b border-slate-100 bg-white px-2 py-1 sm:px-3">
                           <div className="flex min-h-[70px] min-w-0 flex-col overflow-hidden rounded-[14px] border border-slate-200 bg-white px-3 py-1.5 shadow-[0_4px_12px_rgba(15,23,42,0.03)]">
                             <div className="flex shrink-0 items-center justify-between gap-3">
                               <AgentRealtimeRibbon phase={phase} wsStatus={wsStatus} useMockFallback={useMockFb} />
@@ -2682,7 +2726,13 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                 </div>
               ) : null}
 
-              <aside className="min-h-0 w-[250px] shrink-0 space-y-3 overflow-y-auto pr-1 lg:w-[270px]">
+              <aside
+                className={[
+                  "min-h-0 w-full min-w-0 shrink-0 space-y-3 overflow-y-auto overflow-x-hidden pr-0",
+                  mobileTab === "context" ? "block" : "hidden",
+                  "lg:block lg:w-[270px] lg:pr-1",
+                ].join(" ")}
+              >
                     {isCanvasMode ? (
                       <>
                         <SectionCard title="上下文与同步" action={<MoreIcon />}>

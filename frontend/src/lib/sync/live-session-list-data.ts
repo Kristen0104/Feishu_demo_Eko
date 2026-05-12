@@ -158,10 +158,17 @@ function groupSessions(sessions: SyncSession[]): SessionSection[] {
 }
 
 async function fetchSyncSessions(): Promise<SyncSession[]> {
+  if (!process.env.BACKEND_PROXY?.trim() && !process.env.NEXT_PUBLIC_EKO_API_BASE?.trim()) {
+    return [];
+  }
+
   const origin = getBackendOrigin();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 1800);
   try {
     const response = await fetch(`${origin}/api/v1/sync/sessions`, {
       cache: "no-store",
+      signal: controller.signal,
     });
     const body = (await response.json().catch(() => null)) as { code?: number; data?: SyncSession[] } | null;
     if (!response.ok || !body || body.code !== 0 || !Array.isArray(body.data)) {
@@ -170,6 +177,8 @@ async function fetchSyncSessions(): Promise<SyncSession[]> {
     return body.data;
   } catch {
     return [];
+  } finally {
+    clearTimeout(timeout);
   }
 }
 

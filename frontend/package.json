@@ -5,10 +5,8 @@
   "scripts": {
     "predev": "node scripts/clean-next-cache.mjs && node scripts/free-dev-port.mjs",
     "dev": "WATCHPACK_POLLING=true next dev --webpack -p 3002",
-    "dev:unlock": "rm -rf .next/dev",
-    "dev:3000": "WATCHPACK_POLLING=true next dev --webpack -p 3000",
     "build": "rm -f tsconfig.tsbuildinfo && next build",
-    "start": "next start",
+    "start": "next start -p 3002",
     "lint": "eslint . --ext .js,.jsx,.ts,.tsx"
   },
   "dependencies": {

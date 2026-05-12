@@ -29,11 +29,11 @@ export function WorkspaceShell({
 
   return (
     <WorkspaceChrome data={data} breadcrumb={breadcrumb} activeNav={activeNav}>
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-white">
+      <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-white">
         <div
           key={contentKey}
           className={cn(
-            "min-h-0 flex-1",
+            "h-full min-h-0 flex-1",
             clipInnerLayout ? "overflow-hidden" : "overflow-y-auto overflow-x-hidden overscroll-contain",
           )}
         >

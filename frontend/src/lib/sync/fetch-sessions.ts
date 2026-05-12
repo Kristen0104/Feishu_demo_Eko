@@ -45,20 +45,25 @@ export type SyncSession = {
 
 export async function fetchSyncSessions(): Promise<SyncSession[]> {
   const base = getApiBaseUrl();
-  const path = "/api/v1/sync/sessions";
-  const url = base ? `${base}${path}` : path;
+  if (!base) return [];
 
+  const path = "/api/v1/sync/sessions";
+  const url = `${base}${path}`;
   const headers: Record<string, string> = {};
   const token = readAccessToken();
   if (token) headers.Authorization = `Bearer ${token}`;
 
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 1800);
   try {
-    const res = await fetch(url, { headers, cache: "no-store" });
+    const res = await fetch(url, { headers, cache: "no-store", signal: controller.signal });
     if (!res.ok) return [];
     const json = (await res.json()) as { code?: number; data?: SyncSession[] };
     if (json.code !== 0 || !Array.isArray(json.data)) return [];
     return json.data;
   } catch {
     return [];
+  } finally {
+    window.clearTimeout(timeout);
   }
 }

@@ -26,7 +26,7 @@ export function AuthBootstrap() {
 
         queueMicrotask(() => {
           const token = readAccessToken();
-          if (!token) return;
+          if (!token || token === "mock-demo-access-token") return;
           void fetch(apiUrl("/api/v1/auth/me"), { headers: { Authorization: `Bearer ${token}` } })
             .then((res) => {
               if (res.status === 401) {

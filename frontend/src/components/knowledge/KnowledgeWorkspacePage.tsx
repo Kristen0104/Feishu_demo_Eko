@@ -147,11 +147,11 @@ export function KnowledgeWorkspacePage() {
   }
 
   return (
-    <main className="min-h-0 flex-1 overflow-y-auto bg-[#F8F9FA] px-6 py-6">
+    <main className="min-h-0 flex-1 overflow-y-auto bg-[#F8F9FA] px-3 py-4 sm:px-5 lg:px-6 lg:py-6">
       <div className="mx-auto flex w-full max-w-[1180px] flex-col gap-5">
         <BitableSourcesPanel />
 
-        <section className="rounded-[16px] border border-slate-200 bg-white p-5 shadow-[0_12px_30px_rgba(15,23,42,0.04)]">
+        <section className="rounded-[16px] border border-slate-200 bg-white p-3 shadow-[0_12px_30px_rgba(15,23,42,0.04)] sm:p-5">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div className="min-w-0">
               <h1 className="text-[22px] font-semibold text-slate-950">知识库导入</h1>
@@ -162,7 +162,7 @@ export function KnowledgeWorkspacePage() {
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              className="inline-flex h-10 shrink-0 items-center justify-center rounded-[12px] bg-blue-600 px-4 text-[13px] font-semibold text-white shadow-sm transition hover:bg-blue-700"
+              className="inline-flex h-10 w-full shrink-0 items-center justify-center rounded-[12px] bg-blue-600 px-4 text-[13px] font-semibold text-white shadow-sm transition hover:bg-blue-700 sm:w-auto"
             >
               选择文件
             </button>
@@ -189,7 +189,7 @@ export function KnowledgeWorkspacePage() {
                       type="button"
                       onClick={handleIngest}
                       disabled={submitting || !selectedFileSupported}
-                      className="inline-flex h-9 shrink-0 items-center rounded-[11px] bg-slate-950 px-3 text-[12px] font-semibold text-white disabled:bg-slate-300"
+                      className="inline-flex h-9 shrink-0 items-center justify-center rounded-[11px] bg-slate-950 px-3 text-[12px] font-semibold text-white disabled:bg-slate-300"
                     >
                       {submitting ? "导入中..." : "导入 RAG"}
                     </button>
@@ -241,7 +241,7 @@ export function KnowledgeWorkspacePage() {
           {notice ? <p className="mt-4 text-[13px] text-slate-600">{notice}</p> : null}
         </section>
 
-        <section className="rounded-[16px] border border-slate-200 bg-white p-5 shadow-[0_12px_30px_rgba(15,23,42,0.04)]">
+        <section className="rounded-[16px] border border-slate-200 bg-white p-3 shadow-[0_12px_30px_rgba(15,23,42,0.04)] sm:p-5">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
             <input
               value={query}
@@ -253,7 +253,7 @@ export function KnowledgeWorkspacePage() {
               type="button"
               onClick={() => void handleSearch()}
               disabled={searching || !query.trim()}
-              className="inline-flex h-10 shrink-0 items-center justify-center rounded-[12px] bg-blue-600 px-4 text-[13px] font-semibold text-white disabled:bg-slate-300"
+              className="inline-flex h-10 w-full shrink-0 items-center justify-center rounded-[12px] bg-blue-600 px-4 text-[13px] font-semibold text-white disabled:bg-slate-300 sm:w-auto"
             >
               {searching ? "检索中..." : "测试检索"}
             </button>

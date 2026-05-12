@@ -97,7 +97,7 @@ function SessionInviteToast() {
   if (!visible || !firstInvite) return null;
 
   return (
-    <div className="absolute right-5 top-[86px] z-50 w-[330px] rounded-[18px] border border-slate-200 bg-white p-4 shadow-[0_22px_60px_rgba(15,23,42,0.18)]">
+    <div className="absolute right-5 top-[86px] z-50 hidden w-[330px] rounded-[18px] border border-slate-200 bg-white p-4 shadow-[0_22px_60px_rgba(15,23,42,0.18)] lg:block">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-[13px] font-semibold text-blue-600">新的会话协作邀请</p>
@@ -160,6 +160,8 @@ export function WorkspaceTopBar({
   const { query: sessionSearchQuery, setQuery: setSessionSearchQuery } = useSessionWorkspaceSearch();
   const searchInputId = useId();
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const currentBreadcrumb = breadcrumb.find((segment) => segment.current) ?? breadcrumb[breadcrumb.length - 1];
+  const mobileTitle = currentBreadcrumb?.label ?? "工作台";
 
   useEffect(() => {
     if (!isSessionDetail) return;
@@ -174,14 +176,15 @@ export function WorkspaceTopBar({
   }, [isSessionDetail]);
 
   return (
-    <div className="flex h-[72px] shrink-0 items-center justify-between border-b border-slate-200/90 px-6">
-      <div className="flex min-w-0 items-center gap-5">
-        <Link href="/home" prefetch={false} className="flex items-center gap-3 rounded-xl outline-none ring-offset-2 focus-visible:ring-2 focus-visible:ring-blue-500">
-          <div className="flex h-10 w-10 items-center justify-center rounded-[14px] bg-blue-600 text-[21px] font-bold text-white shadow-[0_8px_20px_rgba(37,99,235,0.22)]">
+    <div className="flex h-14 shrink-0 items-center justify-between border-b border-slate-200/90 px-3 lg:h-[72px] lg:px-6">
+      <div className="flex min-w-0 items-center gap-2.5 lg:gap-5">
+        <Link href="/home" prefetch={false} className="flex items-center gap-2 rounded-xl outline-none ring-offset-2 focus-visible:ring-2 focus-visible:ring-blue-500 lg:gap-3">
+          <div className="flex h-9 w-9 items-center justify-center rounded-[12px] bg-blue-600 text-[19px] font-bold text-white shadow-[0_8px_20px_rgba(37,99,235,0.22)] lg:h-10 lg:w-10 lg:rounded-[14px] lg:text-[21px]">
             e
           </div>
-          <span className="text-[16px] font-semibold tracking-[-0.04em] text-slate-950">Eko</span>
+          <span className="hidden text-[16px] font-semibold tracking-[-0.04em] text-slate-950 sm:inline">Eko</span>
         </Link>
+        <span className="min-w-0 truncate text-[15px] font-semibold text-slate-800 lg:hidden">{mobileTitle}</span>
         <nav className="hidden min-w-0 items-center gap-1.5 text-[14px] xl:flex" aria-label="面包屑">
           {breadcrumb.map((segment, index) => (
             <span key={`${segment.label}-${index}`} className="flex min-w-0 items-center gap-1.5">
@@ -209,7 +212,7 @@ export function WorkspaceTopBar({
           ))}
         </nav>
       </div>
-      <div className="flex min-w-0 flex-1 items-center justify-end gap-3 pl-3">
+      <div className="flex min-w-0 flex-1 items-center justify-end gap-2 pl-2 lg:gap-3 lg:pl-3">
         {isSessionDetail ? (
           <label
             htmlFor={searchInputId}
@@ -266,7 +269,7 @@ export function WorkspaceTopBar({
         <Link
           href="/settings"
           prefetch={false}
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white shadow-[0_4px_12px_rgba(15,23,42,0.03)]"
+          className="hidden h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white shadow-[0_4px_12px_rgba(15,23,42,0.03)] lg:flex"
           aria-label="帮助"
         >
           <HelpIcon />
@@ -274,7 +277,7 @@ export function WorkspaceTopBar({
         <Link
           href="/profile/notifications"
           prefetch={false}
-          className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white shadow-[0_4px_12px_rgba(15,23,42,0.03)]"
+          className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white shadow-[0_4px_12px_rgba(15,23,42,0.03)] lg:h-10 lg:w-10"
           aria-label="通知"
         >
           <BellIcon />
@@ -285,7 +288,7 @@ export function WorkspaceTopBar({
         <Link
           href="/profile"
           prefetch={false}
-          className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-slate-100 text-[14px] font-semibold text-slate-700 shadow-[0_4px_12px_rgba(15,23,42,0.03)] outline-none ring-offset-2 transition hover:bg-slate-200/90 hover:ring-2 hover:ring-blue-400/40 focus-visible:ring-2 focus-visible:ring-blue-500"
+          className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-100 text-[13px] font-semibold text-slate-700 shadow-[0_4px_12px_rgba(15,23,42,0.03)] outline-none ring-offset-2 transition hover:bg-slate-200/90 hover:ring-2 hover:ring-blue-400/40 focus-visible:ring-2 focus-visible:ring-blue-500 lg:h-11 lg:w-11 lg:text-[14px]"
           aria-label="打开个人资料"
         >
           {userInitials}
@@ -400,6 +403,40 @@ const NAV_ROW: Array<{
   { label: "设置", href: "/settings", key: "settings", icon: "settings" },
 ];
 
+const MOBILE_NAV_ROW = NAV_ROW.filter(({ key }) =>
+  ["home", "sessions", "documents", "knowledge", "settings"].includes(key),
+);
+
+function MobileWorkspaceNav({ activeNav }: { activeNav: WorkspaceNavKey }) {
+  return (
+    <nav
+      className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white/95 px-2 pb-[env(safe-area-inset-bottom)] pt-1 shadow-[0_-10px_30px_rgba(15,23,42,0.08)] backdrop-blur lg:hidden"
+      aria-label="移动端主导航"
+    >
+      <div className="mx-auto grid h-[60px] max-w-[520px] grid-cols-5 items-center gap-1">
+        {MOBILE_NAV_ROW.map(({ label, href, key, icon }) => {
+          const active = activeNav === key;
+          return (
+            <Link
+              key={key}
+              href={href}
+              prefetch={false}
+              className={cn(
+                "flex min-w-0 flex-col items-center justify-center gap-0.5 rounded-[12px] px-1 py-1.5 text-[11px] font-medium transition-colors",
+                active ? "bg-blue-50 text-blue-600" : "text-slate-500 active:bg-slate-100",
+              )}
+              aria-current={active ? "page" : undefined}
+            >
+              <NavIcon type={icon} active={active} />
+              <span className="max-w-full truncate leading-tight">{label}</span>
+            </Link>
+          );
+        })}
+      </div>
+    </nav>
+  );
+}
+
 function WorkspaceSidebar({
   data,
   activeNav,
@@ -413,7 +450,7 @@ function WorkspaceSidebar({
   const isSessionDetailRoute = /^\/sessions\/[^/]+$/.test(pathname);
 
   return (
-    <aside className="flex w-[188px] shrink-0 flex-col justify-between border-r border-slate-200/90 bg-[#F8F9FA] px-3 py-4">
+    <aside className="hidden w-[188px] shrink-0 flex-col justify-between border-r border-slate-200/90 bg-[#F8F9FA] px-3 py-4 lg:flex">
       <nav className="space-y-1" aria-label="主导航">
         {NAV_ROW.map(({ label, href, key, icon }) => {
           const active = activeNav === key;
@@ -497,8 +534,8 @@ export function WorkspaceChrome({
 }) {
   return (
     <SessionWorkspaceSearchProvider>
-      <main className="h-screen overflow-hidden overflow-x-hidden bg-[radial-gradient(circle_at_top,#EDF4FF_0%,#F5F8FD_45%,#EEF3FF_100%)] p-5 text-slate-900">
-        <div className="relative mx-auto flex h-[calc(100vh-40px)] min-w-0 max-w-[1680px] flex-col overflow-hidden rounded-[32px] border border-white/70 bg-white/70 shadow-[0_28px_72px_rgba(148,163,184,0.18)] backdrop-blur-sm">
+      <main className="h-dvh overflow-hidden overflow-x-hidden bg-[radial-gradient(circle_at_top,#EDF4FF_0%,#F5F8FD_45%,#EEF3FF_100%)] p-0 text-slate-900 lg:h-screen lg:p-5">
+        <div className="relative mx-auto flex h-dvh min-w-0 flex-col overflow-hidden bg-white/70 lg:h-[calc(100vh-40px)] lg:max-w-[1680px] lg:rounded-[32px] lg:border lg:border-white/70 lg:shadow-[0_28px_72px_rgba(148,163,184,0.18)] lg:backdrop-blur-sm">
           <SessionInviteToast />
           <WorkspaceTopBar
             teamName={data.teamName}
@@ -507,10 +544,11 @@ export function WorkspaceChrome({
             breadcrumb={breadcrumb}
           />
 
-          <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
+          <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden pb-[calc(68px+env(safe-area-inset-bottom))] lg:pb-0">
             <WorkspaceSidebar data={data} activeNav={activeNav} />
             {children}
           </div>
+          <MobileWorkspaceNav activeNav={activeNav} />
         </div>
       </main>
     </SessionWorkspaceSearchProvider>
