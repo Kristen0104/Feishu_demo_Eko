@@ -136,45 +136,60 @@ export const workspaceData: WorkspaceData = {
       switcherLabel: "B",
       chatPanelTitle: "聊天面板",
       groupName: "飞书项目群",
-      missionTitle: "会议纪要与执行方案整理",
-      missionDescription: "将刚才的会议讨论整理为结构化纪要与执行方案，方便会后快速确认和归档。",
+      missionTitle: "周会需求排期同步纪要",
+      missionDescription: "将本周项目群的排期同步讨论整理为结构化会议纪要，明确各端进度和上线安排。",
       intentBadge: "文稿",
-      confidence: "91%",
+      confidence: "98%",
       contextQuality: "高",
       messages: [
         {
-          id: "doc-1",
-          author: "Ava",
-          role: "member",
-          time: "10:21",
-          body: "我们刚才会里聊的内容有点散，我想把重点结论和执行分工整理清楚。",
-          avatar: "A",
+          "id": "chat_001",
+          "author": "刘明（产品）",
+          "role": "member",
+          "time": "09:12",
+          "body": "大家早上好，今天同步一下本周的需求排期哈",
+          "avatar": "刘"
         },
         {
-          id: "doc-2",
-          author: "Ava",
-          role: "member",
-          time: "10:22",
-          body: "你能帮我整理下刚才会议讨论的纪要吗？顺便提炼成可执行的方案结构。",
-          mention: "@Eko",
-          avatar: "A",
+          "id": "chat_005",
+          "author": "刘明（产品）",
+          "role": "member",
+          "time": "09:15",
+          "body": "本周重点是用户中心2.0的上线，现在各端进度怎么样了？",
+          "avatar": "刘"
         },
         {
-          id: "doc-3",
-          author: "Eko",
-          role: "eko",
-          time: "10:24",
-          body: "已收到会议纪要整理请求。我会把群聊和会中结论整理为结构化纪要，并补充执行方案、风险提示和下一步动作。",
-          avatar: "E",
+          "id": "chat_006",
+          "author": "张雯（设计）",
+          "role": "member",
+          "time": "09:16",
+          "body": "设计这边已经全部完成了，原型和UI稿都上传到Figma了，链接在群公告里，有问题随时找我",
+          "avatar": "张"
         },
         {
-          id: "doc-4",
-          author: "Ava",
-          role: "member",
-          time: "10:24",
-          body: "好，整理好后先同步给我，等下发给老师和组员确认。",
-          avatar: "A",
+          "id": "chat_007",
+          "author": "李军（后端）",
+          "role": "member",
+          "time": "09:17",
+          "body": "后端接口开发完了，今天上午在做单元测试，下午可以提测",
+          "avatar": "李"
         },
+        {
+          "id": "chat_008",
+          "author": "王浩（前端）",
+          "role": "member",
+          "time": "09:18",
+          "body": "前端页面开发了80%，剩下的个人中心设置页今天能做完，明天可以和后端联调",
+          "avatar": "王"
+        },
+        {
+          "id": "chat_020",
+          "author": "刘明（产品）",
+          "role": "member",
+          "time": "09:35",
+          "body": "好的，那今天的同步就到这里，大家有问题随时在群里说哈",
+          "avatar": "刘"
+        }
       ],
       workflow: [
         { id: "1", title: "分析消息上下文", status: "completed" },
@@ -186,56 +201,62 @@ export const workspaceData: WorkspaceData = {
       ],
       output: {
         kind: "doc",
-        title: "会议纪要与方案预览",
-        description: "结构化纪要与方案已整理成文档预览，便于快速确认、修改和同步。",
-        badge: "文稿格式",
-        documentTitle: "校园项目会议纪要与运营方案梳理",
+        title: "周会排期同步纪要",
+        description: "基于2026年5月12日项目群聊天记录生成的结构化会议纪要，明确各端进度和上线安排。",
+        badge: "会议纪要",
+        documentTitle: "用户中心2.0上线排期同步会议纪要",
         sections: [
           {
-            title: "摘要",
-            body:
-              "基于群聊讨论，本轮运营目标聚焦在“提高活动到场率”和“沉淀可复用优化策略”。当前阶段以飞书群沟通为主，由此提炼出目标、拆解执行路径与协作机制。",
+            title: "会议概览",
+            body: "本次会议于2026年5月12日上午9:12在项目群召开，由产品经理刘明主持，设计、前端、后端负责人参会，主要同步用户中心2.0版本上线进度及本周工作安排。"
           },
           {
-            title: "策略拆解",
+            title: "各端进度汇报",
             bullets: [
-              "会议结论：优先提升活动到场率，并同步优化老师、学生两类触达话术。",
-              "执行路径：通过群内提醒、私信跟进和报名进度反馈降低流失。",
-              "会后安排：活动结束后统一回收反馈，并沉淀可复用复盘素材。",
-            ],
+              "设计端：原型和UI稿已全部完成并上传至Figma，链接已发布在群公告，可随时查阅",
+              "后端：接口开发全部完成，今日上午进行单元测试，下午可提交测试",
+              "前端：页面开发完成80%，剩余个人中心设置页今日内完成，明日开始与后端联调"
+            ]
           },
           {
-            title: "内容结构",
+            title: "上线时间安排",
             bullets: [
-              "对外统一使用一套活动介绍文案和报名说明。",
-              "对内明确负责人、发布时间、物料版本与会议纪要口径。",
-            ],
+              "周三下午：内部测试",
+              "周四：预发布环境验证",
+              "周五：正式上线",
+              "各端均已确认时间节点可行，无明显风险"
+            ]
           },
           {
-            title: "风险提示",
+            title: "新增需求与优化",
             bullets: [
-              "若物料准备不足，需提前预留替代素材和简版议程。",
-              "若时间冲突较多，可能需要合并沟通并优先同步关键事项。",
-            ],
+              "登录页验证码优化：用户反馈现有验证码体验不佳，设计今日下午输出新版设计稿，前端半天可完成开发，随本次版本一同上线"
+            ]
           },
           {
-            title: "下一步",
-            body:
-              "将会议纪要进一步转为汇报画布，并在多维表格中登记任务负责人和时间节点。",
+            title: "重要通知",
+            bullets: [
+              "周三晚上将进行数据迁移，预计会有15分钟的服务不可用，产品将提前发布公告通知用户",
+              "首页加载慢的bug已由前端修复完成，可进行测试验证"
+            ]
           },
+          {
+            title: "下一步行动",
+            body: "各端按计划推进工作，遇到问题及时在群内沟通，确保用户中心2.0版本按计划顺利上线。"
+          }
         ],
       },
       contextSources: [
         {
           id: "doc-context-1",
           title: "即时消息上下文",
-          description: "已整理触达节奏、素材内容与负责人分工。",
+          description: "已整理项目群20条聊天记录，提取核心进度和安排。",
           status: "completed",
         },
         {
           id: "doc-context-2",
           title: "知识库检索",
-          description: "已加载活动运营手册与过往模板。",
+          description: "已加载会议纪要模板和项目上线流程规范。",
           status: "completed",
         },
         {
@@ -249,19 +270,19 @@ export const workspaceData: WorkspaceData = {
         {
           id: "doc-evidence-1",
           title: "飞书聊天记录",
-          description: "包含会议结论、执行节点与负责人分工讨论。",
+          description: "包含2026年5月12日项目群排期同步完整对话。",
           tone: "chat",
         },
         {
           id: "doc-evidence-2",
           title: "知识库文档",
-          description: "运营方案手册 v2.1。",
+          description: "会议纪要标准模板v3.0。",
           tone: "document",
         },
         {
           id: "doc-evidence-3",
           title: "多维表格记录",
-          description: "最终方案的回写记录待生成。",
+          description: "项目进度记录待同步。",
           tone: "record",
         },
       ],

@@ -34,6 +34,19 @@ export const sessionPageDataMap: Record<string, SessionPageData> = {
       { title: "回流知识库 + 同步 Bitable", state: "pending" }
     ]
   },
+  "weekly-sync-meeting": {
+    id: "weekly-sync-meeting",
+    title: "用户中心2.0上线排期会议",
+    mode: "word",
+    summary: "已识别为会议纪要场景：基于项目群聊天记录生成结构化会议纪要，明确各端进度和上线安排。",
+    sourceNotes: ["来源：飞书项目群对话（2026-05-12）", "来源：项目进度模板", "来源：上线流程规范"],
+    steps: [
+      { title: "意图识别（会议纪要）", state: "done" },
+      { title: "聊天记录解析", state: "done" },
+      { title: "结构化生成", state: "running" },
+      { title: "同步归档", state: "pending" }
+    ]
+  },
   "q2-ads-review": {
     id: "q2-ads-review",
     title: "Q2 广告投放复盘",

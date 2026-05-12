@@ -11,7 +11,7 @@ from tempfile import NamedTemporaryFile
 from typing import Any
 from urllib.parse import urlencode
 
-from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, Header, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -246,6 +246,147 @@ users: dict[str, dict[str, Any]] = {}
 tokens: dict[str, str] = {}
 bitable_sources: dict[str, dict[str, Any]] = {}
 sync_sessions: dict[str, dict[str, Any]] = {}
+
+
+CHAT_WORKFLOW_MESSAGES: list[dict[str, Any]] = [
+    {
+        "role": "member",
+        "sender_name": "刘明（产品）",
+        "timestamp": 1717377120,
+        "content": "大家早上好，今天同步一下本周的需求排期。本周重点是用户中心 2.0 上线，想确认各端进度。",
+    },
+    {
+        "role": "member",
+        "sender_name": "张雯（设计）",
+        "timestamp": 1717377360,
+        "content": "设计这边已经全部完成了，原型和 UI 稿都上传到 Figma，链接在群公告里，有问题随时找我。",
+    },
+    {
+        "role": "member",
+        "sender_name": "李军（后端）",
+        "timestamp": 1717377420,
+        "content": "后端接口开发完成，今天上午在做单元测试，下午可以提测。接口已经兼容老版本数据，不会有迁移问题。",
+    },
+    {
+        "role": "member",
+        "sender_name": "王浩（前端）",
+        "timestamp": 1717377480,
+        "content": "前端页面开发 80%，剩下个人中心设置页今天能做完，明天可以和后端联调。首页加载慢的 bug 也修好了。",
+    },
+    {
+        "role": "member",
+        "sender_name": "刘明（产品）",
+        "timestamp": 1717377600,
+        "content": "那我们周三下午走内测，周四预发布，周五正式上线。用户反馈登录页验证码太难看，也跟这次版本一起优化。",
+    },
+    {
+        "role": "member",
+        "sender_name": "张雯（设计）",
+        "timestamp": 1717377960,
+        "content": "验证码优化可以，我下午出新版本设计稿。上线前我再走查一遍视觉效果。",
+    },
+    {
+        "role": "member",
+        "sender_name": "李军（后端）",
+        "timestamp": 1717378200,
+        "content": "提醒大家，本周三晚上要做数据迁移，可能会有 15 分钟服务不可用，需要提前通知用户。",
+    },
+    {
+        "role": "member",
+        "sender_name": "刘明（产品）",
+        "timestamp": 1717378500,
+        "content": "好的，我会提前发公告通知用户。今天同步到这里，大家有问题随时在群里说。",
+    },
+    {
+        "role": "assistant",
+        "sender_name": "Eko",
+        "timestamp": 1717378560,
+        "content": "我已根据群聊整理出《用户中心 2.0 上线同步纪要》和一份 6 页 PPT 汇报稿，可在右侧产物区预览、下载并确认。",
+    },
+]
+
+
+CHAT_WORKFLOW_DOC = """# 用户中心 2.0 上线同步纪要
+
+## 一、会议背景
+
+本次群聊围绕“用户中心 2.0 本周上线”进行同步，目标是在正式上线前确认设计、前端、后端、测试、发布与用户通知安排，降低跨端协作不确定性。
+
+## 二、当前进展
+
+| 模块 | 负责人 | 当前状态 | 下一步 |
+| --- | --- | --- | --- |
+| 产品排期 | 刘明 | 已确认周三内测、周四预发布、周五正式上线 | 发布前发用户公告 |
+| 设计交付 | 张雯 | 原型和 UI 稿已上传 Figma | 下午补充验证码优化稿，上线前视觉走查 |
+| 后端接口 | 李军 | 接口开发完成，单元测试中 | 下午提测，确认老版本数据兼容 |
+| 前端页面 | 王浩 | 页面开发约 80%，首页加载慢 bug 已修复 | 完成个人中心设置页，明天联调 |
+| 数据迁移 | 李军 | 周三晚执行，预计 15 分钟服务不可用 | 产品提前通知用户 |
+
+## 三、关键结论
+
+- 用户中心 2.0 按当前节奏可以进入本周上线窗口。
+- 设计、后端、前端均已明确剩余工作，主要风险集中在联调、数据迁移窗口和上线前公告。
+- 登录页验证码视觉优化作为小需求并入本次版本。
+- 首页加载慢问题已修复，可纳入本轮回归测试。
+
+## 四、行动项
+
+1. 张雯在今天下午输出验证码优化设计稿。
+2. 李军今天下午提交后端接口测试版本，并补齐单元测试结果。
+3. 王浩今天完成个人中心设置页，明天与后端联调。
+4. 刘明在周三数据迁移前发布用户公告，说明 15 分钟服务不可用窗口。
+5. 全员在周三下午参与内测，周四预发布验证，周五正式上线。
+
+## 五、风险与建议
+
+- 数据迁移会带来短暂不可用，建议公告中说明具体时间、影响范围和恢复预期。
+- 验证码优化虽然改动较小，但涉及登录入口，建议纳入冒烟测试。
+- 周三内测前应确认 Figma 链接、接口文档、前端页面和回归用例都已就绪。
+
+## 六、可发送到飞书群的摘要
+
+用户中心 2.0 本周上线节奏已确认：周三下午内测、周四预发布、周五正式上线。设计稿已完成，验证码优化下午补充；后端接口已完成并进入单测，下午提测；前端完成 80%，今天收尾个人中心设置页，明天联调。周三晚有数据迁移，预计 15 分钟不可用，产品会提前发公告。
+"""
+
+
+CHAT_WORKFLOW_PPT_SLIDES: list[dict[str, Any]] = [
+    {
+        "slide_number": 1,
+        "title": "用户中心 2.0 上线同步",
+        "template": "cover",
+        "right_items": ["群聊纪要生成", "周三内测 / 周四预发布 / 周五上线", "Eko 本地演示产物"],
+    },
+    {
+        "slide_number": 2,
+        "title": "本周上线目标",
+        "template": "agenda",
+        "right_items": ["确认用户中心 2.0 各端进展", "同步验证码视觉优化并入版本", "提前暴露数据迁移与联调风险"],
+    },
+    {
+        "slide_number": 3,
+        "title": "各端进度",
+        "template": "status",
+        "right_items": ["设计：原型和 UI 稿已上传 Figma", "后端：接口完成，单测中，下午提测", "前端：页面完成 80%，设置页今日收尾"],
+    },
+    {
+        "slide_number": 4,
+        "title": "发布节奏",
+        "template": "timeline",
+        "right_items": ["周三下午：内测", "周三晚上：数据迁移，约 15 分钟不可用", "周四：预发布", "周五：正式上线"],
+    },
+    {
+        "slide_number": 5,
+        "title": "风险与缓解",
+        "template": "risk",
+        "right_items": ["迁移窗口需提前公告", "登录页验证码优化需冒烟验证", "联调前确认接口兼容老数据", "上线前补充视觉走查"],
+    },
+    {
+        "slide_number": 6,
+        "title": "行动项",
+        "template": "next",
+        "right_items": ["张雯：下午交付验证码优化稿", "李军：下午提测并同步单测结果", "王浩：完成设置页并准备联调", "刘明：发布迁移公告并组织内测"],
+    },
+]
 
 DEMO_BITABLE_BASES = [
     {"id": "bb_demo_project", "name": "Eko 演示项目多维表格", "source": "user_oauth", "app_token": "bascn_demo_project"},
@@ -493,6 +634,9 @@ def upsert_artifact_return_to_rag(session_id: str, artifact: dict[str, Any]) -> 
     kind = str(artifact.get("kind") or "artifact").lower()
     source = artifact_return_source(session_id, kind)
     title = str(artifact.get("title") or ("AI PPT 回流资料" if kind == "ppt" else "文档回流资料"))
+    for existing_file_id, existing_record in list(store.items()):
+        if existing_record.get("source") == source:
+            store.pop(existing_file_id, None)
     return create_store_record(
         filename=f"{title} - 知识库回流.md",
         source=source,
@@ -569,6 +713,61 @@ def mock_bitable_archive_results(session_id: str) -> list[dict[str, Any]]:
     return results
 
 
+def demo_ppt_preview(job_id: str) -> dict[str, Any]:
+    if job_id != "demo-ppt-complete-local":
+        raise HTTPException(status_code=404, detail="PPT preview job not found")
+    return {
+        "job_id": job_id,
+        "title": "用户中心 2.0 上线同步汇报",
+        "subtitle": "根据飞书群聊自动生成的本地演示 PPT",
+        "page_count": len(CHAT_WORKFLOW_PPT_SLIDES),
+        "status": "completed",
+        "progress": 100,
+        "download_url": "https://example.com/downloads/user-center-2-sync-demo.pptx",
+        "slides": deepcopy(CHAT_WORKFLOW_PPT_SLIDES),
+    }
+
+
+def demo_slide_svg(slide: dict[str, Any]) -> str:
+    title = str(slide.get("title") or "用户中心 2.0")
+    items = [str(item) for item in slide.get("right_items") or []]
+    colors = [
+        ("#0f172a", "#2563eb", "#dbeafe"),
+        ("#1f2937", "#059669", "#dcfce7"),
+        ("#172554", "#ea580c", "#ffedd5"),
+        ("#312e81", "#7c3aed", "#ede9fe"),
+        ("#3f1d2f", "#e11d48", "#ffe4e6"),
+        ("#052e16", "#16a34a", "#dcfce7"),
+    ]
+    index = max(0, int(slide.get("slide_number") or 1) - 1)
+    bg, accent, soft = colors[index % len(colors)]
+    bullets = "\n".join(
+        f'<text x="132" y="{342 + offset * 62}" fill="#f8fafc" font-size="34" font-family="Microsoft YaHei, Arial">• {item}</text>'
+        for offset, item in enumerate(items[:4])
+    )
+    return f"""<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="{bg}"/>
+      <stop offset="1" stop-color="#020617"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="22" stdDeviation="22" flood-color="#020617" flood-opacity="0.28"/>
+    </filter>
+  </defs>
+  <rect width="1600" height="900" fill="url(#bg)"/>
+  <circle cx="1320" cy="120" r="260" fill="{accent}" opacity="0.22"/>
+  <circle cx="1450" cy="760" r="360" fill="{soft}" opacity="0.12"/>
+  <rect x="88" y="76" width="1424" height="748" rx="44" fill="#ffffff" opacity="0.08" filter="url(#shadow)"/>
+  <text x="128" y="152" fill="{soft}" font-size="28" font-weight="700" font-family="Microsoft YaHei, Arial">Eko 生成产物 · 第 {index + 1} 页</text>
+  <text x="128" y="258" fill="#ffffff" font-size="70" font-weight="800" font-family="Microsoft YaHei, Arial">{title}</text>
+  <rect x="128" y="292" width="172" height="10" rx="5" fill="{accent}"/>
+  {bullets}
+  <text x="128" y="770" fill="#cbd5e1" font-size="26" font-family="Microsoft YaHei, Arial">来源：本地 mock 飞书群聊 · 用户中心 2.0 上线同步</text>
+  <text x="1370" y="770" fill="#e2e8f0" font-size="54" font-weight="800" font-family="Arial">{index + 1:02d}</text>
+</svg>"""
+
+
 def ensure_seed_bitable_source() -> None:
     if any(source.get("workspace_id") == "Feishu_demo_Eko" for source in bitable_sources.values()):
         return
@@ -597,6 +796,73 @@ def ensure_demo_session(session_id: str) -> dict[str, Any]:
     now = now_iso()
     session = sync_sessions.get(session_id)
     if session is not None:
+        return session
+    if session_id == "demo-doc-workflow":
+        artifact = {
+            "kind": "docx",
+            "intent": "docx",
+            "title": "用户中心 2.0 上线同步纪要",
+            "content": CHAT_WORKFLOW_DOC,
+            "status": "completed",
+            "current_step": "文档已生成，等待确认",
+            "sharing_url": "https://example.feishu.cn/docx/user-center-2-demo-minutes",
+            "result_summary": "已根据群聊生成用户中心 2.0 上线同步纪要，可预览、编辑、保存草稿并确认回流知识库。",
+        }
+        session = {
+            "session_id": session_id,
+            "source": "app",
+            "title": "用户中心 2.0 上线同步纪要",
+            "summary": "根据群聊生成的会议纪要文档，包含进度、排期、风险和行动项。",
+            "status": "completed",
+            "user_id": default_user()["user_id"],
+            "opened_at": now,
+            "updated_at": now,
+            "chat_id": None,
+            "message_id": None,
+            "context_size": len(CHAT_WORKFLOW_MESSAGES),
+            "instruction": "请根据群聊内容生成一份用户中心 2.0 上线同步纪要，包含当前进展、上线节奏、风险和行动项。",
+            "intent": "docx",
+            "artifact": artifact,
+            "context_messages": deepcopy(CHAT_WORKFLOW_MESSAGES[:-1]),
+            "selected_context_messages": deepcopy(CHAT_WORKFLOW_MESSAGES[:-1]),
+            "messages": deepcopy(CHAT_WORKFLOW_MESSAGES),
+        }
+        sync_sessions[session_id] = session
+        return session
+    if session_id == "demo-ppt-workflow":
+        artifact = {
+            "kind": "ppt",
+            "intent": "ppt",
+            "title": "用户中心 2.0 上线同步汇报",
+            "job_id": "demo-ppt-complete-local",
+            "status": "completed",
+            "progress": 100,
+            "current_step": "completed",
+            "download_url": "https://example.com/downloads/user-center-2-sync-demo.pptx",
+            "preview_url": None,
+            "sharing_url": "https://example.feishu.cn/docx/user-center-2-demo-ppt",
+            "result_summary": "已根据群聊生成 6 页用户中心 2.0 上线同步 PPT，可预览、下载并确认回流知识库。",
+        }
+        session = {
+            "session_id": session_id,
+            "source": "app",
+            "title": "用户中心 2.0 上线同步汇报",
+            "summary": "根据群聊生成的 6 页 PPT 汇报稿，覆盖目标、进度、排期、风险和行动项。",
+            "status": "completed",
+            "user_id": default_user()["user_id"],
+            "opened_at": now,
+            "updated_at": now,
+            "chat_id": None,
+            "message_id": None,
+            "context_size": len(CHAT_WORKFLOW_MESSAGES),
+            "instruction": "请根据群聊内容生成一份用户中心 2.0 上线同步 PPT，适合发到飞书群里快速缓解团队焦虑。",
+            "intent": "ppt",
+            "artifact": artifact,
+            "context_messages": deepcopy(CHAT_WORKFLOW_MESSAGES[:-1]),
+            "selected_context_messages": deepcopy(CHAT_WORKFLOW_MESSAGES[:-1]),
+            "messages": deepcopy(CHAT_WORKFLOW_MESSAGES),
+        }
+        sync_sessions[session_id] = session
         return session
     session = {
         "session_id": session_id,
@@ -697,6 +963,8 @@ def seed_demo() -> None:
     }
     users["demo@eko.local"] = default_user()
     ensure_seed_bitable_source()
+    ensure_demo_session("demo-doc-workflow")
+    ensure_demo_session("demo-ppt-workflow")
 
 
 seed_demo()
@@ -895,6 +1163,20 @@ async def get_bitable_schema(workspace_id: str = "Feishu_demo_Eko") -> dict[str,
             "demo_bases": deepcopy(DEMO_BITABLE_BASES),
         }
     )
+
+
+@app.get("/api/v1/ppt/preview/{job_id}")
+async def get_ppt_preview(job_id: str) -> dict[str, Any]:
+    return envelope(demo_ppt_preview(job_id))
+
+
+@app.get("/api/v1/ppt/preview/{job_id}/slides/{slide_number}")
+async def get_ppt_preview_slide(job_id: str, slide_number: int) -> Response:
+    preview = demo_ppt_preview(job_id)
+    slide = next((item for item in preview["slides"] if item.get("slide_number") == slide_number), None)
+    if slide is None:
+        raise HTTPException(status_code=404, detail="PPT slide not found")
+    return Response(content=demo_slide_svg(slide), media_type="image/svg+xml")
 
 
 @app.get("/api/v1/rag/files")

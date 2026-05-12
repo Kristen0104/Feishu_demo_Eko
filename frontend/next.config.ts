@@ -8,6 +8,8 @@ const backendRewriteOrigin =
   "http://39.104.87.235:8000";
 
 const ngrokDevOrigins = [
+  "127.0.0.1",
+  "localhost",
   "*.ngrok-free.dev",
   "*.ngrok-free.app",
   "*.ngrok.app",

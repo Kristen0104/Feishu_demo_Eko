@@ -440,6 +440,43 @@ type PPTPreview = {
   slides: PPTPreviewSlide[];
 };
 
+function PptSlideCanvas({ slide, title }: { slide?: PPTPreviewSlide; title: string }) {
+  const items = slide?.right_items?.length ? slide.right_items : ["已根据群聊生成本页内容", "可继续下载、确认并回流知识库"];
+  const slideNumber = slide?.slide_number ?? 1;
+
+  return (
+    <div className="relative flex h-full w-full overflow-hidden rounded-[16px] bg-slate-950 text-white">
+      <div className="absolute -right-24 -top-24 h-72 w-72 rounded-full bg-blue-500/30 blur-2xl" />
+      <div className="absolute -bottom-32 right-20 h-80 w-80 rounded-full bg-emerald-400/20 blur-2xl" />
+      <div className="relative flex h-full w-full flex-col justify-between p-10">
+        <div>
+          <div className="inline-flex rounded-full border border-white/15 bg-white/10 px-3 py-1 text-[12px] font-semibold text-blue-100">
+            Eko 生成产物 · Slide {slideNumber}
+          </div>
+          <h2 className="mt-8 max-w-[820px] text-[42px] font-black leading-tight tracking-[-0.03em] text-white">
+            {slide?.title || title}
+          </h2>
+          <div className="mt-5 h-2 w-28 rounded-full bg-blue-400" />
+        </div>
+        <div className="grid gap-3">
+          {items.slice(0, 4).map((item, index) => (
+            <div key={`${slideNumber}-${index}-${item}`} className="flex items-start gap-3 rounded-2xl border border-white/10 bg-white/10 px-4 py-3 backdrop-blur">
+              <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white text-[12px] font-black text-slate-950">
+                {index + 1}
+              </span>
+              <p className="text-[18px] font-semibold leading-7 text-slate-50">{item}</p>
+            </div>
+          ))}
+        </div>
+        <div className="flex items-center justify-between text-[13px] font-semibold text-slate-300">
+          <span>来源：本地 mock 飞书群聊 · 用户中心 2.0 上线同步</span>
+          <span className="text-[40px] font-black text-white/80">{String(slideNumber).padStart(2, "0")}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 type BoardImagePreview = {
   whiteboard_id: string;
   preview_url: string;
@@ -835,43 +872,13 @@ function ArtifactPresenter({
   if (!artifact && !markdown && sections.length === 0) return null;
 
   return (
-    <div className="relative flex h-full min-h-[520px] w-full flex-col bg-white">
+    <div className="relative flex min-h-[640px] w-full flex-col bg-white">
       {kind === "ppt" ? (
-        <div className="flex min-h-0 flex-1 items-center justify-center px-4 py-4">
+        <div className="flex min-h-[640px] flex-1 items-start justify-center px-4 py-4">
           <div className="flex w-full max-w-[1120px] flex-col gap-3">
             <div className="aspect-[16/9] w-full overflow-hidden rounded-[16px] border border-slate-200 bg-white shadow-[0_18px_44px_rgba(15,23,42,0.06)]">
-              {selectedSlide && artifact?.jobId && !brokenSlides.has(selectedSlide.slide_number) ? (
-                <Image
-                  src={apiUrl(`/api/v1/ppt/preview/${encodeURIComponent(artifact.jobId)}/slides/${selectedSlide.slide_number}`)}
-                  alt={selectedSlide.title || title}
-                  width={1600}
-                  height={900}
-                  unoptimized
-                  sizes="(max-width: 1120px) 100vw, 1120px"
-                  className="h-full w-full object-cover"
-                  onError={() =>
-                    setBrokenSlidesByPreview((prev) => {
-                      const next = { ...prev };
-                      const nextSet = new Set(next[pptPreviewKey] ?? []);
-                      nextSet.add(selectedSlide.slide_number);
-                      next[pptPreviewKey] = nextSet;
-                      return next;
-                    })
-                  }
-                />
-              ) : selectedSlide && brokenSlides.has(selectedSlide.slide_number) ? (
-                <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-slate-50 to-white p-8">
-                  <div className="text-center">
-                    <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-100">
-                      <svg className="h-8 w-8 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15" />
-                      </svg>
-                    </div>
-                    <h3 className="text-lg font-semibold text-slate-800">{selectedSlide.title || title}</h3>
-                    <p className="mt-1 text-sm text-slate-400">第 {selectedSlide.slide_number} 页</p>
-                    <p className="mt-2 text-xs text-slate-400">预览图加载失败，仍可下载完整 PPT 查看</p>
-                  </div>
-                </div>
+              {selectedSlide && !pptIsRunning && state.tone !== 'rose' ? (
+                <PptSlideCanvas slide={selectedSlide} title={title} />
               ) : pptIsRunning ? (
                 <div className="flex h-full flex-col p-6">
                   <div className="flex min-w-0 items-center justify-between gap-3">
@@ -933,13 +940,6 @@ function ArtifactPresenter({
               )}
             </div>
             <div className="flex flex-wrap items-center justify-end gap-2">
-              <span className={`inline-flex h-9 items-center rounded-[12px] border px-3 text-[12px] font-semibold shadow-[0_8px_18px_rgba(15,23,42,0.04)] ${
-                state.tone === 'emerald' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' :
-                state.tone === 'rose' ? 'border-rose-200 bg-rose-50 text-rose-700' :
-                'border-slate-200 bg-white text-slate-600'
-              }`}>
-                {state.label} {pptIsRunning ? `${Math.max(0, Math.min(100, Math.round(pptProgress)))}%` : ''}
-              </span>
               {artifact?.errorMessage ? <span className="rounded-full bg-rose-50 px-3 py-2 text-[12px] font-semibold text-rose-700">{artifact.errorMessage}</span> : null}
 
               {/* 操作按钮组 */}
@@ -953,6 +953,12 @@ function ArtifactPresenter({
                 <a href={artifact.downloadUrl} target="_blank" rel="noreferrer" className="inline-flex h-9 items-center justify-center rounded-[12px] bg-blue-600 px-3 text-[13px] font-semibold text-white shadow-[0_10px_20px_rgba(37,99,235,0.18)] hover:bg-blue-700">
                   下载 PPT
                 </a>
+              )}
+
+              {!pptIsRunning && state.tone !== 'rose' && (
+                <Link href={`/canvas?session=${encodeURIComponent(sessionId)}`} prefetch={false} className="inline-flex h-9 items-center justify-center rounded-[12px] border border-violet-200 bg-violet-50 px-3 text-[13px] font-semibold text-violet-700 shadow-[0_8px_18px_rgba(139,92,246,0.08)] hover:bg-violet-100">
+                  打开画布
+                </Link>
               )}
 
               {/* 失败重试按钮 */}
@@ -970,10 +976,10 @@ function ArtifactPresenter({
             </div>
 
             {/* 确认按钮 */}
-            {pptCanConfirm ? (
+            {pptCanConfirm && saveState !== "confirmed" ? (
               <div className="flex justify-end">
                 <button type="button" onClick={onConfirmArtifact} disabled={saveState === "saving"} className="inline-flex h-9 items-center justify-center rounded-[12px] border border-emerald-200 bg-emerald-50 px-3 text-[13px] font-semibold text-emerald-700 shadow-[0_8px_18px_rgba(15,23,42,0.04)] hover:bg-emerald-100 disabled:opacity-50">
-                  {saveState === "saving" ? "确认中..." : saveState === "confirmed" ? "已确认" : "确认当前 PPT"}
+                  {saveState === "saving" ? "确认中..." : "确认当前 PPT"}
                 </button>
               </div>
             ) : null}
@@ -1031,33 +1037,12 @@ function ArtifactPresenter({
                     <span>Slide {slide.slide_number}</span>
                     <span className="truncate">{slide.title || slide.template || ""}</span>
                   </div>
-                  {pptPreview && artifact?.jobId && !brokenSlides.has(slide.slide_number) ? (
-                    <Image
-                      src={apiUrl(`/api/v1/ppt/preview/${encodeURIComponent(artifact.jobId)}/slides/${slide.slide_number}`)}
-                      alt={slide.title || `Slide ${slide.slide_number}`}
-                      width={264}
-                      height={149}
-                      unoptimized
-                      sizes="132px"
-                      className="aspect-[16/9] w-full object-cover"
-                      onError={() =>
-                        setBrokenSlidesByPreview((prev) => {
-                          const next = { ...prev };
-                          const nextSet = new Set(next[pptPreviewKey] ?? []);
-                          nextSet.add(slide.slide_number);
-                          next[pptPreviewKey] = nextSet;
-                          return next;
-                        })
-                      }
-                    />
-                  ) : (
-                    <div className="mx-2 mb-2 flex aspect-[16/9] items-center justify-center rounded-[10px] bg-gradient-to-br from-slate-50 to-slate-100 text-[11px] font-medium text-slate-500">
-                      <div className="text-center">
-                        <div className="text-lg mb-1">{slide.slide_number}</div>
-                        <div className="text-[9px] text-slate-400 line-clamp-1 px-1">{slide.title || '幻灯片'}</div>
-                      </div>
+                  <div className="mx-2 mb-2 flex aspect-[16/9] items-center justify-center rounded-[10px] bg-slate-950 px-2 text-white">
+                    <div className="min-w-0 text-center">
+                      <div className="mb-1 text-lg font-black">{slide.slide_number}</div>
+                      <div className="line-clamp-2 text-[9px] font-semibold text-slate-100">{slide.title || '幻灯片'}</div>
                     </div>
-                  )}
+                  </div>
                 </button>
               ))}
             </div>
@@ -1169,11 +1154,6 @@ function ArtifactPresenter({
                   {returnMessage}
                 </span>
               ) : null}
-              {(kind === "docx" || kind === "ppt") && saveLabel ? (
-                <span className={`inline-flex h-8 items-center justify-center rounded-[10px] border px-2.5 text-[12px] font-semibold ${saveClass}`} title={saveError || saveLabel}>
-                  {saveLabel}
-                </span>
-              ) : null}
               {kind === "docx" && autoSyncLabel && false ? (
                 <span className={`inline-flex h-8 items-center justify-center rounded-[10px] border px-2.5 text-[12px] font-semibold ${autoSyncClass}`} title={autoSyncError || autoSyncLabel}>
                   {autoSyncLabel}
@@ -1199,15 +1179,7 @@ function ArtifactPresenter({
                   <button type="button" onClick={onCancelEdit} disabled={saveState === "saving"} className="inline-flex h-8 items-center justify-center rounded-[10px] border border-slate-200 bg-white px-2.5 text-[12px] font-semibold text-slate-600 hover:border-blue-200 hover:text-blue-600 disabled:opacity-50">
                     取消
                   </button>
-                  <button type="button" onClick={onSaveDraft} disabled={saveState === "saving" || saveState === "idle"} className="inline-flex h-8 items-center justify-center rounded-[10px] border border-blue-200 bg-blue-50 px-2.5 text-[12px] font-semibold text-blue-700 hover:bg-blue-100 disabled:opacity-50">
-                    保存草稿
-                  </button>
                 </>
-              ) : null}
-              {canEditDocument ? (
-                <button type="button" onClick={onConfirmArtifact} disabled={saveState === "saving"} className="inline-flex h-8 items-center justify-center rounded-[10px] border border-emerald-200 bg-emerald-50 px-2.5 text-[12px] font-semibold text-emerald-700 hover:bg-emerald-100 disabled:opacity-50">
-                  {saveState === "saving" ? "确认中..." : saveState === "confirmed" ? "已确认" : "确认产物"}
-                </button>
               ) : null}
               {canEditDocument ? (
                 <button
@@ -2920,15 +2892,6 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                           <div className="flex items-center justify-between gap-3 text-[13px] text-slate-600">
                             <span>当前同步权限</span>
                             <span className="rounded-full bg-violet-50 px-3 py-1 text-[12px] font-semibold text-violet-600">{permissionStatus}</span>
-                          </div>
-                        </SectionCard>
-                        <SectionCard title="状态">
-                          <div className="flex flex-wrap gap-2">
-                            {data.statusBadges.map((badge, bi) => (
-                              <HeaderBadge key={`badges-${bi}-${badge.label}`} tone={badge.tone}>
-                                {badge.label}
-                              </HeaderBadge>
-                            ))}
                           </div>
                         </SectionCard>
                         <SectionCard title="活动记录">
