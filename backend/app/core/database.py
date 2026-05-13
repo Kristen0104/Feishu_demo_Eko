@@ -95,8 +95,28 @@ async def init_db():
         await conn.execute(text("UPDATE rag_files SET content_hash = COALESCE(content_hash, id) WHERE content_hash IS NULL"))
         await conn.execute(text("UPDATE rag_files SET file_metadata = '{}'::jsonb WHERE file_metadata IS NULL"))
         await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_rag_files_source ON rag_files (source)"))
+        await conn.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_session_invites_invitee_status ON session_collaboration_invites (invitee_email, status)")
+        )
+        await conn.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_session_invites_session_status ON session_collaboration_invites (session_id, status)")
+        )
+        await conn.execute(
+            text("ALTER TABLE session_collaboration_invites DROP CONSTRAINT IF EXISTS uq_session_invites_active_email")
+        )
+        await conn.execute(text("DROP INDEX IF EXISTS uq_session_invites_active_email"))
+        await conn.execute(
+            text(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_session_invites_pending_email
+                ON session_collaboration_invites (session_id, invitee_email)
+                WHERE status = 'pending'
+                """
+            )
+        )
 
 
 from app.modules.auth import models as _auth_models  # noqa: E402,F401
 from app.modules.team import models as _team_models  # noqa: E402,F401
 from app.modules.rag import models as _rag_models  # noqa: E402,F401
+from app.modules.bitable import models as _bitable_models  # noqa: E402,F401

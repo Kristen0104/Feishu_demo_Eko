@@ -5,7 +5,13 @@ import { useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { SectionCard } from "@/components/profile/profile-blocks";
-import { fetchCurrentAuthUser, updateCurrentPassword, type AuthMeUser } from "@/lib/profile-api";
+import {
+  bindFeishuWithCallbackUrl,
+  createFeishuBindUrl,
+  fetchCurrentAuthUser,
+  updateCurrentPassword,
+  type AuthMeUser,
+} from "@/lib/profile-api";
 import { useProfileStore } from "@/store/profile-store";
 
 const MOCK_DEVICES = [
@@ -21,6 +27,9 @@ export function ProfileSecurityPage() {
   const markSaved = useProfileStore((s) => s.markSaved);
   const [authUser, setAuthUser] = useState<AuthMeUser | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [manualBindUrl, setManualBindUrl] = useState("");
+  const [manualCallbackUrl, setManualCallbackUrl] = useState("");
+  const [manualBindMsg, setManualBindMsg] = useState<string | null>(null);
 
   const [oldPw, setOldPw] = useState("");
   const [newPw, setNewPw] = useState("");
@@ -62,6 +71,37 @@ export function ProfileSecurityPage() {
       setConfirmPw("");
     } catch (error) {
       setPwMsg(error instanceof Error ? error.message : "密码修改失败");
+    }
+  };
+
+  const manualRedirectUri = typeof window === "undefined" ? "" : `${window.location.origin}/login/feishu/callback?mode=bind`;
+
+  const createManualBindUrl = async () => {
+    if (!manualRedirectUri) return;
+    setManualBindMsg(null);
+    try {
+      const result = await createFeishuBindUrl(manualRedirectUri);
+      setManualBindUrl(result.authorize_url);
+      setManualBindMsg("已生成授权链接。打开链接完成授权后，复制浏览器地址栏里的完整回跳地址。");
+    } catch (error) {
+      setManualBindMsg(error instanceof Error ? error.message : "生成授权链接失败");
+    }
+  };
+
+  const submitManualCallbackUrl = async () => {
+    if (!manualRedirectUri) return;
+    if (!manualCallbackUrl.trim()) {
+      setManualBindMsg("请粘贴飞书授权后的完整回跳地址。");
+      return;
+    }
+    setManualBindMsg(null);
+    try {
+      const user = await bindFeishuWithCallbackUrl(manualCallbackUrl, manualRedirectUri);
+      setAuthUser(user);
+      setManualCallbackUrl("");
+      setManualBindMsg("飞书账号已绑定。");
+    } catch (error) {
+      setManualBindMsg(error instanceof Error ? error.message : "手动绑定失败");
     }
   };
 
@@ -113,6 +153,54 @@ export function ProfileSecurityPage() {
             <span className="text-[13px] text-slate-500">
               绑定后，飞书登录和飞书消息事件会映射到同一个网站账号。
             </span>
+          </div>
+          <div className="rounded-[14px] border border-slate-100 bg-white px-4 py-3">
+            <p className="text-[13px] font-semibold text-slate-800">本地手动绑定</p>
+            <p className="mt-1 text-[13px] leading-5 text-slate-500">
+              本地没有配置飞书回调地址时，先生成授权链接，授权后把浏览器地址栏里的完整回跳地址粘贴回来。
+            </p>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void createManualBindUrl()}
+                className="rounded-[12px] bg-slate-950 px-4 py-2.5 text-[13px] font-semibold text-white hover:bg-slate-800"
+              >
+                生成授权链接
+              </button>
+              {manualBindUrl ? (
+                <a
+                  href={manualBindUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="rounded-[12px] border border-slate-200 px-4 py-2.5 text-[13px] font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  打开飞书授权
+                </a>
+              ) : null}
+            </div>
+            {manualBindUrl ? (
+              <textarea
+                readOnly
+                value={manualBindUrl}
+                className="mt-3 h-20 w-full resize-none rounded-[12px] border border-slate-200 bg-slate-50 px-3 py-2 text-[12px] leading-5 text-slate-600"
+              />
+            ) : null}
+            <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+              <input
+                value={manualCallbackUrl}
+                onChange={(event) => setManualCallbackUrl(event.target.value)}
+                className="min-w-0 flex-1 rounded-[12px] border border-slate-200 px-3 py-2 text-[13px] outline-none ring-blue-500/30 focus:ring-2"
+                placeholder="粘贴包含 code 和 state 的回跳地址"
+              />
+              <button
+                type="button"
+                onClick={() => void submitManualCallbackUrl()}
+                className="rounded-[12px] bg-blue-600 px-4 py-2.5 text-[13px] font-semibold text-white hover:bg-blue-700"
+              >
+                提交绑定
+              </button>
+            </div>
+            {manualBindMsg ? <p className="mt-2 text-[13px] text-slate-600">{manualBindMsg}</p> : null}
           </div>
         </div>
       </SectionCard>

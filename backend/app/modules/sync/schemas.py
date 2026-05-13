@@ -52,6 +52,8 @@ class SyncSessionSchema(BaseModel):
     context_messages: list[SyncContextMessageSchema] = Field(default_factory=list)
     selected_context_messages: list[SyncContextMessageSchema] = Field(default_factory=list)
     messages: list[SyncSessionMessageSchema] = Field(default_factory=list)
+    collaborator_user_ids: list[str] = Field(default_factory=list)
+    collaborator_emails: list[str] = Field(default_factory=list)
 
 
 class SyncContextSelectionRequest(BaseModel):

@@ -135,6 +135,29 @@ class FeishuClient:
             raise RuntimeError(f"Feishu request failed: code={payload.get('code')} msg={payload.get('msg')}")
         return payload
 
+    def request_openapi_json(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: dict[str, Any] | None = None,
+        json_body: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        request_headers = dict(headers or {})
+        request_headers.setdefault("Authorization", f"Bearer {self._get_tenant_access_token()}")
+        response = self._get_http_client().request(
+            method,
+            path,
+            params=params,
+            json=json_body,
+            headers=request_headers,
+        )
+        if response.status_code >= 400:
+            raise RuntimeError(f"Feishu request failed: HTTP {response.status_code} body={response.text[:500]}")
+        payload = response.json()
+        return payload if isinstance(payload, dict) else {"data": payload}
+
     def get_card(self, card_id: str) -> FeishuCardSchema:
         return FeishuCardSchema(
             card_id=card_id,

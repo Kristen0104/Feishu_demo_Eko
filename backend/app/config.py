@@ -79,13 +79,20 @@ class Settings(BaseSettings):
     FEISHU_BASE_URL: str = "https://open.feishu.cn"
     FEISHU_AUTH_BASE_URL: str = "https://accounts.feishu.cn"
     FEISHU_OAUTH_REDIRECT_URI: str = "http://127.0.0.1:3002/login/feishu/callback"
-    FEISHU_OAUTH_SCOPE: str = "contact:user.base:readonly"
+    FEISHU_OAUTH_SCOPE: str = "contact:user.base:readonly search:docs:read"
     FEISHU_OAUTH_STATE_TTL_SECONDS: int = 600
     FRONTEND_LOGIN_SUCCESS_URL: str = "http://127.0.0.1:3002/home"
     FEISHU_BITABLE_APP_TOKEN: str = ""
     FEISHU_BITABLE_TABLE_ID: str = ""
     FEISHU_BITABLE_FIELD_TITLE: str = "标题"
     FEISHU_BITABLE_FIELD_URL: str = "文档链接"
+
+    # Bitable Feishu OpenAPI integration
+    BITABLE_ENABLED: bool = False
+    BITABLE_DEFAULT_WORKSPACE_ID: str = "Feishu_demo_Eko"
+    BITABLE_QUERY_LIMIT: int = 8
+    BITABLE_ARCHIVE_ENABLED: bool = False
+    BITABLE_PRESET_BASE_NAME: str = "团队预置多维表格"
 
     # Agent (DeepSeek)
     AGENT_MODEL: str = "deepseek-v4-flash"

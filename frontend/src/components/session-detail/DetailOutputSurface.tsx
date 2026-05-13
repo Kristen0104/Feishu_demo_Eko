@@ -1,3 +1,4 @@
+import { EkoSquircleMark } from "@/components/login/brand-icons";
 import { DetailTabKey, SessionDetailData } from "@/types/session-detail";
 
 function ToolIcon({ type }: { type: "like" | "dislike" | "copy" }) {
@@ -67,9 +68,7 @@ export function DetailOutputSurface({
 
         <div className="rounded-[24px] border border-slate-200 bg-white p-6 shadow-[0_8px_24px_rgba(15,23,42,0.03)]">
           <div className="flex items-start gap-4">
-            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-blue-50 shadow-[0_6px_16px_rgba(37,99,235,0.08)]">
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-600 text-[19px] font-bold text-white">e</div>
-            </div>
+            <EkoSquircleMark className="h-16 w-16 rounded-2xl shadow-[0_10px_28px_rgba(37,99,235,0.14)]" />
             <div className="min-w-0 flex-1">
               <p className="text-[18px] font-semibold leading-9 text-slate-900">{data.chatReply.body}</p>
               <div className="mt-5 flex items-center justify-between gap-4">

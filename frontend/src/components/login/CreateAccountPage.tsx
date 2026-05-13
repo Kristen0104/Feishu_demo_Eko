@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import type { FormEvent } from "react";
 import { useMemo, useState } from "react";
 
-import { BrandMark, FeishuLogo } from "@/components/login/brand-icons";
+import { EkoSquircleMark, FeishuLogo } from "@/components/login/brand-icons";
 import { apiUrl } from "@/lib/eko-api";
 import { saveAccessToken } from "@/lib/auth-token";
 import { useAppStore } from "@/store/app-store";
@@ -129,7 +129,7 @@ export function CreateAccountPage() {
             <div className="relative z-10 mx-auto w-full max-w-[640px] lg:mx-0">
               <div className="flex flex-wrap items-center gap-4">
                 <div className="flex items-center gap-4">
-                  <BrandMark className="h-[38px] w-[38px]" />
+                  <EkoSquircleMark className="h-[38px] w-[38px]" />
                   <span className="text-[35px] font-semibold tracking-[-0.08em] text-slate-950">Eko</span>
                 </div>
                 <div className="h-7 w-px bg-slate-200" />
@@ -196,7 +196,7 @@ export function CreateAccountPage() {
           <section className="order-1 flex min-h-0 items-center justify-center pl-1 pr-1 lg:order-2 lg:pl-3 lg:pr-1">
             <div className="w-full max-w-[500px] rounded-[28px] border border-white/85 bg-white/93 px-9 pb-7 pt-8 shadow-[0_24px_80px_rgba(15,23,42,0.10)] backdrop-blur-sm sm:px-11">
               <div className="flex items-center justify-center gap-4">
-                <BrandMark className="h-[36px] w-[36px]" />
+                <EkoSquircleMark className="h-[36px] w-[36px]" />
                 <span className="text-[32px] font-semibold tracking-[-0.08em] text-slate-950">Eko</span>
               </div>
 

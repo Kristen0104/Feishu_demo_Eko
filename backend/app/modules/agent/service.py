@@ -23,6 +23,7 @@ from app.modules.agent.schemas import (
     AgentResponse,
     AgentStatus,
     AgentTaskPlan,
+    AgentTraceEvent,
     BitableRecord,
     ChatMessage,
     KnowledgeDoc,
@@ -36,6 +37,8 @@ from app.modules.agent.events import AgentEventProtocol
 from app.modules.agent.rag import AgentRAGRetriever
 from app.modules.agent.runtime import AgentRuntime
 from app.modules.agent.tools import AgentToolRegistry
+from app.modules.bitable.schemas import BitableArchiveRequest, BitableQueryRequest
+from app.modules.bitable.service import BitableService
 from app.modules.canvas.schemas import CanvasBoardTaskCreateRequest, CanvasBoardTaskSchema
 from app.modules.canvas.service import CanvasService
 from app.modules.document.schemas import (
@@ -556,6 +559,7 @@ class AgentService:
         aippt_service: AIPPTService | None = None,
         sync_service: SyncService | None = None,
         rag_service: RagService | None = None,
+        bitable_service: BitableService | None = None,
     ) -> None:
         self._router = RouterAgent(llm_client)
         self._planner = PlannerAgent(llm_client)
@@ -569,14 +573,18 @@ class AgentService:
         self._aippt_service = aippt_service
         self._sync_service = sync_service
         self._rag_service = rag_service
+        self._bitable_service = bitable_service
         self._context_assembler = AgentContextAssembler()
         self._runtime = AgentRuntime(
             planner=self._planner,
-            retriever=AgentRAGRetriever(rag_service=rag_service),
+            retriever=AgentRAGRetriever(rag_service=rag_service, bitable_service=bitable_service),
             tool_handlers={
                 "docx": self._runtime_docx_tool,
                 "ppt": self._runtime_ppt_tool,
                 "board": self._runtime_board_tool,
+                "bitable_schema": self._runtime_bitable_schema_tool,
+                "bitable_search": self._runtime_bitable_search_tool,
+                "bitable_archive": self._runtime_bitable_archive_tool,
             },
         )
 
@@ -813,6 +821,7 @@ class AgentService:
         retrieved_context: list[dict[str, Any]] | None = None,
     ) -> dict[str, str]:
         knowledge_docs = self._knowledge_docs_from_retrieved_context(retrieved_context)
+        bitable_records = self._bitable_records_from_retrieved_context(retrieved_context)
         context = AgentContext(
             chat_history=[
                 ChatMessage(
@@ -823,6 +832,7 @@ class AgentService:
                 if str(message.get("role") or "").strip() and str(message.get("content") or "").strip()
             ],
             knowledge_docs=knowledge_docs,
+            bitable_records=bitable_records,
         )
         request = AgentChatRequest(
             session_id=session_id or "runtime",
@@ -876,6 +886,7 @@ class AgentService:
         retrieved_context: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         knowledge_docs = self._knowledge_docs_from_retrieved_context(retrieved_context)
+        bitable_records = self._bitable_records_from_retrieved_context(retrieved_context)
         context = AgentContext(
             chat_history=[
                 ChatMessage(
@@ -886,6 +897,7 @@ class AgentService:
                 if str(message.get("role") or "").strip() and str(message.get("content") or "").strip()
             ],
             knowledge_docs=knowledge_docs,
+            bitable_records=bitable_records,
         )
         grounded_instruction = self._build_board_instruction_with_context(instruction, context)
         created_board_document: dict[str, str] | None = None
@@ -918,6 +930,8 @@ class AgentService:
             )
         if context.knowledge_docs:
             sections.extend(["", *self._format_agent_knowledge_docs(context.knowledge_docs)])
+        if context.bitable_records:
+            sections.extend(["", *self._format_agent_bitable_records(context.bitable_records)])
         return "\n".join(sections)
 
     def _knowledge_docs_from_retrieved_context(
@@ -933,6 +947,40 @@ class AgentService:
             for item in (retrieved_context or [])
             if str(item.get("source_type") or "") == "knowledge_doc" and str(item.get("content") or "").strip()
         ]
+
+    def _bitable_records_from_retrieved_context(
+        self,
+        retrieved_context: list[dict[str, Any]] | None,
+    ) -> list[BitableRecord]:
+        records: list[BitableRecord] = []
+        for item in retrieved_context or []:
+            if str(item.get("source_type") or "") != "bitable":
+                continue
+            metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+            fields = metadata.get("fields") if isinstance(metadata.get("fields"), dict) else {}
+            if not fields:
+                fields = {"内容": str(item.get("content") or "")}
+            records.append(
+                BitableRecord(
+                    table_name=str(metadata.get("table_name") or metadata.get("source_name") or "") or None,
+                    fields={str(key): value for key, value in fields.items()},
+                )
+            )
+        return records
+
+    def _format_agent_bitable_records(self, records: list[BitableRecord]) -> list[str]:
+        if not records:
+            return []
+        lines = ["## Bitable 结构化数据"]
+        for record in records:
+            if record.table_name:
+                lines.append(f"### {record.table_name}")
+            for key, value in list(record.fields.items())[:20]:
+                lines.append(f"- {key}: {value}")
+        lines.append("")
+        lines.append("## Bitable 使用要求")
+        lines.append("生成内容可以引用以上结构化记录；如果 Bitable 数据为空或不足，继续使用聊天上下文和 RAG。")
+        return lines
 
     def _format_agent_knowledge_docs(self, docs: list[KnowledgeDoc]) -> list[str]:
         if not docs:
@@ -954,22 +1002,81 @@ class AgentService:
             return instruction
         return "\n".join([instruction, "", *context_lines])
 
+    def _append_bitable_context_to_instruction(self, instruction: str, records: list[BitableRecord]) -> str:
+        context_lines = self._format_agent_bitable_records(records)
+        if not context_lines:
+            return instruction
+        return "\n".join([instruction, "", *context_lines])
+
     def _request_with_retrieved_context(
         self,
         request: AgentChatRequest,
         retrieved_context: list[Any],
     ) -> AgentChatRequest:
-        docs = self._knowledge_docs_from_retrieved_context(
-            [
-                item.model_dump() if hasattr(item, "model_dump") else dict(item)
-                for item in retrieved_context
-            ]
-        )
-        if not docs:
+        dumped_context = [
+            item.model_dump() if hasattr(item, "model_dump") else dict(item)
+            for item in retrieved_context
+        ]
+        docs = self._knowledge_docs_from_retrieved_context(dumped_context)
+        bitable_records = self._bitable_records_from_retrieved_context(dumped_context)
+        if not docs and not bitable_records:
             return request
         context = request.context or AgentContext()
-        merged = context.model_copy(update={"knowledge_docs": [*context.knowledge_docs, *docs]})
+        merged = context.model_copy(
+            update={
+                "knowledge_docs": [*context.knowledge_docs, *docs],
+                "bitable_records": [*context.bitable_records, *bitable_records],
+            }
+        )
         return request.model_copy(update={"context": merged})
+
+    async def _runtime_bitable_schema_tool(
+        self,
+        workspace_id: str = "Feishu_demo_Eko",
+        created_by: str | None = None,
+    ) -> dict[str, Any]:
+        if self._bitable_service is None:
+            return {"sources": []}
+        return {
+            "sources": [
+                source.model_dump()
+                for source in await self._bitable_service.list_sources(workspace_id, created_by=created_by)
+            ]
+            if created_by
+            else []
+        }
+
+    async def _runtime_bitable_search_tool(
+        self,
+        query: str,
+        workspace_id: str = "Feishu_demo_Eko",
+        limit: int = 8,
+        created_by: str | None = None,
+    ) -> dict[str, Any]:
+        if self._bitable_service is None:
+            return {"records": [], "failures": []}
+        return (
+            await self._bitable_service.query_records(
+                BitableQueryRequest(workspace_id=workspace_id, query=query, limit=limit),
+                created_by=created_by,
+            )
+        ).model_dump()
+
+    async def _runtime_bitable_archive_tool(
+        self,
+        session_id: str,
+        artifact: dict[str, Any],
+        workspace_id: str = "Feishu_demo_Eko",
+        created_by: str | None = None,
+    ) -> dict[str, Any]:
+        if self._bitable_service is None:
+            return {"results": []}
+        return (
+            await self._bitable_service.archive_artifact(
+                BitableArchiveRequest(workspace_id=workspace_id, session_id=session_id, artifact=artifact),
+                created_by=created_by,
+            )
+        ).model_dump()
 
     def _build_chat_prompt(
         self,
@@ -988,6 +1095,9 @@ class AgentService:
             )
         if enriched_request.context and enriched_request.context.knowledge_docs:
             sections.extend(self._format_agent_knowledge_docs(enriched_request.context.knowledge_docs))
+            sections.append("")
+        if enriched_request.context and enriched_request.context.bitable_records:
+            sections.extend(self._format_agent_bitable_records(enriched_request.context.bitable_records))
             sections.append("")
         sections.extend(["## 当前问题", enriched_request.message])
         return "\n".join(sections)
@@ -1094,6 +1204,10 @@ class AgentService:
                 if synced_url and response.artifact is not None:
                     response.message = "文档生成完成，并已同步到飞书。"
                     response.artifact.sharing_url = synced_url
+                archive_results = await self._archive_artifact_to_bitable(request, response, trace_events)
+                if archive_results and response.artifact is not None:
+                    response.artifact = response.artifact.model_copy(update={"bitable_archive_results": archive_results})
+                response.events = self._events_from_traces(trace_events)
                 await self._publish_chat_result(request, response)
                 return response
 
@@ -1216,6 +1330,10 @@ class AgentService:
                 )
                 if created_board_document is not None and not is_failed:
                     await self._share_board_result_to_feishu_chat(request, created_board_document, completed_task)
+                archive_results = await self._archive_artifact_to_bitable(request, response, trace_events)
+                if archive_results and response.artifact is not None:
+                    response.artifact = response.artifact.model_copy(update={"bitable_archive_results": archive_results})
+                response.events = self._events_from_traces(trace_events)
                 await self._publish_chat_result(request, response)
                 return response
 
@@ -1379,6 +1497,10 @@ class AgentService:
                 if synced_url and response.artifact is not None:
                     response.message = "文档生成完成，并已同步到飞书。"
                     response.artifact.sharing_url = synced_url
+                archive_results = await self._archive_artifact_to_bitable(request, response, trace_events)
+                if archive_results and response.artifact is not None:
+                    response.artifact = response.artifact.model_copy(update={"bitable_archive_results": archive_results})
+                response.events = self._events_from_traces(trace_events)
                 await self._publish_chat_result(request, response)
             elif intent == AgentIntent.PPT and ppt_tool_result is not None:
                 artifact = self._ppt_artifact_from_tool_result(ppt_tool_result)
@@ -1429,6 +1551,10 @@ class AgentService:
                 )
                 if created_board_document is not None and not is_failed:
                     await self._share_board_result_to_feishu_chat(request, created_board_document, completed_task)
+                archive_results = await self._archive_artifact_to_bitable(request, response, trace_events)
+                if archive_results and response.artifact is not None:
+                    response.artifact = response.artifact.model_copy(update={"bitable_archive_results": archive_results})
+                response.events = self._events_from_traces(trace_events)
                 await self._publish_chat_result(request, response)
             elif intent == AgentIntent.CHAT:
                 reply = await self._llm.generate(
@@ -1780,7 +1906,7 @@ class AgentService:
         if synced_url:
             updated_artifact = updated_artifact.model_copy(update={"sharing_url": synced_url})
             message = "已修改当前文档，并已同步到飞书。"
-        return AgentChatResponse(
+        response = AgentChatResponse(
             session_id=request.session_id,
             intent=AgentIntent.DOCX.value,
             status="completed",
@@ -1788,6 +1914,72 @@ class AgentService:
             artifact=updated_artifact,
             plan=plan,
         )
+        archive_results = await self._archive_artifact_to_bitable(request, response)
+        if archive_results and response.artifact is not None:
+            response.artifact = response.artifact.model_copy(update={"bitable_archive_results": archive_results})
+        return response
+
+    async def _archive_artifact_to_bitable(
+        self,
+        request: AgentChatRequest,
+        response: AgentChatResponse,
+        trace_events: list[Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        if self._bitable_service is None or response.artifact is None or response.status != "completed":
+            return []
+        try:
+            archive_response = await self._bitable_service.archive_artifact(
+                BitableArchiveRequest(
+                    workspace_id=self._workspace_id_from_request(request),
+                    session_id=request.session_id,
+                    artifact=response.artifact.model_dump(),
+                ),
+                created_by=self._created_by_from_request(request),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Bitable archive failed session=%s: %s", request.session_id, exc)
+            if trace_events is not None:
+                trace_events.append(
+                    AgentTraceEvent(
+                        type="artifact_archive_failed",
+                        status="failed",
+                        message="Bitable 归档失败，主任务已继续完成。",
+                        data={"error": str(exc)},
+                    )
+                )
+            return []
+
+        if not archive_response.results:
+            return []
+        failed = [result for result in archive_response.results if result.status == "failed"]
+        event_type = "artifact_archive_failed" if failed else "artifact_archived"
+        status = "failed" if failed else "completed"
+        message = "Bitable 归档失败，主任务已继续完成。" if failed else "生成产物已归档到 Bitable。"
+        if trace_events is not None:
+            trace_events.append(
+                AgentTraceEvent(
+                    type=event_type,
+                    status=status,  # type: ignore[arg-type]
+                    message=message,
+                    data={"results": [result.model_dump() for result in archive_response.results]},
+                )
+            )
+        return [result.model_dump() for result in archive_response.results]
+
+    def _workspace_id_from_request(self, request: AgentChatRequest) -> str:
+        if request.sender and isinstance(request.sender.get("workspace_id"), str):
+            return str(request.sender["workspace_id"])
+        return settings.BITABLE_DEFAULT_WORKSPACE_ID
+
+    def _created_by_from_request(self, request: AgentChatRequest) -> str | None:
+        if not request.sender:
+            return None
+        raw = (
+            request.sender.get("platform_user_id")
+            or request.sender.get("sender_open_id")
+            or request.sender.get("sender_union_id")
+        )
+        return str(raw) if raw else None
 
     def _tool_call_message(self, intent: AgentIntent) -> str:
         if intent == AgentIntent.DOCX:
@@ -2382,6 +2574,9 @@ class AgentService:
                     error=response.error,
                 )
                 return
+            archive_results = await self._archive_artifact_to_bitable(request, response)
+            if archive_results and response.artifact is not None:
+                response.artifact = response.artifact.model_copy(update={"bitable_archive_results": archive_results})
             await self._publish_chat_result(request, response)
         except Exception as exc:  # noqa: BLE001
             logger.exception("AIPPT background job failed session=%s job_id=%s", request.session_id, job_id)

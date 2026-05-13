@@ -74,8 +74,8 @@ export function ProfileOverview({ base }: { base: UserProfile }) {
 
   return (
     <>
-      <section className="overflow-hidden rounded-[24px] border border-white/80 bg-white/95 shadow-[0_20px_56px_rgba(15,23,42,0.08)] backdrop-blur-sm">
-        <div className="flex flex-col gap-6 border-b border-slate-100 px-6 py-8 sm:flex-row sm:items-center">
+      <section className="overflow-hidden rounded-[20px] border border-white/80 bg-white/95 shadow-[0_20px_56px_rgba(15,23,42,0.08)] backdrop-blur-sm sm:rounded-[24px]">
+        <div className="flex flex-col gap-5 border-b border-slate-100 px-4 py-6 sm:flex-row sm:items-center sm:gap-6 sm:px-6 sm:py-8">
           <div className="relative mx-auto shrink-0 sm:mx-0">
             <div className="flex h-[104px] w-[104px] items-center justify-center rounded-full bg-gradient-to-br from-slate-100 to-slate-200 text-[28px] font-semibold text-slate-700 shadow-inner">
               {data.initials}
@@ -93,7 +93,7 @@ export function ProfileOverview({ base }: { base: UserProfile }) {
           <div className="min-w-0 flex-1 text-center sm:text-left">
             <h1 className="text-[26px] font-semibold tracking-[-0.04em] text-slate-950">{data.displayName}</h1>
             <p className="mt-1 text-[14px] text-slate-500">{data.nameEn}</p>
-            <p className="mt-3 truncate text-[14px] font-medium text-slate-700">{data.email}</p>
+            <p className="mt-3 break-words text-[14px] font-medium text-slate-700">{data.email}</p>
             <div className="mt-4 flex flex-wrap justify-center gap-2 sm:justify-start">
               <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[12px] font-medium text-slate-600">
                 {data.jobTitle}

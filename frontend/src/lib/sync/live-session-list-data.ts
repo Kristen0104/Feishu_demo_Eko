@@ -45,9 +45,11 @@ function getBackendOrigin(): string {
 }
 
 function mapStatus(status: string): SessionStatus {
-  if (status === "已同步" || status === "进行中" || status === "草稿" || status === "待处理") return status;
-  if (status === "completed" || status === "done") return "已同步";
-  if (status.includes("失败")) return "待处理";
+  const normalized = status.trim().toLowerCase();
+  if (status === "已同步" || normalized === "completed" || normalized === "done" || normalized === "success") return "已同步";
+  if (status === "进行中" || normalized === "running" || normalized === "processing" || normalized === "queued") return "进行中";
+  if (status.includes("失败") || normalized === "failed" || normalized === "error" || normalized === "cancelled") return "待处理";
+  if (status === "草稿" || status === "待处理") return status;
   return "进行中";
 }
 
@@ -156,10 +158,17 @@ function groupSessions(sessions: SyncSession[]): SessionSection[] {
 }
 
 async function fetchSyncSessions(): Promise<SyncSession[]> {
+  if (!process.env.BACKEND_PROXY?.trim() && !process.env.NEXT_PUBLIC_EKO_API_BASE?.trim()) {
+    return [];
+  }
+
   const origin = getBackendOrigin();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 1800);
   try {
     const response = await fetch(`${origin}/api/v1/sync/sessions`, {
       cache: "no-store",
+      signal: controller.signal,
     });
     const body = (await response.json().catch(() => null)) as { code?: number; data?: SyncSession[] } | null;
     if (!response.ok || !body || body.code !== 0 || !Array.isArray(body.data)) {
@@ -168,6 +177,8 @@ async function fetchSyncSessions(): Promise<SyncSession[]> {
     return body.data;
   } catch {
     return [];
+  } finally {
+    clearTimeout(timeout);
   }
 }
 

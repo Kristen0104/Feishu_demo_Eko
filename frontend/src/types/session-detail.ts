@@ -129,6 +129,14 @@ export type DetailDocumentArtifact = {
   whiteboardId?: string | null;
   previewUrl?: string | null;
   resultSummary?: string | null;
+  bitableArchiveResults?: Array<{
+    source_id?: string | null;
+    record_id?: string | null;
+    record_url?: string | null;
+    status?: string | null;
+    message?: string | null;
+    error?: string | null;
+  }> | null;
 };
 
 export type DetailDocumentTableRow = {

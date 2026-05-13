@@ -87,6 +87,10 @@ export type AgentChatStreamEvent = {
     | "context.loaded"
     | "retrieval.started"
     | "retrieval.completed"
+    | "source.bitable.started"
+    | "source.bitable.completed"
+    | "source.bitable.empty"
+    | "source.bitable.failed"
     | "plan.created"
     | "plan.summary"
     | "plan.step"
@@ -94,9 +98,13 @@ export type AgentChatStreamEvent = {
     | "tool.started"
     | "tool.completed"
     | "clarification.requested"
+    | "artifact.archived"
+    | "artifact.archive_failed"
     | "result.created"
     | "turn.failed";
   status?: "pending" | "running" | "completed" | "blocked" | "failed";
+  channel?: "chat" | "status" | "plan" | "sources" | "artifact" | "log" | "error";
+  visibility?: "user" | "detail" | "debug";
   message?: string;
   payload?: Record<string, unknown>;
 };

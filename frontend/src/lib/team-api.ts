@@ -1,5 +1,5 @@
 import { fetchEkoJson } from "@/lib/eko-api";
-import type { TeamMember, TeamMemberDto } from "@/types/team";
+import type { SessionInvite, SessionInviteDto, SessionInviteStatus, TeamMember, TeamMemberDto } from "@/types/team";
 
 function mapTeamMember(dto: TeamMemberDto): TeamMember {
   return {
@@ -13,6 +13,24 @@ function mapTeamMember(dto: TeamMemberDto): TeamMember {
     isRegisteredUser: dto.is_registered_user,
     invitedByName: dto.invited_by_name,
     createdAt: dto.created_at,
+  };
+}
+
+function mapSessionInvite(dto: SessionInviteDto): SessionInvite {
+  return {
+    id: dto.id,
+    sessionId: dto.session_id,
+    sessionTitle: dto.session_title,
+    inviterUserId: dto.inviter_user_id,
+    inviterName: dto.inviter_name,
+    inviteeUserId: dto.invitee_user_id,
+    inviteeEmail: dto.invitee_email,
+    inviteeName: dto.invitee_name,
+    status: dto.status,
+    isExpired: dto.is_expired,
+    createdAt: dto.created_at,
+    expiresAt: dto.expires_at,
+    respondedAt: dto.responded_at,
   };
 }
 
@@ -35,3 +53,28 @@ export async function removeTeamMember(memberId: string): Promise<void> {
   });
 }
 
+export async function createSessionInvite(sessionId: string, input: { memberId?: string; email?: string }): Promise<SessionInvite> {
+  const data = await fetchEkoJson<SessionInviteDto>(`/api/v1/team/sessions/${encodeURIComponent(sessionId)}/invites`, {
+    method: "POST",
+    body: JSON.stringify({ member_id: input.memberId, email: input.email }),
+  });
+  return mapSessionInvite(data);
+}
+
+export async function fetchSessionInvites(sessionId: string): Promise<SessionInvite[]> {
+  const data = await fetchEkoJson<SessionInviteDto[]>(`/api/v1/team/sessions/${encodeURIComponent(sessionId)}/invites`);
+  return data.map(mapSessionInvite);
+}
+
+export async function fetchMySessionInvites(): Promise<SessionInvite[]> {
+  const data = await fetchEkoJson<SessionInviteDto[]>("/api/v1/team/session-invites");
+  return data.map(mapSessionInvite);
+}
+
+export async function updateSessionInvite(inviteId: string, action: Extract<SessionInviteStatus, "accepted" | "declined" | "dismissed">): Promise<SessionInvite> {
+  const data = await fetchEkoJson<SessionInviteDto>(`/api/v1/team/session-invites/${encodeURIComponent(inviteId)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ action }),
+  });
+  return mapSessionInvite(data);
+}

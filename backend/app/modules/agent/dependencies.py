@@ -19,6 +19,8 @@ from app.modules.sync.dependencies import get_sync_service
 from app.modules.sync.service import SyncService
 from app.modules.rag.dependencies import get_rag_service
 from app.modules.rag.service import RagService
+from app.modules.bitable.dependencies import get_bitable_service
+from app.modules.bitable.service import BitableService
 
 
 def get_agent_service(
@@ -29,6 +31,7 @@ def get_agent_service(
     canvas_service: Annotated[CanvasService, Depends(get_canvas_service)],
     sync_service: Annotated[SyncService, Depends(get_sync_service)],
     rag_service: Annotated[RagService, Depends(get_rag_service)],
+    bitable_service: Annotated[BitableService, Depends(get_bitable_service)],
 ) -> AgentService:
     """获取 AgentService 实例"""
     return AgentService(
@@ -39,4 +42,5 @@ def get_agent_service(
         canvas_service=canvas_service,
         sync_service=sync_service,
         rag_service=rag_service,
+        bitable_service=bitable_service,
     )

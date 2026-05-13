@@ -15,6 +15,7 @@ import { useEkoSessionRealtime } from "@/hooks/useEkoSessionRealtime";
 import { apiUrl, fetchEkoJson } from "@/lib/eko-api";
 import { fetchSyncSession } from "@/lib/sync/fetch-session";
 import { streamAgentChat, type AgentChatStreamEvent } from "@/lib/agent/sse-stream";
+import { createSessionInvite, fetchMySessionInvites, fetchSessionInvites, fetchTeamMembers, updateSessionInvite } from "@/lib/team-api";
 import { useAppStore } from "@/store/app-store";
 import { useAgentRuntimeStore, type PlanningPlanWire, type PlanningStepWire, type RetrievedSourceWire } from "@/store/agent-runtime-store";
 import {
@@ -28,12 +29,59 @@ import {
   DetailTabKey,
   SessionDetailData,
 } from "@/types/session-detail";
+import type { SessionInvite, TeamMember } from "@/types/team";
 import type { WorkflowStatus } from "@/types/workspace";
 import type { WorkflowStep } from "@/types/workspace";
 
 import { useSessionWorkspaceSearch } from "@/components/workspace/session-workspace-search";
 import { DetailConversationMessage } from "./DetailConversationMessage";
 import { detailDesignTokens } from "./designTokens";
+
+type AgentEventChannel = "chat" | "status" | "plan" | "sources" | "artifact" | "log" | "error";
+type MobileDetailTab = "chat" | "output" | "context";
+
+const MOBILE_DETAIL_TABS: Array<{ key: MobileDetailTab; label: string }> = [
+  { key: "chat", label: "对话" },
+  { key: "output", label: "输出" },
+  { key: "context", label: "上下文" },
+];
+
+function inferAgentEventChannel(event: {
+  event?: string | null;
+  channel?: AgentEventChannel | null;
+}): AgentEventChannel {
+  if (event.channel) return event.channel;
+  switch (event.event) {
+    case "turn.started":
+    case "intent.recognized":
+    case "retrieval.started":
+    case "tool.started":
+      return "status";
+    case "context.loaded":
+    case "retrieval.completed":
+    case "source.bitable.started":
+    case "source.bitable.completed":
+    case "source.bitable.empty":
+    case "source.bitable.failed":
+      return "sources";
+    case "plan.created":
+    case "plan.summary":
+    case "plan.step":
+      return "plan";
+    case "result.created":
+    case "clarification.requested":
+      return "chat";
+    case "artifact.archived":
+    case "artifact.archive_failed":
+      return "artifact";
+    case "turn.failed":
+      return "error";
+    case "tool.selected":
+    case "tool.completed":
+    default:
+      return "log";
+  }
+}
 
 function SmallIcon({
   type,
@@ -328,6 +376,7 @@ type AgentChatResponseWire = {
     sharing_url?: string | null;
     result_summary?: string | null;
     error_message?: string | null;
+    bitable_archive_results?: DetailDocumentArtifact["bitableArchiveResults"];
   } | null;
   plan?: {
     goal?: string | null;
@@ -408,6 +457,7 @@ function toDetailArtifact(artifact?: AgentChatResponseWire["artifact"]): DetailD
     sharingUrl: artifact.sharing_url,
     resultSummary: artifact.result_summary,
     errorMessage: artifact.error_message,
+    bitableArchiveResults: artifact.bitable_archive_results ?? null,
   };
 }
 
@@ -494,8 +544,11 @@ function ragSnippet(content: string) {
 function ragSourcesToContextSources(sources: RetrievedSourceWire[]): DetailSourceItem[] {
   return sources.map((source, index) => ({
     id: `rag:${source.sourceId}:${index}`,
-    title: source.title || "RAG 命中资料",
-    description: `RAG${ragScoreLabel(source.score)} · ${ragSnippet(source.content)}`,
+    title: source.title || (source.sourceType === "bitable" ? "Bitable 数据" : "RAG 命中资料"),
+    description:
+      source.sourceType === "bitable"
+        ? `Bitable${ragScoreLabel(source.score)} · ${ragSnippet(source.content)}`
+        : `RAG${ragScoreLabel(source.score)} · ${ragSnippet(source.content)}`,
     status: "completed",
   }));
 }
@@ -503,9 +556,9 @@ function ragSourcesToContextSources(sources: RetrievedSourceWire[]): DetailSourc
 function ragSourcesToEvidence(sources: RetrievedSourceWire[]): DetailEvidenceItem[] {
   return sources.map((source, index) => ({
     id: `rag:evidence:${source.sourceId}:${index}`,
-    title: source.title || "RAG 命中资料",
+    title: source.title || (source.sourceType === "bitable" ? "Bitable 数据" : "RAG 命中资料"),
     description: ragSnippet(source.content),
-    tone: source.sourceType === "chat_history" ? "chat" : source.sourceType === "artifact" ? "record" : "document",
+    tone: source.sourceType === "chat_history" ? "chat" : source.sourceType === "artifact" || source.sourceType === "bitable" ? "record" : "document",
   }));
 }
 
@@ -1242,12 +1295,38 @@ function AgentRealtimeRibbon({
   );
 }
 
+function formatInviteExpiry(expiresAt: string): string {
+  const expires = new Date(expiresAt).getTime();
+  if (!Number.isFinite(expires)) return "24 小时内有效";
+  const diffMs = expires - Date.now();
+  if (diffMs <= 0) return "已过期";
+  const hours = Math.ceil(diffMs / (60 * 60 * 1000));
+  if (hours >= 24) return "24 小时内有效";
+  return `${hours} 小时内有效`;
+}
+
+function inviteStatusLabel(invite: SessionInvite): string {
+  if (invite.isExpired || invite.status === "expired") return "已过期";
+  if (invite.status === "accepted") return "已加入";
+  if (invite.status === "declined") return "已拒绝";
+  if (invite.status === "dismissed") return "已忽略";
+  return "待确认";
+}
+
+function inviteStatusClass(invite: SessionInvite): string {
+  if (invite.isExpired || invite.status === "expired") return "bg-slate-100 text-slate-500";
+  if (invite.status === "accepted") return "bg-emerald-50 text-emerald-700";
+  if (invite.status === "pending") return "bg-blue-50 text-blue-700";
+  return "bg-amber-50 text-amber-700";
+}
+
 export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
   const { query: workspaceSearchQuery } = useSessionWorkspaceSearch();
   const setRuntimeSessionPatch = useAppStore((state) => state.setRuntimeSessionPatch);
   const conversationOpen = useAppStore((s) => s.sessionDetailChatOpen);
   const agentSlice = useAgentRuntimeStore((s) => s.sessions[data.id]);
   const [activeTab, setActiveTab] = useState<DetailTabKey>(data.defaultTab);
+  const [mobileTab, setMobileTab] = useState<MobileDetailTab>("output");
   const [messages, setMessages] = useState(data.messages);
   const selfAuthor = useMemo(() => {
     const counts = new Map<string, number>();
@@ -1314,6 +1393,15 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
   const [contextNotice, setContextNotice] = useState<string | null>(null);
   const [conversationFilter, setConversationFilter] = useState<"all" | "eko">("all");
   const [memoryExpanded, setMemoryExpanded] = useState(false);
+  const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
+  const [sessionInvites, setSessionInvites] = useState<SessionInvite[]>([]);
+  const [mySessionInvites, setMySessionInvites] = useState<SessionInvite[]>([]);
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const [inviteMemberId, setInviteMemberId] = useState("");
+  const [inviteNotice, setInviteNotice] = useState<string | null>(null);
+  const [inviteError, setInviteError] = useState<string | null>(null);
+  const [inviteSubmitting, setInviteSubmitting] = useState(false);
+  const [inviteInboxOpen, setInviteInboxOpen] = useState(false);
   const canvasSyncActions = useMemo<DetailSyncAction[]>(
     () =>
       isCanvasMode
@@ -1347,6 +1435,18 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
       return blob.includes(searchNeedle);
     });
   }, [conversationFilter, messages, searchNeedle]);
+  const inviteableMembers = useMemo(
+    () => teamMembers.filter((member) => !member.isCurrentUser && member.status === "active"),
+    [teamMembers],
+  );
+  const pendingSessionInvites = useMemo(
+    () => sessionInvites.filter((invite) => invite.status === "pending" && !invite.isExpired),
+    [sessionInvites],
+  );
+  const pendingMyInvites = useMemo(
+    () => mySessionInvites.filter((invite) => invite.status === "pending" && !invite.isExpired),
+    [mySessionInvites],
+  );
   const runtimeContextSources = useMemo(
     () => mergeById(data.contextSources, ragSourcesToContextSources(agentSlice?.retrievedSources ?? [])),
     [agentSlice?.retrievedSources, data.contextSources],
@@ -1370,6 +1470,60 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
     const timer = window.setTimeout(() => setCanvasNotice(null), 2400);
     return () => window.clearTimeout(timer);
   }, [canvasNotice]);
+
+  const loadSessionCollaborationData = useCallback(async () => {
+    try {
+      const [members, invites, mine] = await Promise.all([
+        fetchTeamMembers(),
+        fetchSessionInvites(data.id),
+        fetchMySessionInvites(),
+      ]);
+      setTeamMembers(members);
+      setSessionInvites(invites);
+      setMySessionInvites(mine);
+      if (!inviteMemberId) {
+        const firstInviteable = members.find((member) => !member.isCurrentUser && member.status === "active");
+        setInviteMemberId(firstInviteable?.id ?? "");
+      }
+    } catch (error) {
+      setInviteError(error instanceof Error ? error.message : "加载协作邀请失败");
+    }
+  }, [data.id, inviteMemberId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const [members, invites, mine] = await Promise.all([
+          fetchTeamMembers(),
+          fetchSessionInvites(data.id),
+          fetchMySessionInvites(),
+        ]);
+        if (cancelled) return;
+        setTeamMembers(members);
+        setSessionInvites(invites);
+        setMySessionInvites(mine);
+        const firstInviteable = members.find((member) => !member.isCurrentUser && member.status === "active");
+        setInviteMemberId((current) => current || firstInviteable?.id || "");
+      } catch {
+        if (!cancelled) {
+          setTeamMembers([]);
+        }
+      }
+    };
+    void load();
+    const timer = window.setInterval(load, 15000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [data.id]);
+
+  useEffect(() => {
+    if (pendingMyInvites.length > 0) {
+      setInviteInboxOpen(true);
+    }
+  }, [pendingMyInvites.length]);
 
   const handleRealtimeEnvelope = useCallback((raw: unknown) => {
     if (!raw || typeof raw !== "object") return;
@@ -1469,6 +1623,13 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
     resourceKind === "board" ? "canvas" : resourceKind === "ppt" || resourceKind === "docx" || showDocStream ? "doc" : null;
   const workspaceExpanded = resourceTab !== null;
   const displayTab = resourceTab ?? activeTab;
+
+  useEffect(() => {
+    if (!workspaceExpanded && mobileTab === "output") {
+      setMobileTab("chat");
+    }
+  }, [mobileTab, workspaceExpanded]);
+
   const mergedWorkflow = useMemo(
     () => mergeWorkflowSteps(data.workflow, plannerEnabled ? agentSlice?.planningSteps ?? [] : [], resourceKind, phase, detailArtifact?.status),
     [agentSlice?.planningSteps, data.workflow, detailArtifact?.status, phase, plannerEnabled, resourceKind],
@@ -1740,58 +1901,15 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
           },
           (event: AgentChatStreamEvent) => {
             const payload = event.payload ?? {};
+            const channel = inferAgentEventChannel(event);
             store.patchSession(data.id, { useMockFallback: false });
+            store.ingestEnvelope(data.id, event);
             if (event.event === "turn.started") {
               const planningEnabled = payload.planning_enabled !== false;
               updateStreamMessage(isExistingDocumentEdit ? "好的，直接修改当前文档。" : event.message || "收到。我开始处理。", {
                 helperText: planningEnabled ? "理解与规划中" : "直接执行中",
                 replace: isExistingDocumentEdit,
               });
-              return;
-            }
-            if (event.event === "intent.recognized") {
-              store.patchSession(data.id, { phase: "ANALYZING" });
-              if (isExistingDocumentEdit) return;
-              const intent = typeof payload.intent === "string" ? payload.intent : "chat";
-              updateStreamMessage(event.message || `我判断这次要走 ${intent} 能力。`, { sent: true });
-              return;
-            }
-            if (event.event === "retrieval.started") {
-              store.ingestEnvelope(data.id, event);
-              if (isExistingDocumentEdit) return;
-              updateStreamMessage(event.message || "正在检索 RAG 知识库。", { helperText: "RAG 检索中", replace: true });
-              return;
-            }
-            if (event.event === "retrieval.completed") {
-              store.ingestEnvelope(data.id, event);
-              if (isExistingDocumentEdit) return;
-              const sources = Array.isArray(payload.sources) ? payload.sources : [];
-              updateStreamMessage(event.message || `已检索到 ${sources.length} 条 RAG 来源。`, { sent: true });
-              return;
-            }
-            if (event.event === "plan.created") {
-              const planningPlan = toPlanningPlan(payload.plan as AgentChatResponseWire["plan"]);
-              if (planningPlan) {
-                store.patchSession(data.id, {
-                  phase: "RETRIEVING",
-                  planningPlan,
-                  planningSteps: planningPlan.steps,
-                });
-                updateStreamMessage(planningMessageBody(planningPlan), {
-                  plannerCard: planningPlan,
-                  sent: true,
-                });
-              }
-              return;
-            }
-            if (event.event === "plan.summary") {
-              if (isExistingDocumentEdit) return;
-              updateStreamMessage(event.message ? `计划：${event.message}` : "计划已生成。", { sent: true });
-              return;
-            }
-            if (event.event === "plan.step") {
-              if (isExistingDocumentEdit) return;
-              updateStreamMessage(event.message || "继续执行下一步。", { sent: true });
               return;
             }
             if (event.event === "clarification.requested") {
@@ -1805,14 +1923,6 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
               );
               return;
             }
-            if (event.event === "tool.started") {
-              store.patchSession(data.id, { phase: "GENERATING" });
-              updateStreamMessage(isExistingDocumentEdit ? "正在修改当前文档..." : event.message || "好的，我现在调用对应能力。", {
-                sent: true,
-                replace: isExistingDocumentEdit,
-              });
-              return;
-            }
             if (event.event === "result.created") {
               applyResponse(payload.response as AgentChatResponseWire);
               return;
@@ -1820,6 +1930,10 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
             if (event.event === "turn.failed") {
               const error = typeof payload.error === "string" ? payload.error : "";
               streamError = error || event.message || "处理失败，请稍后重试。";
+              return;
+            }
+            if (channel === "chat" && event.message && !isExistingDocumentEdit) {
+              updateStreamMessage(event.message, { sent: true });
             }
           },
         );
@@ -1900,6 +2014,8 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
 
       for (const event of events) {
         const payload = event.payload ?? {};
+        const channel = inferAgentEventChannel(event);
+        useAgentRuntimeStore.getState().ingestEnvelope(data.id, event);
         if (event.event === "turn.started") {
           const message = options.skipContext
             ? "收到。本次将忽略群聊消息记录，直接继续处理。"
@@ -1908,41 +2024,6 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
             helperText: payload.planning_enabled !== false ? "理解与规划中" : "直接执行中",
             replace: true,
           });
-          continue;
-        }
-        if (event.event === "intent.recognized") {
-          const intent = typeof payload.intent === "string" ? payload.intent : "chat";
-          updateReplayMessage(event.message || `我判断这次要走 ${intent} 能力。`, { sent: true });
-          continue;
-        }
-        if (event.event === "retrieval.started") {
-          updateReplayMessage(event.message || "正在检索 RAG 知识库。", { helperText: "RAG 检索中", replace: true });
-          continue;
-        }
-        if (event.event === "retrieval.completed") {
-          const sources = Array.isArray(payload.sources) ? payload.sources : [];
-          updateReplayMessage(event.message || `已检索到 ${sources.length} 条 RAG 来源。`, { sent: true });
-          continue;
-        }
-          if (event.event === "plan.created") {
-            const planningPlan = toPlanningPlan(payload.plan as AgentChatResponseWire["plan"]);
-            if (planningPlan) {
-              useAgentRuntimeStore.getState().patchSession(data.id, {
-                phase: "RETRIEVING",
-                planningPlan,
-                planningSteps: planningPlan.steps,
-                lastError: null,
-              });
-              updateReplayMessage(planningMessageBody(planningPlan), { sent: true });
-            }
-            continue;
-          }
-        if (event.event === "plan.summary") {
-          updateReplayMessage(event.message ? `计划：${event.message}` : "计划已生成。", { sent: true });
-          continue;
-        }
-        if (event.event === "plan.step") {
-          updateReplayMessage(event.message || "继续执行下一步。", { sent: true });
           continue;
         }
         if (event.event === "clarification.requested") {
@@ -1955,8 +2036,8 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
           );
           continue;
         }
-        if (event.event === "tool.started") {
-          updateReplayMessage(event.message || "好的，我现在调用对应能力。", { sent: true });
+        if (channel === "chat" && event.message) {
+          updateReplayMessage(event.message, { sent: true });
         }
       }
     };
@@ -1991,7 +2072,7 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
           author: "Eko",
           role: "eko",
           time: "刚刚",
-          body: [planningPlan ? planningMessageBody(planningPlan) : "", body.data?.message || "已基于选中的上下文生成回复。"].filter(Boolean).join("\n\n"),
+          body: body.data?.message || "已基于选中的上下文完成处理。",
           avatar: "E",
           sent: true,
         },
@@ -2060,46 +2141,13 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
         };
         for (const event of events) {
           const eventPayload = event.payload ?? {};
+          const channel = inferAgentEventChannel(event);
+          useAgentRuntimeStore.getState().ingestEnvelope(data.id, event);
           if (event.event === "turn.started") {
             updateReplayMessage("收到。本次将忽略群聊消息记录，直接继续处理。", {
               helperText: eventPayload.planning_enabled !== false ? "理解与规划中" : "直接执行中",
               replace: true,
             });
-            continue;
-          }
-          if (event.event === "intent.recognized") {
-            const intent = typeof eventPayload.intent === "string" ? eventPayload.intent : "chat";
-            updateReplayMessage(event.message || `我判断这次要走 ${intent} 能力。`, { sent: true });
-            continue;
-          }
-          if (event.event === "retrieval.started") {
-            updateReplayMessage(event.message || "正在检索 RAG 知识库。", { helperText: "RAG 检索中", replace: true });
-            continue;
-          }
-          if (event.event === "retrieval.completed") {
-            const sources = Array.isArray(eventPayload.sources) ? eventPayload.sources : [];
-            updateReplayMessage(event.message || `已检索到 ${sources.length} 条 RAG 来源。`, { sent: true });
-            continue;
-          }
-          if (event.event === "plan.created") {
-            const planningPlan = toPlanningPlan(eventPayload.plan as AgentChatResponseWire["plan"]);
-            if (planningPlan) {
-              useAgentRuntimeStore.getState().patchSession(data.id, {
-                phase: "RETRIEVING",
-                planningPlan,
-                planningSteps: planningPlan.steps,
-                lastError: null,
-              });
-              updateReplayMessage(planningMessageBody(planningPlan), { sent: true });
-            }
-            continue;
-          }
-          if (event.event === "plan.summary") {
-            updateReplayMessage(event.message ? `计划：${event.message}` : "计划已生成。", { sent: true });
-            continue;
-          }
-          if (event.event === "plan.step") {
-            updateReplayMessage(event.message || "继续执行下一步。", { sent: true });
             continue;
           }
           if (event.event === "clarification.requested") {
@@ -2112,8 +2160,8 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
             );
             continue;
           }
-          if (event.event === "tool.started") {
-            updateReplayMessage(event.message || "好的，我现在调用对应能力。", { sent: true });
+          if (channel === "chat" && event.message) {
+            updateReplayMessage(event.message, { sent: true });
           }
         }
         const planningPlan = plannerEnabled ? toPlanningPlan(payload?.plan) : null;
@@ -2134,7 +2182,7 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
           author: "Eko",
           role: "eko",
           time: "刚刚",
-          body: [finalPlanningPlan ? planningMessageBody(finalPlanningPlan) : "", body.data?.message || "已忽略群聊消息记录，直接生成回复。"].filter(Boolean).join("\n\n"),
+          body: body.data?.message || "已忽略群聊消息记录，直接完成处理。",
           avatar: "E",
           sent: true,
         },
@@ -2208,25 +2256,108 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
     setCanvasNotice("已切换输出视图。");
   }
 
+  async function handleSendSessionInvite() {
+    const member = inviteableMembers.find((item) => item.id === inviteMemberId);
+    if (!member) {
+      setInviteError("请选择团队成员。");
+      return;
+    }
+    setInviteSubmitting(true);
+    setInviteError(null);
+    setInviteNotice(null);
+    try {
+      await createSessionInvite(data.id, { memberId: member.id });
+      await loadSessionCollaborationData();
+      setInviteNotice(`已邀请 ${member.displayName || member.email}，24 小时内有效。`);
+      setInviteOpen(false);
+    } catch (error) {
+      setInviteError(error instanceof Error ? error.message : "发送邀请失败");
+    } finally {
+      setInviteSubmitting(false);
+    }
+  }
+
+  async function handleInviteAction(invite: SessionInvite, action: "accepted" | "declined" | "dismissed") {
+    try {
+      await updateSessionInvite(invite.id, action);
+      await loadSessionCollaborationData();
+      if (action === "accepted") {
+        setInviteNotice(`已加入「${invite.sessionTitle}」。`);
+      }
+    } catch (error) {
+      setInviteError(error instanceof Error ? error.message : "处理邀请失败");
+    }
+  }
+
   return (
-    <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden overflow-x-hidden bg-[#FAFBFC] text-slate-900">
+    <div className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden overflow-x-hidden bg-[#FAFBFC] text-slate-900">
       <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
-        <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-5 pb-5 pt-2 sm:px-6 sm:pb-6 sm:pt-3">
-          <div className="flex h-full min-h-0 min-w-0 gap-4 overflow-hidden lg:gap-5">
+        <section className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-3 pb-3 pt-2 sm:px-4 lg:px-5 lg:pb-5 lg:pt-2 xl:px-6 xl:pb-6 xl:pt-3">
+          <div className="shrink-0 border-b border-slate-200 bg-white/95 px-1 py-2 backdrop-blur lg:hidden">
+            <div className="grid grid-cols-3 rounded-[12px] bg-slate-100 p-1">
+              {MOBILE_DETAIL_TABS.map((tab) => {
+                const active = mobileTab === tab.key;
+                return (
+                  <button
+                    key={tab.key}
+                    type="button"
+                    onClick={() => setMobileTab(tab.key)}
+                    className={[
+                      "h-9 rounded-[10px] text-[13px] font-semibold transition",
+                      active ? "bg-white text-blue-600 shadow-[0_4px_12px_rgba(15,23,42,0.08)]" : "text-slate-500",
+                    ].join(" ")}
+                  >
+                    {tab.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <div className="flex min-h-0 min-w-0 flex-1 gap-0 overflow-hidden lg:gap-5">
               <div
                 className={[
-                  "min-h-0 overflow-hidden transition-[width,opacity,transform] duration-300 ease-out",
+                  "min-h-0 w-full flex-1 transition-[width,opacity,transform] duration-300 ease-out",
+                  "overflow-y-auto overflow-x-hidden lg:overflow-hidden",
+                  mobileTab === "chat" ? "flex" : "hidden",
+                  "lg:block",
                   workspaceExpanded
                     ? conversationOpen
-                      ? "w-[260px] opacity-100"
-                      : "pointer-events-none w-0 -translate-x-4 opacity-0"
-                    : "w-full flex-1 opacity-100",
+                      ? "lg:w-[260px] lg:flex-none lg:opacity-100"
+                      : "lg:pointer-events-none lg:w-0 lg:flex-none lg:-translate-x-4 lg:opacity-0"
+                    : "lg:w-full lg:flex-1 lg:opacity-100",
                 ].join(" ")}
               >
-                <section className="flex h-full min-h-0 flex-col overflow-hidden rounded-[28px] border border-slate-200/90 bg-white px-5 py-4 shadow-[0_14px_32px_rgba(148,163,184,0.08)]">
-                  <div className="flex items-center justify-between">
+                <section className="flex h-full min-h-0 w-full flex-col overflow-hidden rounded-[18px] border border-slate-200/90 bg-white px-3 py-3 shadow-[0_14px_32px_rgba(148,163,184,0.08)] sm:px-4 lg:rounded-[28px] lg:px-5 lg:py-4">
+                    <div className="flex items-center justify-between">
                     <h2 className="text-[17px] font-semibold text-slate-950">{data.conversationTitle}</h2>
                     <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setInviteError(null);
+                          setInviteNotice(null);
+                          setInviteOpen(true);
+                        }}
+                        className="rounded-full border border-transparent p-1.5 text-slate-500 transition hover:bg-slate-50 hover:text-blue-600"
+                        aria-label="邀请团队成员协作"
+                        title="邀请团队成员协作"
+                      >
+                        <SmallIcon type="share" tone="blue" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setInviteInboxOpen((open) => !open)}
+                        className="relative rounded-full border border-transparent p-1.5 text-slate-500 transition hover:bg-slate-50 hover:text-blue-600"
+                        aria-label="会话邀请"
+                        title="会话邀请"
+                      >
+                        <SmallIcon type="alert" tone={pendingMyInvites.length > 0 ? "orange" : "slate"} />
+                        {pendingMyInvites.length > 0 ? (
+                          <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-semibold leading-none text-white">
+                            {pendingMyInvites.length}
+                          </span>
+                        ) : null}
+                      </button>
                       <button
                         type="button"
                         onClick={() => setConversationFilter((current) => (current === "all" ? "eko" : "all"))}
@@ -2252,6 +2383,65 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                       </button>
                     </div>
                   </div>
+                  {inviteNotice || inviteError || inviteInboxOpen ? (
+                    <div className="mt-3 space-y-2 border-t border-slate-100 pt-3">
+                      {inviteNotice ? (
+                        <div className="rounded-[12px] border border-emerald-100 bg-emerald-50 px-3 py-2 text-[12px] font-medium text-emerald-700">
+                          {inviteNotice}
+                        </div>
+                      ) : null}
+                      {inviteError ? (
+                        <div className="rounded-[12px] border border-rose-100 bg-rose-50 px-3 py-2 text-[12px] font-medium text-rose-700">
+                          {inviteError}
+                        </div>
+                      ) : null}
+                      {inviteInboxOpen ? (
+                        <div className="rounded-[14px] border border-slate-200 bg-slate-50/80 p-3">
+                          <div className="mb-2 flex items-center justify-between gap-2">
+                            <p className="text-[13px] font-semibold text-slate-800">会话邀请</p>
+                            <button
+                              type="button"
+                              onClick={() => setInviteInboxOpen(false)}
+                              className="text-[12px] font-semibold text-slate-400 hover:text-slate-600"
+                            >
+                              收起
+                            </button>
+                          </div>
+                          {pendingMyInvites.length === 0 ? (
+                            <p className="text-[12px] text-slate-500">暂无待处理邀请。</p>
+                          ) : (
+                            <div className="space-y-2">
+                              {pendingMyInvites.slice(0, 3).map((invite) => (
+                                <div key={invite.id} className="rounded-[12px] bg-white px-3 py-2 shadow-[0_2px_8px_rgba(15,23,42,0.04)]">
+                                  <p className="line-clamp-1 text-[13px] font-semibold text-slate-800">{invite.sessionTitle}</p>
+                                  <p className="mt-0.5 text-[11px] text-slate-500">
+                                    {invite.inviterName} 邀请 · {formatInviteExpiry(invite.expiresAt)}
+                                  </p>
+                                  <div className="mt-2 flex items-center gap-2">
+                                    <Link
+                                      href={`/sessions/${encodeURIComponent(invite.sessionId)}`}
+                                      prefetch={false}
+                                      onClick={() => void handleInviteAction(invite, "accepted")}
+                                      className="rounded-[9px] bg-blue-600 px-2.5 py-1 text-[12px] font-semibold text-white"
+                                    >
+                                      加入
+                                    </Link>
+                                    <button
+                                      type="button"
+                                      onClick={() => void handleInviteAction(invite, "declined")}
+                                      className="rounded-[9px] border border-slate-200 bg-white px-2.5 py-1 text-[12px] font-semibold text-slate-600"
+                                    >
+                                      拒绝
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
                   <div className="mt-4 min-h-0 flex-1 border-t border-slate-100 pt-4">
                     <div className="flex h-full min-h-0 flex-col">
                       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
@@ -2283,9 +2473,15 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
               </div>
 
               {workspaceExpanded ? (
-                <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
+                <div
+                  className={[
+                    "min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden lg:overflow-hidden",
+                    mobileTab === "output" ? "flex" : "hidden",
+                    "lg:flex",
+                  ].join(" ")}
+                >
                     <section className="min-h-0 flex flex-1 flex-col overflow-hidden rounded-[18px] border border-slate-200 bg-white shadow-[0_10px_22px_rgba(148,163,184,0.05)]">
-                      <div className="shrink-0 border-b border-slate-100 bg-white px-3 py-1">
+                      <div className="shrink-0 border-b border-slate-100 bg-white px-2 py-1 sm:px-3">
                           <div className="flex min-h-[70px] min-w-0 flex-col overflow-hidden rounded-[14px] border border-slate-200 bg-white px-3 py-1.5 shadow-[0_4px_12px_rgba(15,23,42,0.03)]">
                             <div className="flex shrink-0 items-center justify-between gap-3">
                               <AgentRealtimeRibbon phase={phase} wsStatus={wsStatus} useMockFallback={useMockFb} />
@@ -2530,7 +2726,13 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                 </div>
               ) : null}
 
-              <aside className="min-h-0 w-[250px] shrink-0 space-y-3 overflow-y-auto pr-1 lg:w-[270px]">
+              <aside
+                className={[
+                  "min-h-0 w-full min-w-0 shrink-0 space-y-3 overflow-y-auto overflow-x-hidden pr-0",
+                  mobileTab === "context" ? "block" : "hidden",
+                  "lg:block lg:w-[270px] lg:pr-1",
+                ].join(" ")}
+              >
                     {isCanvasMode ? (
                       <>
                         <SectionCard title="上下文与同步" action={<MoreIcon />}>
@@ -2769,16 +2971,16 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                                         );
                                       })}
                                     </div>
-                                    <div className="mt-3 flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-between">
-                                      <p className="min-w-0 text-[12px] text-slate-500">
+                                    <div className="mt-3 flex flex-col gap-3">
+                                      <p className="text-[12px] text-slate-500">
                                         选择 {Math.abs(contextEnd - contextStart) + 1} 条消息
                                       </p>
-                                      <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:flex-nowrap">
+                                      <div className="flex w-full flex-wrap items-center justify-end gap-2">
                                         <button
                                           type="button"
                                           onClick={handleContextSkipRun}
                                           disabled={contextSubmitting}
-                                          className="inline-flex h-9 items-center justify-center whitespace-nowrap rounded-[10px] border border-slate-200 bg-white px-3 text-[12px] font-semibold text-slate-600 disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
+                                          className="inline-flex min-h-9 flex-1 items-center justify-center whitespace-nowrap rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-[12px] font-semibold text-slate-600 disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400 sm:flex-none"
                                         >
                                           {contextSubmitting ? "处理中..." : "不使用上下文"}
                                         </button>
@@ -2786,7 +2988,7 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                                           type="button"
                                           onClick={handleContextSelectionRun}
                                           disabled={contextSubmitting}
-                                          className="inline-flex h-9 items-center justify-center whitespace-nowrap rounded-[10px] bg-blue-600 px-3 text-[12px] font-semibold text-white disabled:bg-slate-300"
+                                          className="inline-flex min-h-9 flex-1 items-center justify-center whitespace-nowrap rounded-[10px] bg-blue-600 px-3 py-2 text-[12px] font-semibold text-white disabled:bg-slate-300 sm:flex-none"
                                         >
                                           {contextSubmitting ? "处理中..." : "用选中上下文生成"}
                                         </button>
@@ -2804,6 +3006,42 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                             {data.relatedFiles?.map((file) => (
                               <RelatedFileCard key={file.id} file={file} />
                             ))}
+                          </div>
+                        </SectionCard>
+                        <SectionCard
+                          title="协作邀请"
+                          action={
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setInviteError(null);
+                                setInviteNotice(null);
+                                setInviteOpen(true);
+                              }}
+                              className="text-[12px] font-semibold text-blue-600"
+                            >
+                              邀请成员
+                            </button>
+                          }
+                        >
+                          <div className="space-y-2.5">
+                            {sessionInvites.length === 0 ? (
+                              <p className="text-[13px] leading-6 text-slate-500">还没有会话协作者邀请。</p>
+                            ) : (
+                              sessionInvites.slice(0, 4).map((invite) => (
+                                <div key={invite.id} className="flex items-center justify-between gap-3 rounded-[12px] border border-slate-100 bg-slate-50/70 px-3 py-2">
+                                  <div className="min-w-0">
+                                    <p className="truncate text-[13px] font-semibold text-slate-800">{invite.inviteeName || invite.inviteeEmail}</p>
+                                    <p className="text-[11px] text-slate-500">
+                                      {invite.inviterName} 发起 · {formatInviteExpiry(invite.expiresAt)}
+                                    </p>
+                                  </div>
+                                  <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${inviteStatusClass(invite)}`}>
+                                    {inviteStatusLabel(invite)}
+                                  </span>
+                                </div>
+                              ))
+                            )}
                           </div>
                         </SectionCard>
                         <SectionCard title="AI 记忆与上下文">
@@ -2850,8 +3088,71 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                     )}
               </aside>
             </div>
-          </section>
+        </section>
+      </div>
+      {inviteOpen ? (
+        <div className="absolute inset-0 z-40 flex items-center justify-center bg-slate-950/25 px-4">
+          <div className="w-full max-w-[420px] rounded-[22px] border border-slate-200 bg-white p-5 shadow-[0_24px_70px_rgba(15,23,42,0.22)]">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-[17px] font-semibold text-slate-950">邀请团队成员</h3>
+                <p className="mt-1 text-[13px] leading-5 text-slate-500">成员会收到网页提示，邀请会保留 24 小时。</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setInviteOpen(false)}
+                className="rounded-full px-2 py-1 text-[14px] text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+                aria-label="关闭"
+              >
+                ×
+              </button>
+            </div>
+            <label className="mt-5 block">
+              <span className="mb-1.5 block text-[13px] font-medium text-slate-500">团队成员</span>
+              <select
+                value={inviteMemberId}
+                onChange={(event) => setInviteMemberId(event.target.value)}
+                className="h-[44px] w-full rounded-[12px] border border-slate-200 bg-white px-3 text-[14px] text-slate-800 outline-none transition focus:border-blue-300 focus:ring-2 focus:ring-blue-100"
+              >
+                {inviteableMembers.length === 0 ? (
+                  <option value="">暂无可邀请成员</option>
+                ) : (
+                  inviteableMembers.map((member) => (
+                    <option key={member.id} value={member.id}>
+                      {member.displayName || member.email}
+                    </option>
+                  ))
+                )}
+              </select>
+            </label>
+            {pendingSessionInvites.length > 0 ? (
+              <p className="mt-3 text-[12px] text-slate-500">当前已有 {pendingSessionInvites.length} 个待确认邀请。</p>
+            ) : null}
+            {inviteError ? (
+              <div className="mt-3 rounded-[12px] border border-rose-100 bg-rose-50 px-3 py-2 text-[12px] font-medium text-rose-700">
+                {inviteError}
+              </div>
+            ) : null}
+            <div className="mt-5 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setInviteOpen(false)}
+                className="rounded-[11px] border border-slate-200 bg-white px-4 py-2 text-[13px] font-semibold text-slate-600 transition hover:bg-slate-50"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleSendSessionInvite()}
+                disabled={inviteSubmitting || !inviteMemberId}
+                className="rounded-[11px] bg-blue-600 px-4 py-2 text-[13px] font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+              >
+                {inviteSubmitting ? "发送中" : "发送邀请"}
+              </button>
+            </div>
+          </div>
         </div>
+      ) : null}
     </div>
   );
 }

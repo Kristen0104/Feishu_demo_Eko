@@ -41,6 +41,9 @@ class AgentToolRegistry:
             ToolSpec("feishu", "创建或解析飞书文档、画板和分享链接", {"title": "string", "sharing_url": "string"}),
             ToolSpec("board", "创建或修改飞书画板", {"message": "string", "sharing_url": "string", "retrieved_context": "array"}),
             ToolSpec("knowledge_search", "检索项目知识、会话历史和产物摘要", {"query": "string"}),
+            ToolSpec("bitable_schema", "查看当前工作区已配置的 Bitable 表、字段和视图。用于确认结构化业务数据源的 schema。", {"workspace_id": "string"}),
+            ToolSpec("bitable_search", "检索 Bitable 结构化业务数据，例如项目排期、负责人、状态、活动记录、客户记录。Bitable 查询失败不应导致主任务失败。", {"query": "string", "workspace_id": "string", "limit": "integer"}),
+            ToolSpec("bitable_archive", "把生成产物归档到指定 Bitable 表。归档失败只产生非阻断告警。", {"session_id": "string", "artifact": "object", "workspace_id": "string"}),
             ToolSpec("artifact_lookup", "读取当前或历史产物", {"kind": "docx|ppt|board"}),
             ToolSpec("sync", "同步任务状态和产物", {"session_id": "string"}),
         ]:

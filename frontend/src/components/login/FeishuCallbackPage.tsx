@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
-import { BrandMark, FeishuLogo } from "@/components/login/brand-icons";
+import { EkoSquircleMark, FeishuLogo } from "@/components/login/brand-icons";
 import { saveAccessToken } from "@/lib/auth-token";
 import { clearFeishuLoginDraft, exchangeFeishuLogin, readFeishuLoginDraft } from "@/lib/feishu-auth";
 import { useAppStore } from "@/store/app-store";
@@ -87,7 +87,7 @@ export function FeishuCallbackPage({ code, state, error, errorDescription }: Fei
 
       <section className="relative w-full max-w-[520px] rounded-[28px] border border-white/90 bg-white/92 px-7 py-8 shadow-[0_30px_90px_rgba(15,23,42,0.12)] backdrop-blur-md sm:px-10">
         <div className="flex items-center justify-center gap-4">
-          <BrandMark className="h-[38px] w-[38px]" />
+          <EkoSquircleMark className="h-[38px] w-[38px]" />
           <span className="text-[32px] font-semibold tracking-[-0.08em] text-slate-950">Eko</span>
         </div>
 

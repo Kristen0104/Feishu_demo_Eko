@@ -41,6 +41,16 @@ type SyncSessionArtifact = {
   whiteboard_id?: string | null;
   preview_url?: string | null;
   result_summary?: string | null;
+  bitable_archive_results?: BitableArchiveResult[] | null;
+};
+
+type BitableArchiveResult = {
+  source_id?: string | null;
+  record_id?: string | null;
+  record_url?: string | null;
+  status?: string | null;
+  message?: string | null;
+  error?: string | null;
 };
 
 const navItems: DetailNavItem[] = [
@@ -239,16 +249,36 @@ function buildMessages(session: SyncSession): DetailMessage[] {
 }
 
 function buildSourceEvidence(session: SyncSession): DetailEvidenceItem[] {
-  return [
+  const evidence: DetailEvidenceItem[] = [
     { id: `${session.session_id}:source`, title: "飞书群聊事件", description: "由 @机器人 message 触发的新会话。", tone: "chat" },
   ];
+  const archives = Array.isArray(session.artifact?.bitable_archive_results) ? session.artifact.bitable_archive_results : [];
+  for (const item of archives) {
+    evidence.push({
+      id: `${session.session_id}:bitable:${item.source_id || item.record_id || evidence.length}`,
+      title: "Bitable 归档",
+      description: item.message || item.record_url || item.record_id || "生成产物已尝试归档到 Bitable。",
+      tone: "record",
+    });
+  }
+  return evidence;
 }
 
 function buildSources(session: SyncSession): DetailSourceItem[] {
   const contextSize = session.context_size ?? 0;
-  return [
+  const sources: DetailSourceItem[] = [
     { id: `${session.session_id}:ctx`, title: "最近群聊上下文", description: `已读取 ${contextSize} 条相关消息。`, status: "completed" },
   ];
+  const archives = Array.isArray(session.artifact?.bitable_archive_results) ? session.artifact.bitable_archive_results : [];
+  for (const item of archives) {
+    sources.push({
+      id: `${session.session_id}:archive:${item.source_id || item.record_id || sources.length}`,
+      title: "Bitable 数据",
+      description: item.status === "failed" ? item.error || item.message || "归档失败，主任务未中断。" : item.record_url || item.message || "已归档生成产物。",
+      status: item.status === "failed" ? "warning" : "completed",
+    });
+  }
+  return sources;
 }
 
 function buildActivities(session: SyncSession): DetailActivity[] {
@@ -266,13 +296,22 @@ function buildRelatedFiles(session: SyncSession): DetailRelatedFile[] {
 
 function buildSyncActions(session: SyncSession): DetailSyncAction[] {
   const completed = session.status === "已同步" || session.status === "completed" || session.status === "done";
-  return [
+  const actions: DetailSyncAction[] = [
     {
       id: `${session.session_id}:sync`,
       title: "回传飞书",
       status: session.status.includes("失败") ? "warning" : completed ? "completed" : "running",
     },
   ];
+  const archives = Array.isArray(session.artifact?.bitable_archive_results) ? session.artifact.bitable_archive_results : [];
+  for (const item of archives) {
+    actions.push({
+      id: `${session.session_id}:bitable-sync:${item.source_id || item.record_id || actions.length}`,
+      title: item.status === "failed" ? "Bitable 归档失败" : "归档 Bitable",
+      status: item.status === "failed" ? "warning" : "completed",
+    });
+  }
+  return actions;
 }
 
 function buildArtifact(session: SyncSession): SyncSessionArtifact | null {
@@ -323,6 +362,7 @@ function buildArtifact(session: SyncSession): SyncSessionArtifact | null {
     whiteboard_id: typeof artifact?.whiteboard_id === "string" ? artifact.whiteboard_id : null,
     preview_url: typeof artifact?.preview_url === "string" ? artifact.preview_url : null,
     result_summary: typeof artifact?.result_summary === "string" ? artifact.result_summary : null,
+    bitable_archive_results: Array.isArray(artifact?.bitable_archive_results) ? artifact.bitable_archive_results as BitableArchiveResult[] : null,
   };
 }
 
@@ -396,6 +436,7 @@ export function buildSessionDetailData(session: SyncSession): SessionDetailData 
             whiteboardId: artifact.whiteboard_id ?? null,
             previewUrl: artifact.preview_url ?? null,
             resultSummary: artifact.result_summary ?? null,
+            bitableArchiveResults: artifact.bitable_archive_results ?? null,
           }
         : undefined,
     },
@@ -416,6 +457,7 @@ export function buildSessionDetailData(session: SyncSession): SessionDetailData 
               whiteboardId: artifact.whiteboard_id ?? null,
               previewUrl: artifact.preview_url ?? null,
               resultSummary: artifact.result_summary ?? null,
+              bitableArchiveResults: artifact.bitable_archive_results ?? null,
             }
           : undefined,
     },
@@ -435,6 +477,7 @@ export function buildSessionDetailData(session: SyncSession): SessionDetailData 
           whiteboardId: artifact.whiteboard_id ?? null,
           previewUrl: artifact.preview_url ?? null,
           resultSummary: artifact.result_summary ?? null,
+          bitableArchiveResults: artifact.bitable_archive_results ?? null,
         }
       : undefined,
     intent: session.intent ?? artifact?.intent ?? null,

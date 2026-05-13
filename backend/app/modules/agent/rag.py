@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 
 from app.modules.agent.schemas import AgentChatArtifact, AgentChatRequest, AgentRetrievedContext
+from app.modules.bitable.schemas import BitableQueryRequest
+from app.modules.bitable.service import BitableService
 from app.modules.rag.service import RagService
 
 logger = logging.getLogger(__name__)
@@ -11,9 +13,18 @@ logger = logging.getLogger(__name__)
 class AgentRAGRetriever:
     """Retriever boundary used by the LangGraph retrieval node."""
 
-    def __init__(self, rag_service: RagService | None = None, *, vector_limit: int = 4) -> None:
+    def __init__(
+        self,
+        rag_service: RagService | None = None,
+        *,
+        bitable_service: BitableService | None = None,
+        vector_limit: int = 4,
+        bitable_limit: int = 4,
+    ) -> None:
         self._rag_service = rag_service
+        self._bitable_service = bitable_service
         self._vector_limit = vector_limit
+        self._bitable_limit = bitable_limit
 
     async def retrieve(
         self,
@@ -38,6 +49,38 @@ class AgentRAGRetriever:
                     )
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Agent RAG vector search failed session=%s: %s", request.session_id, exc)
+
+        if self._bitable_service is not None:
+            try:
+                workspace_id = self._workspace_id(request)
+                response = await self._bitable_service.query_records(
+                    BitableQueryRequest(
+                        workspace_id=workspace_id,
+                        query=request.message,
+                        limit=self._bitable_limit,
+                    ),
+                    created_by=self._created_by_from_request(request),
+                )
+                for record in response.records:
+                    chunks.append(
+                        AgentRetrievedContext(
+                            source_id=record.record_id,
+                            source_type="bitable",
+                            title=record.title,
+                            content=record.content,
+                            score=record.score,
+                            metadata={
+                                "source_id": record.source_id,
+                                "source_name": record.source_name,
+                                "table_id": record.table_id,
+                                "table_name": record.table_name,
+                                "record_url": record.record_url,
+                                "fields": record.fields,
+                            },
+                        )
+                    )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Agent Bitable retrieval failed session=%s: %s", request.session_id, exc)
 
         chunks.extend(self._request_context_chunks(request, current_artifact=current_artifact))
         return chunks[:8]
@@ -112,3 +155,18 @@ class AgentRAGRetriever:
             return 0.5
         hits = sum(1 for token in tokens if token in normalized)
         return min(1.0, hits / max(len(tokens), 1))
+
+    def _workspace_id(self, request: AgentChatRequest) -> str:
+        if request.sender and isinstance(request.sender.get("workspace_id"), str):
+            return str(request.sender["workspace_id"])
+        return "Feishu_demo_Eko"
+
+    def _created_by_from_request(self, request: AgentChatRequest) -> str | None:
+        if not request.sender:
+            return None
+        raw = (
+            request.sender.get("platform_user_id")
+            or request.sender.get("sender_open_id")
+            or request.sender.get("sender_union_id")
+        )
+        return str(raw) if raw else None
