@@ -1,23 +1,41 @@
 "use client";
 
-import { useId } from "react";
+import Image from "next/image";
 
-export function BrandMark({ className = "" }: { className?: string }) {
-  const gradId = `eko-mark-${useId().replace(/:/g, "")}`;
+import { cn } from "@/components/UiPrimitives";
+
+/** Ribbon-only squircle (transparent PNG); outer rounded box is the single frame. */
+export function EkoSquircleMark({ className = "" }: { className?: string }) {
   return (
-    <svg viewBox="0 0 44 44" className={className} fill="none" aria-hidden="true">
-      <defs>
-        <linearGradient id={gradId} x1="6" y1="5" x2="37" y2="39" gradientUnits="userSpaceOnUse">
-          <stop stopColor="#2084FF" />
-          <stop offset="1" stopColor="#2854FF" />
-        </linearGradient>
-      </defs>
-      <rect x="3.5" y="3.5" width="37" height="37" rx="12" fill={`url(#${gradId})`} />
-      <path
-        d="M29.2 14.4c-2.5-2-5.1-3-8-3-4.9 0-8.5 3.6-8.5 8.8s3.6 8.8 8.5 8.8c3 0 5.4-.8 8-2.9l-2.8-3.5c-1.7 1.2-3.2 1.7-5.3 1.7-2 0-3.6-.9-4.2-2.7h11.6c.1-.6.2-1.2.2-1.9 0-1.8-.4-3.5-1.1-5.1H17.2c.6-1.7 2.2-2.8 4-2.8 2 0 3.7.5 5.4 1.8l2.6-3.3Z"
-        fill="white"
+    <span className={cn("relative inline-flex shrink-0 overflow-hidden rounded-[14px] bg-transparent", className)}>
+      <Image
+        src="/eko-app-icon.png"
+        alt=""
+        width={1024}
+        height={1024}
+        sizes="128px"
+        quality={100}
+        className="h-full w-full origin-center scale-[1.06] object-contain object-center select-none"
+        draggable={false}
+        aria-hidden
       />
-    </svg>
+    </span>
+  );
+}
+
+/** Horizontal lockup: gradient ribbon + Eko wordmark. */
+export function BrandMark({ className = "" }: { className?: string }) {
+  return (
+    <Image
+      src="/eko-lockup.png"
+      alt=""
+      width={560}
+      height={576}
+      quality={100}
+      sizes="(max-width: 640px) 220px, 300px"
+      className={cn("block shrink-0 object-contain object-left", className)}
+      aria-hidden
+    />
   );
 }
 

@@ -8,6 +8,7 @@ import { AnimatePresence, motion } from "@/components/MotionShim";
 import { detailDesignTokens } from "@/components/session-detail/designTokens";
 import { AccentPill, HeaderBadge, StatusPill, cn } from "@/components/UiPrimitives";
 import { TopSearchIcon } from "@/components/workspace/workspace-chrome";
+import { getReadableSessionTitle } from "@/lib/session-title";
 import { deleteSyncSession } from "@/lib/sync/delete-session";
 import { fetchSyncSessions } from "@/lib/sync/fetch-sessions";
 import { SessionFilter, useAppStore } from "@/store/app-store";
@@ -113,7 +114,18 @@ function makeLiveSessionItem(session: {
   artifact?: {
     kind?: string | null;
     intent?: string | null;
+    title?: string | null;
+    result_summary?: string | null;
+    current_step?: string | null;
   } | null;
+  messages?: Array<{
+    role?: string | null;
+    content?: string | null;
+  }>;
+  context_messages?: Array<{
+    role?: string | null;
+    content?: string | null;
+  }>;
 }): SessionItem {
   const source = session.source === "feishu" ? "飞书" : "IM";
   const status = mapRemoteStatus(session.status);
@@ -122,10 +134,12 @@ function makeLiveSessionItem(session: {
   const signal = (session.artifact?.kind || session.artifact?.intent || session.intent || "").trim().toLowerCase();
   const kind: SessionItem["kind"] = signal === "board" ? "canvas" : signal === "ppt" || signal === "docx" || signal === "presentation" ? "doc" : "chat";
   const kindLabel: SessionItem["kindLabel"] = kind === "canvas" ? "画布" : kind === "doc" ? "文稿" : "聊天";
+  const title = getReadableSessionTitle(session);
+  const summary = session.summary || "由飞书消息触发的新会话。";
   return {
     id: session.session_id,
-    title: session.title,
-    summary: session.summary,
+    title,
+    summary,
     source,
     kind,
     kindLabel,
@@ -134,13 +148,13 @@ function makeLiveSessionItem(session: {
     participants: [collaborator],
     preview: {
       id: session.session_id,
-      title: session.title,
+      title,
       source,
       startedAt: updatedAt,
       outputMode: kindLabel,
       status,
       syncedAt: updatedAt,
-      summary: session.summary,
+      summary,
       collaborators: [collaborator],
       relatedItems: [],
       activity: {
@@ -202,6 +216,11 @@ function parseSessionTime(value: string): number {
   return Number.isNaN(parsed) ? 0 : parsed;
 }
 
+function safeFilename(value: string): string {
+  const name = value.replace(/[\\/:*?"<>|]/g, "_").trim();
+  return name || "会话摘要";
+}
+
 function sortSessionItems(items: SessionItem[], order: SortOrder): SessionItem[] {
   const collator = new Intl.Collator("zh-Hans", { sensitivity: "base", numeric: true });
   return [...items].sort((left, right) => {
@@ -247,6 +266,7 @@ export function SessionsWorkspace({
   const closeDetail = useAppStore((state) => state.closeDetail);
   const initializeStars = useAppStore((state) => state.initializeStars);
   const toggleStar = useAppStore((state) => state.toggleStar);
+  const setRuntimeSessionPatch = useAppStore((state) => state.setRuntimeSessionPatch);
   const defaultId = liveData.sections[0]?.items[0]?.id ?? "";
 
   const filterOptions: Array<{ key: SessionFilter; label: string }> = [
@@ -257,6 +277,17 @@ export function SessionsWorkspace({
     { key: "recent", label: "最近" },
     { key: "starred", label: "已加星标" },
   ];
+
+  useEffect(() => {
+    const seen = new Set<string>();
+    for (const section of liveData.sections) {
+      for (const item of section.items) {
+        if (seen.has(item.id) || !item.title) continue;
+        seen.add(item.id);
+        setRuntimeSessionPatch(item.id, { title: item.title });
+      }
+    }
+  }, [liveData.sections, setRuntimeSessionPatch]);
 
   useEffect(() => {
     const hasSelectedItem = liveData.sections.some((section) => section.items.some((item) => item.id === selectedId));
@@ -399,7 +430,7 @@ export function SessionsWorkspace({
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = `${item.id}-summary.txt`;
+    anchor.download = `${safeFilename(item.preview.title || item.title)}-摘要.txt`;
     anchor.click();
     URL.revokeObjectURL(url);
     setToast("已导出会话摘要");
@@ -477,8 +508,8 @@ export function SessionsWorkspace({
         </AnimatePresence>
 
         <div className={cn("grid min-h-0 min-w-0 flex-1 grid-cols-1", selectedItem && isDetailOpen ? "xl:grid-cols-[minmax(0,1fr)_388px]" : "xl:grid-cols-1")}>
-          <motion.div layout className={cn("flex min-h-0 min-w-0 flex-1 flex-col bg-white", selectedItem && isDetailOpen ? "border-r border-slate-200/90" : "")}>
-              <div className="shrink-0 bg-white px-4 pb-2.5 pt-2.5">
+          <motion.div layout className={cn("flex min-h-0 min-w-0 flex-1 flex-col bg-white", selectedItem && isDetailOpen ? "xl:border-r xl:border-slate-200/90" : "")}>
+              <div className="shrink-0 bg-white px-3 pb-2.5 pt-2.5 sm:px-4">
                 <div className="min-w-0 border-b border-slate-200/90 pb-2.5">
                   <h1 className="text-[17px] font-semibold leading-tight tracking-[-0.03em] text-slate-950">会话</h1>
                   <p className="mt-0.5 max-w-2xl text-[12px] leading-snug text-slate-500">
@@ -488,10 +519,10 @@ export function SessionsWorkspace({
               </div>
 
               <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-                <div className="min-h-0 flex-1 space-y-2.5 overflow-y-auto px-3 py-2.5">
+                <div className="min-h-0 flex-1 space-y-2.5 overflow-y-auto px-3 py-2.5 pb-24 lg:pb-2.5">
                   <div className="space-y-2">
                     <div className="flex flex-wrap items-center gap-1.5">
-                      <label className="flex h-9 min-w-[180px] flex-1 items-center gap-2 rounded-[12px] border border-slate-200 bg-[#fafbfc] px-2.5">
+                      <label className="flex h-10 min-w-0 basis-full items-center gap-2 rounded-[12px] border border-slate-200 bg-[#fafbfc] px-2.5 sm:h-9 sm:min-w-[220px] sm:basis-auto sm:flex-1">
                         <TopSearchIcon />
                         <input
                           type="search"
@@ -515,7 +546,7 @@ export function SessionsWorkspace({
                         type="button"
                         onClick={() => setIsFilterPanelOpen((current) => !current)}
                         className={cn(
-                          "inline-flex h-9 items-center rounded-[12px] border px-3 text-[12px] font-semibold transition",
+                          "inline-flex h-10 items-center whitespace-nowrap rounded-[12px] border px-3 text-[12px] font-semibold transition sm:h-9",
                           isFilterPanelOpen || activeFilter !== "all"
                             ? "border-blue-300 bg-blue-50 text-blue-700"
                             : "border-slate-200 bg-white text-slate-700",
@@ -526,7 +557,7 @@ export function SessionsWorkspace({
                       <button
                         type="button"
                         onClick={() => setSortOrder((current) => (current === "recent" ? "oldest" : current === "oldest" ? "title" : "recent"))}
-                        className="inline-flex h-9 items-center gap-0.5 rounded-[12px] border border-slate-200 bg-white px-3 text-[12px] font-semibold text-slate-700"
+                        className="inline-flex h-10 items-center gap-0.5 whitespace-nowrap rounded-[12px] border border-slate-200 bg-white px-3 text-[12px] font-semibold text-slate-700 sm:h-9"
                       >
                         {sortLabels[sortOrder]}
                         <span className="text-slate-400">⌄</span>
@@ -536,7 +567,7 @@ export function SessionsWorkspace({
                           <button
                             type="button"
                             onClick={selectAllVisible}
-                            className="inline-flex h-9 items-center rounded-[12px] border border-slate-200 bg-white px-3 text-[12px] font-semibold text-slate-700"
+                            className="inline-flex h-10 items-center whitespace-nowrap rounded-[12px] border border-slate-200 bg-white px-3 text-[12px] font-semibold text-slate-700 sm:h-9"
                           >
                             全选
                           </button>
@@ -545,7 +576,7 @@ export function SessionsWorkspace({
                             onClick={deleteSelectedSessions}
                             disabled={isDeleting || selectedSessionIds.length === 0}
                             className={cn(
-                              "inline-flex h-9 items-center rounded-[12px] px-3 text-[12px] font-semibold transition",
+                              "inline-flex h-10 min-w-0 items-center whitespace-nowrap rounded-[12px] px-3 text-[12px] font-semibold transition sm:h-9",
                               isDeleting || selectedSessionIds.length === 0
                                 ? "cursor-not-allowed border border-slate-200 bg-slate-100 text-slate-400"
                                 : "border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100",
@@ -556,7 +587,7 @@ export function SessionsWorkspace({
                           <button
                             type="button"
                             onClick={clearSelection}
-                            className="inline-flex h-9 items-center rounded-[12px] border border-slate-200 bg-white px-3 text-[12px] font-semibold text-slate-700"
+                            className="inline-flex h-10 items-center whitespace-nowrap rounded-[12px] border border-slate-200 bg-white px-3 text-[12px] font-semibold text-slate-700 sm:h-9"
                           >
                             退出多选
                           </button>
@@ -565,7 +596,7 @@ export function SessionsWorkspace({
                         <button
                           type="button"
                           onClick={() => setIsSelectionMode(true)}
-                          className="inline-flex h-9 items-center rounded-[12px] border border-slate-200 bg-white px-3 text-[12px] font-semibold text-slate-700"
+                          className="inline-flex h-10 items-center whitespace-nowrap rounded-[12px] border border-slate-200 bg-white px-3 text-[12px] font-semibold text-slate-700 sm:h-9"
                         >
                           多选删除
                         </button>
@@ -632,7 +663,7 @@ export function SessionsWorkspace({
                             const active = routeActive || selectedItem?.id === item.id;
                             const checked = selectedSessionIds.includes(item.id);
                             const rowClasses = cn(
-                              "flex w-full items-start gap-2 rounded-[14px] border px-2.5 py-2 text-left transition outline-none ring-offset-2 focus-visible:ring-2 focus-visible:ring-blue-500",
+                              "flex w-full items-start gap-2.5 rounded-[14px] border px-3 py-2.5 text-left transition outline-none ring-offset-2 focus-visible:ring-2 focus-visible:ring-blue-500 sm:gap-2 sm:px-2.5 sm:py-2",
                               active
                                 ? "border-blue-300/90 bg-blue-50/80 shadow-[0_4px_14px_rgba(37,99,235,0.08)]"
                                 : "border-slate-200/90 bg-[#fafbfc] hover:border-slate-300 hover:bg-white",
@@ -652,7 +683,7 @@ export function SessionsWorkspace({
                                   </span>
                                 ) : null}
                                 <ItemModeIcon kind={item.kind} compact />
-                                <div className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-start gap-x-3 gap-y-1">
+                                <div className="grid min-w-0 flex-1 grid-cols-1 gap-y-2 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:items-start sm:gap-x-3 sm:gap-y-1">
                                   <div className="min-w-0">
                                     <div className="flex items-center gap-1">
                                       <h4 className="truncate text-[13px] font-semibold leading-tight text-slate-900">{item.title}</h4>
@@ -676,7 +707,7 @@ export function SessionsWorkspace({
                                     </div>
                                     <p className="mt-0.5 line-clamp-1 text-[11px] leading-snug text-slate-500">{item.summary}</p>
                                   </div>
-                                  <div className="flex max-w-full flex-wrap items-center justify-center gap-1 self-start px-0.5 pt-0.5">
+                                  <div className="flex max-w-full flex-wrap items-center justify-start gap-1 self-start px-0.5 pt-0.5 sm:justify-center">
                                     <div className="flex items-center gap-0.5 text-[11px] text-slate-600">
                                       <SourceIcon source={item.source} compact />
                                       <span className="max-w-[4rem] truncate">{item.source}</span>
@@ -686,7 +717,7 @@ export function SessionsWorkspace({
                                       <span className="text-[10px]">{getRuntimeStatus(item)}</span>
                                     </StatusPill>
                                   </div>
-                                  <div className="flex flex-col items-end gap-1 justify-self-end pt-0.5">
+                                  <div className="flex flex-row flex-wrap items-center justify-between gap-2 pt-0.5 sm:flex-col sm:items-end sm:gap-1 sm:justify-self-end">
                                     <span className="text-[11px] tabular-nums text-slate-400">{getRuntimeUpdatedAt(item)}</span>
                                     <AvatarStack participants={item.participants} compact />
                                   </div>
@@ -728,7 +759,7 @@ export function SessionsWorkspace({
                   animate={{ opacity: 1, x: 0 }}
                   exit={{ opacity: 0, x: 20 }}
                   transition={{ duration: 0.2, ease: "easeOut" }}
-                  className="flex min-h-0 min-w-0 flex-col bg-white px-3 pb-3 pt-2.5 xl:pl-4 xl:pr-4"
+                  className="hidden min-h-0 min-w-0 flex-col bg-white px-3 pb-3 pt-2.5 xl:flex xl:pl-4 xl:pr-4"
                 >
                   <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[24px] border border-slate-200/90 bg-white shadow-[0_10px_40px_rgba(15,23,42,0.06)]">
                   <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-5 xl:px-6 xl:py-6">

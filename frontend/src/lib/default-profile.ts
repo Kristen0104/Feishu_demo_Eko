@@ -8,6 +8,7 @@ export function getDefaultProfile(): UserProfile {
     displayName,
     nameEn,
     initials: deriveInitials(displayName, nameEn),
+    avatarUrl: "",
     email: "",
     phone: "",
     phoneExt: "",

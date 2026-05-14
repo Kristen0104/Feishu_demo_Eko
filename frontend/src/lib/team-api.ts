@@ -1,4 +1,6 @@
 import { fetchEkoJson } from "@/lib/eko-api";
+import { resolveAvatarUrl } from "@/lib/profile-api";
+import { looksLikeTechnicalSessionTitle } from "@/lib/session-title";
 import type { SessionInvite, SessionInviteDto, SessionInviteStatus, TeamMember, TeamMemberDto } from "@/types/team";
 
 function mapTeamMember(dto: TeamMemberDto): TeamMember {
@@ -8,7 +10,7 @@ function mapTeamMember(dto: TeamMemberDto): TeamMember {
     displayName: dto.display_name,
     role: dto.role,
     status: dto.status,
-    avatarUrl: dto.avatar_url,
+    avatarUrl: resolveAvatarUrl(dto.avatar_url),
     isCurrentUser: dto.is_current_user,
     isRegisteredUser: dto.is_registered_user,
     invitedByName: dto.invited_by_name,
@@ -17,10 +19,11 @@ function mapTeamMember(dto: TeamMemberDto): TeamMember {
 }
 
 function mapSessionInvite(dto: SessionInviteDto): SessionInvite {
+  const sessionTitle = dto.session_title?.trim() || "";
   return {
     id: dto.id,
     sessionId: dto.session_id,
-    sessionTitle: dto.session_title,
+    sessionTitle: sessionTitle && !looksLikeTechnicalSessionTitle(sessionTitle) ? sessionTitle : "会话邀请",
     inviterUserId: dto.inviter_user_id,
     inviterName: dto.inviter_name,
     inviteeUserId: dto.invitee_user_id,

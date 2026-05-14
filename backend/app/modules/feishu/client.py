@@ -317,6 +317,18 @@ class FeishuClient:
             },
         )
 
+    def reply_text_message(self, message_id: str, text: str) -> dict[str, Any]:
+        if not settings.FEISHU_APP_ID or not settings.FEISHU_APP_SECRET:
+            return {"message_id": f"stub-reply-{int(time.time())}"}
+        return self._request_json(
+            "POST",
+            f"/open-apis/im/v1/messages/{message_id}/reply",
+            json={
+                "msg_type": "text",
+                "content": json.dumps({"text": text}, ensure_ascii=False),
+            },
+        )
+
     def list_recent_chat_messages(
         self,
         chat_id: str,

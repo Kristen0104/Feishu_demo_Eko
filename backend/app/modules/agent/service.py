@@ -259,7 +259,15 @@ class RouterAgent:
 
         model_intent = self._parse_model_intent(result, message=message)
         if model_intent is not None:
-            return model_intent
+            if model_intent != AgentIntent.CHAT:
+                return model_intent
+
+        if self._tool_intent_has_explicit_user_action(message, AgentIntent.BOARD):
+            return AgentIntent.BOARD
+        if self._tool_intent_has_explicit_user_action(message, AgentIntent.PPT):
+            return AgentIntent.PPT
+        if self._tool_intent_has_explicit_user_action(message, AgentIntent.DOCX):
+            return AgentIntent.DOCX
 
         return AgentIntent.CHAT
 
@@ -325,7 +333,10 @@ class RouterAgent:
         if intent == AgentIntent.CHAT:
             return True
         normalized = message.lower()
-        action_pattern = r"(请|帮我|帮忙|需要|我要|想要|生成|创建|新建|制作|做一份|做个|写|写成|起草|整理|整理成|输出|导出|同步|更新|修改|改|画|绘制|来一份)"
+        action_pattern = (
+            r"(请|帮我|帮忙|需要|我要|想要|生成|创建|新建|制作|做一份|做个|写|写成|起草|整理|整理成|输出|导出|同步|更新|修改|改|画|绘制|来一份|"
+            r"generate|create|make|draw|update|edit)"
+        )
         if not re.search(action_pattern, message):
             return False
         if intent == AgentIntent.DOCX:
@@ -335,7 +346,12 @@ class RouterAgent:
         if intent == AgentIntent.PPT:
             return bool(re.search(r"(ppt|演示|幻灯片|路演|汇报材料|展示材料|presentation|slides?)", normalized))
         if intent == AgentIntent.BOARD:
-            return bool(re.search(r"(画板|白板|流程图|架构图|思维导图|思路图|脑图|导图|泳道图|时序图|序列图|sequence\\s*diagram|board)", normalized))
+            return bool(
+                re.search(
+                    r"(画板|白板|流程图|架构图|思维导图|思路图|脑图|导图|泳道图|时序图|序列图|饼图|柱状图|折线图|面积图|line\s*chart|bar\s*chart|pie\s*chart|sequence\s*diagram|board)",
+                    normalized,
+                )
+            )
         return False
 
 
@@ -741,6 +757,9 @@ class AgentService:
             return
         if getattr(session, "source", None) != "feishu":
             return
+        if self._should_suppress_feishu_chat_echo(request, session):
+            logger.info("Suppress Feishu chat echo for board-like/session-selection request session=%s", request.session_id)
+            return
         if getattr(session, "reply_echo_sent", False):
             return
         if bool((artifact or {}).get("feishu_chat_reply_echo_sent")):
@@ -761,6 +780,15 @@ class AgentService:
             return
         if hasattr(self._sync_service, "update_session_reply_echo_state"):
             await self._sync_service.update_session_reply_echo_state(request.session_id, sent=True)
+
+    def _should_suppress_feishu_chat_echo(self, request: AgentChatRequest, session: Any) -> bool:
+        session_intent = str(getattr(session, "intent", "") or "").strip().lower()
+        session_status = str(getattr(session, "status", "") or "").strip()
+        if request.forced_intent == "board" or session_intent == AgentIntent.BOARD.value:
+            return True
+        if session_status == "等待选择":
+            return True
+        return self._tool_intent_has_explicit_user_action(request.message, AgentIntent.BOARD)
 
     async def _create_plan_with_timeout(
         self,
@@ -1111,7 +1139,9 @@ class AgentService:
             request = await self._context_assembler.assemble(request, sync_service=self._sync_service)
             session_artifact = await self._get_session_artifact(request)
             editable_document = await self._get_editable_document(request)
-            intent = await self._router.classify_chat_intent(request.message)
+            intent = self._forced_or_classified_intent(request)
+            if intent == AgentIntent.UNKNOWN:
+                intent = await self._router.classify_chat_intent(request.message)
             current_artifact_operation = self._resolve_current_artifact_operation(session_artifact, request, intent)
             if current_artifact_operation == "docx":
                 editable_document = session_artifact if session_artifact and session_artifact.kind == "docx" else editable_document
@@ -1126,7 +1156,6 @@ class AgentService:
                 and (
                     intent == AgentIntent.DOCX
                     or (intent == AgentIntent.PPT and not current_ppt_update)
-                    or (intent == AgentIntent.BOARD and current_artifact_operation != "board")
                 )
                 and current_artifact_operation != "docx"
                 and not self._should_edit_current_document(editable_document, request, intent)
@@ -1168,7 +1197,7 @@ class AgentService:
 
             events_v1 = self._events_from_traces(trace_events)
 
-            if plan is not None and (plan.clarification_needed or plan.need_clarification):
+            if self._should_pause_for_clarification(intent, plan):
                 question = plan.clarification_question or (plan.questions[0] if plan.questions else None)
                 if question:
                     response = AgentChatResponse(
@@ -1238,22 +1267,16 @@ class AgentService:
                     artifact = self._ppt_artifact_from_job(job)
                     job_id = job.job_id
                 else:
-                    # Planner didn't call the ppt tool — let LLM generate a response
-                    chat_prompt = self._build_chat_prompt(request, runtime_turn.retrieved_context)
-                    reply = await self._llm.generate(
-                        "你是 Eko 智能办公助手。请直接、友好地回答用户问题。若 RAG 知识库资料与问题相关，必须优先依据知识库资料回答；不要编造知识库未提供的信息。",
-                        chat_prompt,
+                    job = self._aippt_service.create_job_from_request(
+                        PPTGenerationRequest(
+                            topic=self._build_ppt_topic(enriched_request, session_artifact=None),
+                            page_count=self._resolve_ppt_page_count(enriched_request, session_artifact=None),
+                            style="clean_business",
+                            design_mode=self._resolve_ppt_design_mode(message=enriched_request.message),
+                        )
                     )
-                    response = AgentChatResponse(
-                        session_id=request.session_id,
-                        intent=AgentIntent.PPT.value,
-                        status="completed",
-                        message=reply,
-                        plan=plan,
-                        events=events_v1,
-                    )
-                    await self._publish_chat_result(request, response)
-                    return response
+                    artifact = self._ppt_artifact_from_job(job)
+                    job_id = job.job_id
 
                 response = AgentChatResponse(
                     session_id=request.session_id,
@@ -1284,9 +1307,9 @@ class AgentService:
                             title=f"Eko 画板 - {request.message[:24]}",
                         )
                         sharing_url = created_board_document["sharing_url"]
-                    board_instruction = self._append_knowledge_context_to_instruction(
+                    board_instruction = self._build_board_instruction_with_context(
                         request.message,
-                        enriched_request.context.knowledge_docs if enriched_request.context else [],
+                        enriched_request.context or AgentContext(),
                     )
                     board_task = self._canvas_service.create_board_task(
                         CanvasBoardTaskCreateRequest(
@@ -1385,7 +1408,9 @@ class AgentService:
             request = await self._context_assembler.assemble(request, sync_service=self._sync_service)
             session_artifact = await self._get_session_artifact(request)
             editable_document = await self._get_editable_document(request)
-            intent = await self._router.classify_chat_intent(request.message)
+            intent = self._forced_or_classified_intent(request)
+            if intent == AgentIntent.UNKNOWN:
+                intent = await self._router.classify_chat_intent(request.message)
             current_artifact_operation = self._resolve_current_artifact_operation(session_artifact, request, intent)
             if current_artifact_operation == "docx":
                 editable_document = session_artifact if session_artifact and session_artifact.kind == "docx" else editable_document
@@ -1447,7 +1472,6 @@ class AgentService:
                     and (
                         intent == AgentIntent.DOCX
                         or (intent == AgentIntent.PPT and not current_ppt_update)
-                        or (intent == AgentIntent.BOARD and current_artifact_operation != "board")
                     )
                 ),
             )
@@ -1465,7 +1489,7 @@ class AgentService:
                 yield AgentEventProtocol.plan(plan, "规划完成。下面按这些子任务执行。")
                 async for event in self._stream_plan_progress(plan):
                     yield event
-                if plan.need_clarification:
+                if self._should_pause_for_clarification(intent, plan):
                     question = plan.clarification_question or (plan.questions[0] if plan.questions else None) or "请补充更多信息。"
                     yield AgentEventProtocol.clarification(intent.value, plan, question)
                     response = AgentChatResponse(
@@ -1587,6 +1611,13 @@ class AgentService:
                 error=str(exc),
             )
             yield AgentEventProtocol.failed(response, response.message, str(exc))
+
+    def _should_pause_for_clarification(self, intent: AgentIntent, plan: AgentTaskPlan | None) -> bool:
+        if plan is None:
+            return False
+        if intent in {AgentIntent.DOCX, AgentIntent.PPT, AgentIntent.BOARD}:
+            return False
+        return bool(plan.clarification_needed or plan.need_clarification)
 
     async def _stream_plan_progress(self, plan: AgentTaskPlan) -> AsyncIterator[dict[str, Any]]:
         for event in AgentEventProtocol.plan_progress(plan):
@@ -1990,6 +2021,16 @@ class AgentService:
             return "好的，我现在调用飞书画板能力，把任务落到画板流程里。"
         return "好的，我现在直接回复这个问题。"
 
+    def _forced_or_classified_intent(self, request: AgentChatRequest) -> AgentIntent:
+        raw_intent = (request.forced_intent or "").strip().lower()
+        if not raw_intent:
+            return AgentIntent.UNKNOWN
+        try:
+            return AgentIntent(raw_intent)
+        except ValueError:
+            logger.warning("Unsupported forced intent ignored session=%s forced_intent=%s", request.session_id, raw_intent)
+            return AgentIntent.UNKNOWN
+
     def _extract_feishu_chat_id(self, session_id: str) -> str | None:
         parts = session_id.split(":", 2)
         if len(parts) != 3 or parts[0] != "feishu":
@@ -2174,9 +2215,6 @@ class AgentService:
                 )
 
         if not sharing_url:
-            return
-        if not await self._feishu_session_was_app_mention(request.session_id, chat_id):
-            logger.info("Skip Feishu board link because source message did not mention app session=%s", request.session_id)
             return
         message = f"Eko 已创建飞书画板文档并完成生成：\n{sharing_url}"
         if whiteboard_id:

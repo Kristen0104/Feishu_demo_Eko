@@ -47,6 +47,18 @@ export type RetrievedSourceWire = {
   metadata: Record<string, unknown>;
 };
 
+export type ContextMessageWire = {
+  role: string;
+  content: string;
+  timestamp?: number | null;
+  sender_open_id?: string | null;
+  sender_union_id?: string | null;
+  sender_name?: string | null;
+  platform_user_id?: string | null;
+  platform_display_name?: string | null;
+  avatar_url?: string | null;
+};
+
 type SessionAgentSlice = {
   phase: AgentPhase;
   intent: AgentIntent;
@@ -54,12 +66,12 @@ type SessionAgentSlice = {
   planningPlan: PlanningPlanWire | null;
   planningSteps: PlanningStepWire[];
   retrievedSources: RetrievedSourceWire[];
+  contextMessages: ContextMessageWire[];
   docMarkdownStream: string;
   isDocStreaming: boolean;
   documentVersion: number;
   canvasVersion: number;
   wsStatus: "idle" | "connecting" | "open" | "closed" | "error";
-  useMockFallback: boolean;
   lastServerDocumentVersion: number;
   documentConflict: boolean;
   lastError: string | null;
@@ -72,12 +84,12 @@ const defaultSlice = (): SessionAgentSlice => ({
   planningPlan: null,
   planningSteps: [],
   retrievedSources: [],
+  contextMessages: [],
   docMarkdownStream: "",
   isDocStreaming: false,
   documentVersion: 0,
   canvasVersion: 0,
   wsStatus: "idle",
-  useMockFallback: false,
   lastServerDocumentVersion: 0,
   documentConflict: false,
   lastError: null,
@@ -93,6 +105,15 @@ type AgentRuntimeStore = {
   replaceDocMarkdown: (sessionId: string, markdown: string, version: number) => void;
   ingestEnvelope: (sessionId: string, raw: unknown) => void;
 };
+
+const DOCUMENT_STREAM_FLUSH_MS = 34;
+const pendingDocumentStreams = new Map<
+  string,
+  {
+    payload: Record<string, unknown>;
+    timer: ReturnType<typeof setTimeout>;
+  }
+>();
 
 function coerceWorkflowStatus(s: string | undefined): WorkflowStatus {
   if (s === "completed" || s === "running" || s === "pending" || s === "warning") return s;
@@ -222,6 +243,7 @@ function inferAgentEventChannel(event: Pick<AgentChatStreamEvent, "event" | "cha
       return "chat";
     case "artifact.archived":
     case "artifact.archive_failed":
+    case "artifact.delta":
       return "artifact";
     case "clarification.requested":
       return "chat";
@@ -234,6 +256,79 @@ function inferAgentEventChannel(event: Pick<AgentChatStreamEvent, "event" | "cha
   }
 }
 
+function streamDocumentPatch(payload: Record<string, unknown>, current: SessionAgentSlice): Partial<SessionAgentSlice> | null {
+  const artifact = payload.artifact && typeof payload.artifact === "object" ? (payload.artifact as Record<string, unknown>) : {};
+  const content = typeof payload.content === "string" ? payload.content : typeof artifact.content === "string" ? artifact.content : "";
+  const chunk = typeof payload.chunk === "string" ? payload.chunk : "";
+  const nextContent = content || (chunk ? `${current.docMarkdownStream}${chunk}` : "");
+  if (!nextContent) return null;
+
+  const currentContent = current.docMarkdownStream;
+  if (current.phase === "COMPLETED" || current.phase === "ERROR") return null;
+  if (nextContent === currentContent && current.isDocStreaming) return null;
+  if (current.isDocStreaming && currentContent.length > nextContent.length && currentContent.startsWith(nextContent)) return null;
+
+  return {
+    intent: "DOC",
+    phase: "GENERATING",
+    docMarkdownStream: nextContent,
+    isDocStreaming: true,
+    lastError: null,
+  };
+}
+
+function resolveFinalDocumentContent(incoming: string, current: string): string {
+  if (!incoming) return current;
+  if (current.length > incoming.length && current.startsWith(incoming)) return current;
+  return incoming;
+}
+
+function flushPendingDocumentStream(sessionId: string, get: () => AgentRuntimeStore): void {
+  const queued = pendingDocumentStreams.get(sessionId);
+  if (!queued) return;
+  clearTimeout(queued.timer);
+  pendingDocumentStreams.delete(sessionId);
+  const current = get().sessions[sessionId] ?? defaultSlice();
+  const patch = streamDocumentPatch(queued.payload, current);
+  if (patch) {
+    get().patchSession(sessionId, patch);
+  }
+}
+
+function scheduleDocumentStreamPatch(sessionId: string, payload: Record<string, unknown>, get: () => AgentRuntimeStore): void {
+  const latest = get().sessions[sessionId] ?? defaultSlice();
+  if (latest.phase === "COMPLETED" || latest.phase === "ERROR") return;
+
+  const pending = pendingDocumentStreams.get(sessionId);
+  if (pending) {
+    pending.payload = payload;
+    return;
+  }
+
+  const timer = setTimeout(() => {
+    flushPendingDocumentStream(sessionId, get);
+  }, DOCUMENT_STREAM_FLUSH_MS);
+  pendingDocumentStreams.set(sessionId, { payload, timer });
+}
+
+function parseContextMessages(value: unknown): ContextMessageWire[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
+    .map((item) => ({
+      role: typeof item.role === "string" && item.role ? item.role : "user",
+      content: typeof item.content === "string" ? item.content : "",
+      timestamp: typeof item.timestamp === "number" ? item.timestamp : null,
+      sender_open_id: typeof item.sender_open_id === "string" ? item.sender_open_id : null,
+      sender_union_id: typeof item.sender_union_id === "string" ? item.sender_union_id : null,
+      sender_name: typeof item.sender_name === "string" ? item.sender_name : null,
+      platform_user_id: typeof item.platform_user_id === "string" ? item.platform_user_id : null,
+      platform_display_name: typeof item.platform_display_name === "string" ? item.platform_display_name : null,
+      avatar_url: typeof item.avatar_url === "string" ? item.avatar_url : null,
+    }))
+    .filter((item) => item.content.trim().length > 0);
+}
+
 export const useAgentRuntimeStore = create<AgentRuntimeStore>((set, get) => ({
   sessions: {},
 
@@ -244,9 +339,16 @@ export const useAgentRuntimeStore = create<AgentRuntimeStore>((set, get) => ({
     }),
 
   resetSession: (sessionId) =>
-    set((state) => ({
-      sessions: { ...state.sessions, [sessionId]: defaultSlice() },
-    })),
+    set((state) => {
+      const pending = pendingDocumentStreams.get(sessionId);
+      if (pending) {
+        clearTimeout(pending.timer);
+        pendingDocumentStreams.delete(sessionId);
+      }
+      return {
+        sessions: { ...state.sessions, [sessionId]: defaultSlice() },
+      };
+    }),
 
   patchSession: (sessionId, patch) =>
     set((state) => {
@@ -400,21 +502,34 @@ export const useAgentRuntimeStore = create<AgentRuntimeStore>((set, get) => ({
         return;
       }
 
+      if (eventName === "artifact.delta") {
+        scheduleDocumentStreamPatch(sid, payload, get);
+        return;
+      }
+
       if (eventName === "result.created") {
+        flushPendingDocumentStream(sid, get);
+        const latest = get().sessions[sid] ?? slice;
         const response = payload.response && typeof payload.response === "object" ? (payload.response as Record<string, unknown>) : {};
         const artifact = response.artifact && typeof response.artifact === "object" ? (response.artifact as Record<string, unknown>) : null;
         const content = artifact && typeof artifact.content === "string" ? artifact.content : "";
         const append = payload.append === true;
         if (content && append) {
-          get().patchSession(sid, { phase: "GENERATING", isDocStreaming: true });
-          get().appendDocMarkdown(sid, content);
+          const fullContent = typeof payload.content === "string" ? payload.content : "";
+          get().patchSession(sid, {
+            intent: "DOC",
+            phase: "GENERATING",
+            isDocStreaming: true,
+            docMarkdownStream: fullContent || `${slice.docMarkdownStream}${content}`,
+            lastError: null,
+          });
           return;
         }
         get().patchSession(sid, {
           phase: response.status === "failed" ? "ERROR" : "COMPLETED",
           progress: 1,
           isDocStreaming: false,
-          ...(content ? { docMarkdownStream: content } : {}),
+          docMarkdownStream: resolveFinalDocumentContent(content, (get().sessions[sid] ?? latest).docMarkdownStream),
         });
         return;
       }
@@ -476,6 +591,13 @@ export const useAgentRuntimeStore = create<AgentRuntimeStore>((set, get) => ({
         get().patchSession(sid, {
           phase: "ANALYZING",
           lastError: null,
+          contextMessages: parseContextMessages(payload.context_messages),
+        });
+        break;
+      case "CONTEXT_LOADED":
+        get().patchSession(sid, {
+          phase: payload.status === "等待选择" ? "ANALYZING" : slice.phase,
+          contextMessages: parseContextMessages(payload.context_messages),
         });
         break;
       case "AGENT_PLANNING":
@@ -493,21 +615,27 @@ export const useAgentRuntimeStore = create<AgentRuntimeStore>((set, get) => ({
             typeof payload.version === "number" ? payload.version : slice.canvasVersion + 1,
         });
         break;
+      case "DOC_STREAM": {
+        scheduleDocumentStreamPatch(sid, payload, get);
+        break;
+      }
       case "TASK_COMPLETED":
         if (payload.status === "进行中" || payload.status === "running" || payload.status === "queued") {
+          if (slice.phase === "COMPLETED" || slice.phase === "ERROR") break;
           get().patchSession(sid, {
             phase: "GENERATING",
             progress: typeof payload.progress === "number" ? payload.progress : slice.progress,
           });
           break;
         }
+        flushPendingDocumentStream(sid, get);
         const artifact = payload.artifact as Record<string, unknown> | undefined;
         const artifactContent = artifact && typeof artifact.content === "string" ? artifact.content : "";
         get().patchSession(sid, {
           phase: "COMPLETED",
           progress: 1,
           isDocStreaming: false,
-          ...(artifactContent ? { docMarkdownStream: artifactContent } : {}),
+          docMarkdownStream: resolveFinalDocumentContent(artifactContent, (get().sessions[sid] ?? slice).docMarkdownStream),
         });
         break;
       case "CURSOR_SYNC":

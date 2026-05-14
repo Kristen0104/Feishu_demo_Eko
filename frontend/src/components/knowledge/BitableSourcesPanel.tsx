@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 import {
-  archiveBitableArtifact,
   createBitableSource,
   deleteBitableSource,
   getBitableDiscoveryStatus,
@@ -116,12 +115,12 @@ function purposeLabel(purpose: BitablePurpose) {
 
 function modeCopy(status: BitableDiscoveryStatus | null) {
   if (!status) return "正在读取连接状态";
-  if (!status.bound) return status.message || "请先绑定飞书账号后连接多维表格";
-  if (status.needs_reauth) return status.message || "请重新绑定飞书账号";
+  if (!status.bound) return status.message || "未绑定飞书账号；可通过链接或手动连接添加应用可访问的表格";
+  if (status.needs_reauth) return status.message || "账号授权已过期，自动发现不可用；已保存连接仍可继续读取";
   if (status.mode === "preset") return "正在使用团队预置的多维表格";
   if (status.mode === "user_oauth") return "正在使用你的飞书身份读取可访问的多维表格";
   if (status.mode === "tenant_app") return "正在使用当前应用可访问的多维表格";
-  return "可使用高级设置连接多维表格";
+  return "可通过链接或手动连接添加多维表格";
 }
 
 function optionName<T extends { id: string; name: string }>(items: T[], id: string) {
@@ -190,11 +189,10 @@ export function BitableSourcesPanel() {
   const [loadingFields, setLoadingFields] = useState(false);
   const [saving, setSaving] = useState(false);
   const [checkingId, setCheckingId] = useState<string | null>(null);
-  const [archivingId, setArchivingId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   const fieldOptions = useMemo(() => fields.map(fieldName).filter(Boolean), [fields]);
-  const canUseSelectors = Boolean(status?.bound && !status.needs_reauth && status.mode !== "advanced_only");
+  const canUseSelectors = Boolean((status?.bound && !status.needs_reauth && status.mode !== "advanced_only") || bases.length > 0);
 
   useEffect(() => {
     let cancelled = false;
@@ -420,7 +418,7 @@ export function BitableSourcesPanel() {
 
   async function handleCreateAdvanced() {
     if (!advancedDraft.name.trim() || !advancedDraft.app_token.trim() || !advancedDraft.table_id.trim()) {
-      setNotice("请填写高级设置中的名称、app_token 和 table_id。");
+      setNotice("请填写手动连接中的名称、App Token 和 Table ID。");
       return;
     }
     setSaving(true);
@@ -443,7 +441,7 @@ export function BitableSourcesPanel() {
       });
       setSources((current) => [created, ...current]);
       setAdvancedDraft(emptyAdvancedDraft);
-      setNotice("已通过高级设置新增 Bitable source。");
+      setNotice("已保存手动连接，可立即检查或用于创作。");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "新增失败");
     } finally {
@@ -493,7 +491,7 @@ export function BitableSourcesPanel() {
     try {
       const result = await queryBitableRecords(query.trim(), 5, WORKSPACE_ID);
       if (!result.records.length) {
-        setQueryResult(result.failures.length ? `未命中记录；失败 ${result.failures.length} 个 source。` : "未命中记录。");
+        setQueryResult(result.failures.length ? `未命中记录；${result.failures.length} 个连接读取失败，请检查应用权限或表格配置。` : "未命中记录。");
         return;
       }
       setQueryResult(
@@ -503,35 +501,6 @@ export function BitableSourcesPanel() {
       );
     } catch (error) {
       setQueryResult(error instanceof Error ? error.message : "查询失败");
-    }
-  }
-
-  async function handleTestArchive(source: BitableSource) {
-    setArchivingId(source.id);
-    setNotice(null);
-    try {
-      const result = await archiveBitableArtifact(
-        {
-          kind: "docx",
-          title: `Eko 归档测试 - ${source.name}`,
-          result_summary: "这是一条用于验证 Eko 正式成果能否写入多维表格的测试记录。",
-          status: "completed",
-          sharing_url: "https://example.feishu.cn/docx/eko-bitable-archive-test",
-        },
-        `bitable-archive-test-${source.id}`,
-        WORKSPACE_ID,
-      );
-      const matched = result.results.find((item) => item.source_id === source.id) || result.results[0];
-      if (!matched) {
-        setNotice("没有找到可归档的表格。请确认用途包含“归档成果”，并且后端已开启 Bitable 归档。");
-        return;
-      }
-      const suffix = matched.record_url ? ` ${matched.record_url}` : "";
-      setNotice(`归档测试：${matched.status}。${matched.message}${suffix}`);
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : "归档测试失败");
-    } finally {
-      setArchivingId(null);
     }
   }
 
@@ -551,10 +520,10 @@ export function BitableSourcesPanel() {
   }
 
   return (
-    <section className="rounded-[16px] border border-slate-200 bg-white p-5 shadow-[0_12px_30px_rgba(15,23,42,0.04)]">
+    <section className="rounded-[16px] border border-slate-200 bg-white p-3 shadow-[0_12px_30px_rgba(15,23,42,0.04)] sm:p-5">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <h2 className="text-[18px] font-semibold text-slate-950">Bitable 数据源</h2>
+          <h2 className="text-[18px] font-semibold text-slate-950">多维表格</h2>
           <p className="mt-1 max-w-[720px] text-[13px] leading-6 text-slate-500">
             从已连接的多维表格读取结构化素材，并把正式成果归档到你选择的表格。
           </p>
@@ -569,7 +538,7 @@ export function BitableSourcesPanel() {
           <p className="text-[13px] font-medium leading-5 text-slate-700">{modeCopy(status)}</p>
           {status && (!status.bound || status.needs_reauth) ? (
             <Link href="/login/feishu/start?mode=bind" className="inline-flex h-9 items-center justify-center rounded-[10px] bg-slate-950 px-3 text-[13px] font-semibold text-white transition hover:bg-slate-800 active:translate-y-px">
-              重新授权
+              授权飞书
             </Link>
           ) : null}
         </div>
@@ -677,7 +646,7 @@ export function BitableSourcesPanel() {
               ) : null}
 
               <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center">
-                <button type="button" onClick={() => void handleCreateFromSelector()} disabled={saving || !draft.base_id || !draft.table_id} className="inline-flex h-10 items-center justify-center rounded-[11px] bg-slate-950 px-4 text-[13px] font-semibold text-white transition hover:bg-slate-800 active:translate-y-px disabled:bg-slate-300">
+                <button type="button" onClick={() => void handleCreateFromSelector()} disabled={saving || !draft.base_id || !draft.table_id} className="inline-flex h-10 w-full items-center justify-center rounded-[11px] bg-slate-950 px-4 text-[13px] font-semibold text-white transition hover:bg-slate-800 active:translate-y-px disabled:bg-slate-300 sm:w-auto">
                   {saving ? "保存中..." : "保存连接"}
                 </button>
                 {notice ? <p className="text-[13px] leading-5 text-slate-600">{notice}</p> : null}
@@ -685,20 +654,20 @@ export function BitableSourcesPanel() {
             </>
           ) : (
             <div className="rounded-[12px] border border-dashed border-slate-300 bg-white px-4 py-6">
-              <p className="text-[14px] font-semibold text-slate-900">请先绑定飞书账号后连接多维表格</p>
+              <p className="text-[14px] font-semibold text-slate-900">当前无法自动列出你的多维表格</p>
               <p className="mt-2 max-w-[560px] text-[13px] leading-6 text-slate-500">
-                绑定后，这里会显示你可选择的多维表格、数据表和字段映射。
+                已保存的连接仍会参与检索；新增表格可粘贴链接识别，或使用下方手动连接填写 App Token 和 Table ID。
               </p>
-              <Link href="/login/feishu/start?mode=bind" className="mt-4 inline-flex h-10 items-center justify-center rounded-[11px] bg-slate-950 px-4 text-[13px] font-semibold text-white transition hover:bg-slate-800 active:translate-y-px">
-                绑定或重新授权
+              <Link href="/login/feishu/start?mode=bind" className="mt-4 inline-flex h-10 w-full items-center justify-center rounded-[11px] bg-slate-950 px-4 text-[13px] font-semibold text-white transition hover:bg-slate-800 active:translate-y-px sm:w-auto">
+                授权飞书后自动选择
               </Link>
             </div>
           )}
 
           <div className="mt-4 border-t border-slate-200 pt-4">
             <button type="button" onClick={() => setAdvancedOpen((current) => !current)} className="inline-flex h-9 items-center rounded-[10px] border border-slate-200 bg-white px-3 text-[12px] font-semibold text-slate-700 transition hover:bg-slate-50">
-              高级设置
-              <span className="ml-2 text-slate-400">仅用于开发调试</span>
+              手动连接
+              <span className="ml-2 text-slate-400">用于无法自动授权的环境</span>
             </button>
 
             {advancedOpen ? (
@@ -717,15 +686,15 @@ export function BitableSourcesPanel() {
                     </select>
                   </label>
                   <label className="block md:col-span-2">
-                    <span className="text-[12px] font-semibold text-slate-700">app_token</span>
+                    <span className="text-[12px] font-semibold text-slate-700">App Token</span>
                     <input value={advancedDraft.app_token} onChange={(event) => updateAdvanced("app_token", event.target.value)} className="mt-1 h-10 w-full rounded-[11px] border border-slate-200 px-3 text-[13px] outline-none focus:border-blue-500" />
                   </label>
                   <label className="block">
-                    <span className="text-[12px] font-semibold text-slate-700">table_id</span>
+                    <span className="text-[12px] font-semibold text-slate-700">Table ID</span>
                     <input value={advancedDraft.table_id} onChange={(event) => updateAdvanced("table_id", event.target.value)} className="mt-1 h-10 w-full rounded-[11px] border border-slate-200 px-3 text-[13px] outline-none focus:border-blue-500" />
                   </label>
                   <label className="block">
-                    <span className="text-[12px] font-semibold text-slate-700">view_id</span>
+                    <span className="text-[12px] font-semibold text-slate-700">View ID</span>
                     <input value={advancedDraft.view_id} onChange={(event) => updateAdvanced("view_id", event.target.value)} className="mt-1 h-10 w-full rounded-[11px] border border-slate-200 px-3 text-[13px] outline-none focus:border-blue-500" placeholder="可选" />
                   </label>
                 </div>
@@ -733,12 +702,12 @@ export function BitableSourcesPanel() {
                   {(Object.keys(fieldLabels) as FieldKey[]).map((key) => (
                     <label key={key} className="block">
                       <span className="text-[12px] font-semibold text-slate-700">{fieldLabels[key]}</span>
-                      <input value={advancedDraft[key]} onChange={(event) => updateAdvanced(key, event.target.value)} className="mt-1 h-10 w-full rounded-[11px] border border-slate-200 px-3 text-[13px] outline-none focus:border-blue-500" placeholder="raw field name" />
+                      <input value={advancedDraft[key]} onChange={(event) => updateAdvanced(key, event.target.value)} className="mt-1 h-10 w-full rounded-[11px] border border-slate-200 px-3 text-[13px] outline-none focus:border-blue-500" placeholder="字段名称" />
                     </label>
                   ))}
                 </div>
-                <button type="button" onClick={() => void handleCreateAdvanced()} disabled={saving} className="mt-4 inline-flex h-10 items-center justify-center rounded-[11px] bg-slate-950 px-4 text-[13px] font-semibold text-white transition hover:bg-slate-800 active:translate-y-px disabled:bg-slate-300">
-                  {saving ? "保存中..." : "保存高级配置"}
+                <button type="button" onClick={() => void handleCreateAdvanced()} disabled={saving} className="mt-4 inline-flex h-10 w-full items-center justify-center rounded-[11px] bg-slate-950 px-4 text-[13px] font-semibold text-white transition hover:bg-slate-800 active:translate-y-px disabled:bg-slate-300 sm:w-auto">
+                  {saving ? "保存中..." : "保存手动连接"}
                 </button>
               </div>
             ) : null}
@@ -763,11 +732,6 @@ export function BitableSourcesPanel() {
                   <button type="button" onClick={() => void handleInspect(source)} disabled={checkingId === source.id} className="h-8 rounded-[9px] bg-blue-50 px-3 text-[12px] font-semibold text-blue-700 transition hover:bg-blue-100 disabled:text-blue-300">
                     {checkingId === source.id ? "检查中" : "检查"}
                   </button>
-                  {source.purpose === "archive" || source.purpose === "both" ? (
-                    <button type="button" onClick={() => void handleTestArchive(source)} disabled={archivingId === source.id || !source.enabled} className="h-8 rounded-[9px] bg-emerald-50 px-3 text-[12px] font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:text-emerald-300">
-                      {archivingId === source.id ? "写入中" : "测试归档"}
-                    </button>
-                  ) : null}
                   <button type="button" onClick={() => void handleToggle(source)} className="h-8 rounded-[9px] bg-slate-100 px-3 text-[12px] font-semibold text-slate-700 transition hover:bg-slate-200">
                     {source.enabled ? "停用" : "启用"}
                   </button>

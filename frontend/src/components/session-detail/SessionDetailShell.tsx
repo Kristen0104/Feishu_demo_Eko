@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { fetchSyncSessionResult } from "@/lib/sync/fetch-session";
 import type { SyncSession } from "@/lib/sync/fetch-session";
 import { buildSessionDetailData } from "@/lib/sync/session-detail-from-sync";
+import { useAppStore } from "@/store/app-store";
 import type { SessionDetailData } from "@/types/session-detail";
 import { DocSessionWorkspace } from "./DocSessionWorkspace";
 
@@ -26,9 +27,15 @@ export function SessionDetailShell({
   const [data, setData] = useState<SessionDetailData | null>(
     initialSession ? buildSessionDetailData(initialSession) : null,
   );
+  const setRuntimeSessionPatch = useAppStore((state) => state.setRuntimeSessionPatch);
   const [loaded, setLoaded] = useState(Boolean(initialSession));
   const [notFound, setNotFound] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!data?.title) return;
+    setRuntimeSessionPatch(sessionId, { title: data.title });
+  }, [data?.title, sessionId, setRuntimeSessionPatch]);
 
   useEffect(() => {
     let cancelled = false;
@@ -38,7 +45,9 @@ export function SessionDetailShell({
       setLoaded(true);
 
       if (result.ok) {
-        setData(buildSessionDetailData(result.session));
+        const nextData = buildSessionDetailData(result.session);
+        setData(nextData);
+        setRuntimeSessionPatch(sessionId, { title: nextData.title });
         setNotFound(false);
         setLastError(null);
         return;
@@ -62,7 +71,7 @@ export function SessionDetailShell({
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [sessionId]);
+  }, [sessionId, setRuntimeSessionPatch]);
 
   if (loaded && notFound && !data) {
     return (

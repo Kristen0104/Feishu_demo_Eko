@@ -100,6 +100,7 @@ export type AgentChatStreamEvent = {
     | "clarification.requested"
     | "artifact.archived"
     | "artifact.archive_failed"
+    | "artifact.delta"
     | "result.created"
     | "turn.failed";
   status?: "pending" | "running" | "completed" | "blocked" | "failed";

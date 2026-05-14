@@ -65,6 +65,7 @@ export type SessionListPageData = {
     name: string;
     email: string;
     initials: string;
+    avatarUrl: string;
   };
   sections: SessionSection[];
 };

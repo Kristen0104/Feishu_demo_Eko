@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { getServerBackendOrigin } from "@/lib/server/backend";
+
 type FeishuLoginUrlResponse = {
   code: number;
   message: string;
@@ -10,16 +12,8 @@ type FeishuLoginUrlResponse = {
   };
 };
 
-function getBackendOrigin(): string {
-  const raw =
-    process.env.BACKEND_PROXY?.trim() ||
-    process.env.NEXT_PUBLIC_EKO_API_BASE?.trim() ||
-    "http://39.104.87.235:8000";
-  return raw.replace(/\/$/, "");
-}
-
 async function readFeishuLoginUrl(redirectUri: string): Promise<string> {
-  const backendOrigin = getBackendOrigin();
+  const backendOrigin = getServerBackendOrigin();
   const response = await fetch(
     `${backendOrigin}/api/v1/auth/feishu/login-url?redirect_uri=${encodeURIComponent(redirectUri)}`,
     {

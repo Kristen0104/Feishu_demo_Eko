@@ -66,7 +66,7 @@ class AuthUserUpdateRequest(BaseModel):
     display_name: str | None = Field(default=None, min_length=1, max_length=255)
     name_en: str | None = Field(default=None, max_length=255)
     email: str | None = Field(default=None, max_length=255)
-    avatar_url: str | None = Field(default=None, max_length=1024)
+    avatar_url: str | None = Field(default=None, max_length=500000)
     phone: str | None = Field(default=None, max_length=64)
     phone_ext: str | None = Field(default=None, max_length=32)
     location: str | None = Field(default=None, max_length=255)

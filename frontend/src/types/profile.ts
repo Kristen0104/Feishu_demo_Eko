@@ -1,9 +1,8 @@
-/** 个人资料（演示数据，后续可对接人事 / SSO） */
-
 export type UserProfile = {
   displayName: string;
   nameEn: string;
   initials: string;
+  avatarUrl: string;
   email: string;
   phone: string;
   phoneExt: string;

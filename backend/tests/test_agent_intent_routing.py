@@ -42,3 +42,19 @@ class AgentIntentRoutingTest(IsolatedAsyncioTestCase):
         intent = await router.classify_chat_intent("根据聊天记录生成时序图")
 
         self.assertEqual(intent, AgentIntent.BOARD)
+
+    async def test_explicit_ppt_generation_uses_local_ppt_intent_even_if_model_selects_chat(self) -> None:
+        router = RouterAgent(_LLMReturnsChat())
+
+        intent = await router.classify_chat_intent("生成舞蹈ppt")
+
+        self.assertEqual(intent, AgentIntent.PPT)
+
+    async def test_chart_generation_uses_local_board_intent_even_if_model_selects_chat(self) -> None:
+        router = RouterAgent(_LLMReturnsChat())
+
+        for message in ["生成一个测试饼图", "帮我做个销售柱状图", "draw a line chart"]:
+            with self.subTest(message=message):
+                intent = await router.classify_chat_intent(message)
+
+                self.assertEqual(intent, AgentIntent.BOARD)

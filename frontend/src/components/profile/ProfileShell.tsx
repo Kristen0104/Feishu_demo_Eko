@@ -60,9 +60,9 @@ export function ProfileShell({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <main className="min-h-full bg-[radial-gradient(circle_at_top,#EDF4FF_0%,#F5F8FD_45%,#EEF3FF_100%)] px-5 pb-16 pt-6 text-slate-900">
+    <main className="min-h-full bg-[radial-gradient(circle_at_top,#EDF4FF_0%,#F5F8FD_45%,#EEF3FF_100%)] px-3 pb-24 pt-4 text-slate-900 sm:px-5 sm:pb-16 sm:pt-6">
       <div className="mx-auto max-w-[1040px]">
-        <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
+        <div className="mb-5 flex flex-wrap items-center justify-between gap-3 sm:mb-8 sm:gap-4">
           <div className="flex flex-wrap items-center gap-3 text-[13px] text-slate-500">
             <Link
               href="/sessions"
@@ -75,15 +75,15 @@ export function ProfileShell({ children }: { children: React.ReactNode }) {
             <span className="hidden text-slate-300 sm:inline">/</span>
             <span className="hidden font-semibold text-slate-800 sm:inline">个人资料</span>
           </div>
-          <div className="flex items-center gap-2 text-[12px] text-slate-400">
+          <div className="flex min-w-0 flex-wrap items-center gap-2 text-[12px] text-slate-400">
             <span className="rounded-full bg-emerald-50 px-2.5 py-1 font-medium text-emerald-700">在线</span>
-            <span>身份读后端 · 编辑优先写后端，失败时才暂存本机</span>
+            <span className="min-w-0">个人资料已启用同步</span>
           </div>
         </div>
 
-        <div className="grid gap-8 lg:grid-cols-[220px_minmax(0,1fr)]">
+        <div className="grid gap-5 lg:grid-cols-[220px_minmax(0,1fr)] lg:gap-8">
           <aside className="space-y-2 lg:sticky lg:top-6 lg:self-start">
-            <nav className="rounded-[20px] border border-white/80 bg-white/90 p-2 shadow-[0_12px_36px_rgba(15,23,42,0.05)] backdrop-blur-sm">
+            <nav className="flex gap-2 overflow-x-auto rounded-[20px] border border-white/80 bg-white/90 p-2 shadow-[0_12px_36px_rgba(15,23,42,0.05)] backdrop-blur-sm lg:block lg:overflow-visible">
               {nav.map((item) => {
                 const active = pathname === item.href;
                 const Icon = item.icon;
@@ -92,7 +92,7 @@ export function ProfileShell({ children }: { children: React.ReactNode }) {
                     key={item.href}
                     href={item.href}
                     prefetch={false}
-                    className={`mt-1 flex w-full items-center gap-3 rounded-[14px] px-4 py-3 text-left text-[14px] font-medium transition first:mt-0 ${
+                    className={`flex shrink-0 items-center gap-2 rounded-[14px] px-3 py-2.5 text-left text-[13px] font-medium transition lg:mt-1 lg:w-full lg:gap-3 lg:px-4 lg:py-3 lg:text-[14px] lg:first:mt-0 ${
                       active
                         ? "bg-blue-50 font-semibold text-blue-600 shadow-[inset_3px_0_0_#2563EB]"
                         : "text-slate-600 hover:bg-slate-50"
@@ -104,9 +104,6 @@ export function ProfileShell({ children }: { children: React.ReactNode }) {
                 );
               })}
             </nav>
-            <p className="px-2 text-[11px] leading-relaxed text-slate-400">
-              布局参考飞书「设置 — 个人信息」：登录身份来自后端；字段变更默认保存到账号资料，仅在接口异常时暂存本地。
-            </p>
           </aside>
 
           <div className="min-w-0 space-y-8">

@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 
 import { WorkspacePageHeader } from "@/components/workspace/workspace-page-framing";
+import { authUserToProfilePatch, fetchCurrentAuthUser } from "@/lib/profile-api";
 import { fetchTeamMembers, inviteTeamMember, removeTeamMember } from "@/lib/team-api";
 import type { TeamMember } from "@/types/team";
 
@@ -29,6 +30,7 @@ function statusLabel(member: TeamMember): string {
 
 export function TeamWorkspacePage() {
   const [members, setMembers] = useState<TeamMember[]>([]);
+  const [currentUserPatch, setCurrentUserPatch] = useState<{ email?: string; displayName?: string; avatarUrl?: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [inviteOpen, setInviteOpen] = useState(false);
@@ -39,6 +41,19 @@ export function TeamWorkspacePage() {
 
   const memberCount = members.length;
   const activeCount = useMemo(() => members.filter((member) => member.status === "active").length, [members]);
+  const displayMembers = useMemo(
+    () =>
+      members.map((member) => {
+        if (!member.isCurrentUser || !currentUserPatch) return member;
+        return {
+          ...member,
+          displayName: currentUserPatch.displayName || member.displayName,
+          email: currentUserPatch.email || member.email,
+          avatarUrl: currentUserPatch.avatarUrl || member.avatarUrl,
+        };
+      }),
+    [currentUserPatch, members],
+  );
 
   async function loadMembers() {
     try {
@@ -71,6 +86,26 @@ export function TeamWorkspacePage() {
       }
     })();
 
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchCurrentAuthUser()
+      .then((user) => {
+        if (cancelled) return;
+        const patch = authUserToProfilePatch(user);
+        setCurrentUserPatch({
+          email: patch.email,
+          displayName: patch.displayName,
+          avatarUrl: patch.avatarUrl,
+        });
+      })
+      .catch(() => {
+        /* Keep member list data when auth profile is unavailable. */
+      });
     return () => {
       cancelled = true;
     };
@@ -127,14 +162,14 @@ export function TeamWorkspacePage() {
               setInviteError("");
               setInviteOpen(true);
             }}
-            className="rounded-[12px] bg-blue-600 px-4 py-2 text-[13px] font-semibold text-white shadow-sm transition hover:bg-blue-700"
+            className="min-h-10 w-full rounded-[12px] bg-blue-600 px-4 py-2 text-[13px] font-semibold text-white shadow-sm transition hover:bg-blue-700 sm:w-auto"
           >
             邀请成员
           </button>
         }
       />
 
-      <div className="min-h-0 flex-1 overflow-auto px-7 py-6">
+      <div className="min-h-0 flex-1 overflow-auto px-3 py-4 sm:px-5 lg:px-7 lg:py-6">
         {error ? (
           <div className="mb-4 rounded-[14px] border border-rose-200 bg-rose-50 px-4 py-3 text-[13px] text-rose-700">
             {error}
@@ -152,10 +187,10 @@ export function TeamWorkspacePage() {
           </div>
         ) : (
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {members.map((member) => (
+            {displayMembers.map((member) => (
               <div
                 key={member.id}
-                className="flex items-center gap-3 rounded-[18px] border border-slate-200/90 bg-white p-4 shadow-[0_4px_18px_rgba(15,23,42,0.04)]"
+                className="flex min-w-0 flex-col gap-3 rounded-[18px] border border-slate-200/90 bg-white p-4 shadow-[0_4px_18px_rgba(15,23,42,0.04)] sm:flex-row sm:items-center"
               >
                 <div className="relative flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-slate-100 text-[14px] font-semibold text-slate-700">
                   {member.avatarUrl ? (
@@ -216,7 +251,7 @@ export function TeamWorkspacePage() {
                     type="button"
                     onClick={() => void handleRemove(member)}
                     disabled={removingId === member.id}
-                    className="rounded-[10px] border border-slate-200 bg-white px-2.5 py-1 text-[12px] font-semibold text-slate-600 transition hover:border-rose-200 hover:text-rose-600 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="w-full rounded-[10px] border border-slate-200 bg-white px-2.5 py-1.5 text-[12px] font-semibold text-slate-600 transition hover:border-rose-200 hover:text-rose-600 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
                   >
                     {removingId === member.id ? "移除中" : "移除"}
                   </button>

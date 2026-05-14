@@ -1,12 +1,13 @@
-import { rmSync } from "node:fs";
-import { resolve } from "node:path";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const nextDir = resolve(process.cwd(), ".next");
+const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
+const cacheDir = path.join(root, ".next");
 
 try {
-  rmSync(nextDir, { force: true, recursive: true });
+  fs.rmSync(cacheDir, { recursive: true, force: true });
   console.log("[eko] cleaned .next cache before starting dev server");
-} catch (error) {
-  console.warn("[eko] failed to clean .next cache, continuing anyway");
-  console.warn(error instanceof Error ? error.message : error);
+} catch {
+  /* ignore */
 }

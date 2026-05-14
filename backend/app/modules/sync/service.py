@@ -110,6 +110,7 @@ class SyncService:
         message_id: str | None = None,
         context_size: int | None = None,
         instruction: str | None = None,
+        intent: str | None = None,
         context_messages: list[dict[str, Any]] | None = None,
         selected_context_messages: list[dict[str, Any]] | None = None,
         status: str = "进行中",
@@ -125,6 +126,8 @@ class SyncService:
             payload["message_id"] = message_id
         if context_size is not None:
             payload["context_size"] = context_size
+        if intent:
+            payload["intent"] = intent
         if context_messages is not None:
             payload["context_messages"] = context_messages
         if selected_context_messages is not None:
@@ -140,6 +143,7 @@ class SyncService:
             message_id=message_id,
             context_size=context_size or 0,
             instruction=instruction,
+            intent=intent,
             context_messages=context_messages,
             selected_context_messages=selected_context_messages,
             messages=messages,

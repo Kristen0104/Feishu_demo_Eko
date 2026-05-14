@@ -1,4 +1,5 @@
-import { fetchEkoJson } from "@/lib/eko-api";
+import { readAccessToken } from "@/lib/auth-token";
+import { apiUrl, fetchEkoJson, type EkoApiEnvelope } from "@/lib/eko-api";
 import { deriveInitials } from "@/lib/profile-merge";
 import type { UserProfile } from "@/types/profile";
 
@@ -25,6 +26,13 @@ export type AuthMeUser = {
   languages?: string[];
 };
 
+export function resolveAvatarUrl(value?: string | null): string {
+  const raw = value?.trim() ?? "";
+  if (!raw) return "";
+  if (/^(https?:|data:|blob:)/i.test(raw)) return raw;
+  return apiUrl(raw);
+}
+
 export async function fetchCurrentAuthUser(): Promise<AuthMeUser> {
   return fetchEkoJson<AuthMeUser>("/api/v1/auth/me", { cache: "no-store" });
 }
@@ -34,6 +42,34 @@ export async function updateCurrentAuthUser(patch: Partial<UserProfile>): Promis
     method: "PATCH",
     body: JSON.stringify(profilePatchToAuthPayload(patch)),
   });
+}
+
+export async function uploadCurrentUserAvatar(file: File): Promise<string> {
+  const form = new FormData();
+  form.set("file", file);
+
+  const headers = new Headers();
+  const token = readAccessToken();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+
+  const res = await fetch(apiUrl("/api/v1/auth/me/avatar"), {
+    method: "POST",
+    headers,
+    body: form,
+  });
+
+  const json = (await res.json().catch(() => null)) as
+    | EkoApiEnvelope<{ avatar_url: string }>
+    | { detail?: string; message?: string }
+    | null;
+  if (!json || !("code" in json)) {
+    const detail = json && "detail" in json && typeof json.detail === "string" ? json.detail : `HTTP ${res.status}`;
+    throw new Error(detail);
+  }
+  if (!res.ok || json.code !== 0) {
+    throw new Error(json.message || `HTTP ${res.status}`);
+  }
+  return json.data.avatar_url;
 }
 
 export async function updateCurrentPassword(currentPassword: string, newPassword: string): Promise<AuthMeUser> {
@@ -80,6 +116,7 @@ export function authUserToProfilePatch(user: AuthMeUser): Partial<UserProfile> {
     displayName,
     nameEn,
     initials: deriveInitials(displayName, nameEn),
+    avatarUrl: resolveAvatarUrl(user.avatar_url),
     email,
     phone: user.phone?.trim() || "",
     phoneExt: user.phone_ext?.trim() || "",
@@ -101,6 +138,7 @@ function profilePatchToAuthPayload(patch: Partial<UserProfile>): Record<string, 
   if (patch.displayName !== undefined) payload.display_name = patch.displayName;
   if (patch.nameEn !== undefined) payload.name_en = patch.nameEn;
   if (patch.email !== undefined) payload.email = patch.email;
+  if (patch.avatarUrl !== undefined) payload.avatar_url = patch.avatarUrl;
   if (patch.phone !== undefined) payload.phone = patch.phone;
   if (patch.phoneExt !== undefined) payload.phone_ext = patch.phoneExt;
   if (patch.location !== undefined) payload.location = patch.location;

@@ -171,6 +171,7 @@ class AgentEventV1(BaseModel):
         "clarification.requested",
         "artifact.archived",
         "artifact.archive_failed",
+        "artifact.delta",
         "result.created",
         "turn.failed",
     ]
@@ -189,6 +190,7 @@ class AgentChatRequest(BaseModel):
     context: AgentContext | None = None
     sender: dict[str, Any] | None = None
     planning_enabled: bool = True
+    forced_intent: Literal["chat", "docx", "ppt", "board"] | None = None
 
 
 class AgentChatArtifact(BaseModel):

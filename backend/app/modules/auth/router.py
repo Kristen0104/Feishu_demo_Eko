@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from typing import Annotated
+from uuid import uuid4
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 
+from app.config import Settings, get_settings
 from app.core.security import AuthContext, get_auth_context
 from app.modules.auth.dependencies import get_auth_service
 from app.modules.auth.schemas import (
@@ -21,6 +23,14 @@ from app.modules.auth.service import AuthService
 from app.shared.responses import ApiResponse
 
 router = APIRouter()
+
+ALLOWED_AVATAR_CONTENT_TYPES = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+}
+MAX_AVATAR_UPLOAD_BYTES = 5 * 1024 * 1024
 
 
 @router.post(
@@ -112,6 +122,34 @@ async def update_current_user(
     auth_service: Annotated[AuthService, Depends(get_auth_service)],
 ) -> ApiResponse[AuthUserSchema]:
     return ApiResponse.success(await auth_service.update_current_user(auth_context, payload))
+
+
+@router.post(
+    "/me/avatar",
+    response_model=ApiResponse[dict[str, str]],
+    summary="上传当前用户头像",
+)
+async def upload_current_user_avatar(
+    auth_context: Annotated[AuthContext, Depends(get_auth_context)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    file: UploadFile = File(...),
+) -> ApiResponse[dict[str, str]]:
+    suffix = ALLOWED_AVATAR_CONTENT_TYPES.get(file.content_type or "")
+    if suffix is None:
+        raise HTTPException(status_code=400, detail="请选择 JPG、PNG、WebP 或 GIF 图片。")
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="头像文件为空。")
+    if len(content) > MAX_AVATAR_UPLOAD_BYTES:
+        raise HTTPException(status_code=400, detail="头像图片不能超过 5MB。")
+
+    avatar_dir = settings.USER_UPLOADS_PATH / "avatars"
+    avatar_dir.mkdir(parents=True, exist_ok=True)
+    filename = f"{auth_context.user_id}_{uuid4().hex}{suffix}"
+    target = avatar_dir / filename
+    target.write_bytes(content)
+    return ApiResponse.success({"avatar_url": f"/uploads/avatars/{filename}"})
 
 
 @router.patch(

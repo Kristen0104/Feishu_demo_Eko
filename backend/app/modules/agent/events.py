@@ -23,6 +23,7 @@ EVENT_CHANNEL_MAP: dict[str, tuple[str, str]] = {
     "clarification.requested": ("chat", "user"),
     "artifact.archived": ("artifact", "detail"),
     "artifact.archive_failed": ("artifact", "detail"),
+    "artifact.delta": ("artifact", "user"),
     "result.created": ("chat", "user"),
     "turn.failed": ("error", "user"),
 }
@@ -197,6 +198,27 @@ class AgentEventProtocol:
             visibility=visibility,
             message=message,
             payload={"response": payload},
+        ).model_dump()
+
+    @staticmethod
+    def artifact_delta(session_id: str, *, kind: str, chunk: str, content: str) -> dict[str, Any]:
+        return AgentEventProtocol._event(
+            event="artifact.delta",
+            status="running",
+            channel="artifact",
+            visibility="user",
+            message="文档生成中。",
+            payload={
+                "session_id": session_id,
+                "chunk": chunk,
+                "content": content,
+                "artifact": {
+                    "kind": kind,
+                    "content": content,
+                    "status": "running",
+                    "current_step": "生成文档",
+                },
+            },
         ).model_dump()
 
     @staticmethod

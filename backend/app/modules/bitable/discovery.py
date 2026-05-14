@@ -168,14 +168,14 @@ class BitableDiscoveryService:
                 bound=True,
                 needs_reauth=True,
                 mode="preset" if self._has_preset else "advanced_only",
-                message="请重新绑定飞书账号",
+                message="账号授权已过期，自动发现不可用；已保存连接仍可继续读取",
             )
         if identity is None:
             return BitableDiscoveryStatus(
                 bound=False,
                 needs_reauth=True,
                 mode="advanced_only",
-                message="请先绑定飞书账号",
+                message="未绑定飞书账号；可通过链接或手动连接添加应用可访问的表格",
             )
         mode = "user_oauth" if identity.access_token else ("preset" if self._has_preset else "tenant_app")
         return BitableDiscoveryStatus(

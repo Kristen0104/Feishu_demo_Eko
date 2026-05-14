@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 
+from app.config import settings
 from app.modules.agent.schemas import AgentChatArtifact, AgentChatRequest, AgentRetrievedContext
 from app.modules.bitable.schemas import BitableQueryRequest
 from app.modules.bitable.service import BitableService
@@ -159,7 +160,7 @@ class AgentRAGRetriever:
     def _workspace_id(self, request: AgentChatRequest) -> str:
         if request.sender and isinstance(request.sender.get("workspace_id"), str):
             return str(request.sender["workspace_id"])
-        return "Feishu_demo_Eko"
+        return settings.BITABLE_DEFAULT_WORKSPACE_ID
 
     def _created_by_from_request(self, request: AgentChatRequest) -> str | None:
         if not request.sender:

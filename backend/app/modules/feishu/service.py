@@ -91,6 +91,11 @@ class FeishuService:
             return {"message_id": "stub-message"}
         return await asyncio.to_thread(self._client.send_text_message_to_chat, chat_id, text)
 
+    async def reply_text_message(self, message_id: str, text: str) -> dict[str, Any]:
+        if self._client is None:
+            return {"message_id": "stub-reply"}
+        return await asyncio.to_thread(self._client.reply_text_message, message_id, text)
+
     def get_recent_chat_messages(
         self,
         chat_id: str,

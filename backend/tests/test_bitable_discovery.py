@@ -129,7 +129,7 @@ class BitableDiscoveryTest(IsolatedAsyncioTestCase):
 
         self.assertFalse(status.bound)
         self.assertTrue(status.needs_reauth)
-        self.assertEqual(status.message, "请先绑定飞书账号")
+        self.assertEqual(status.message, "未绑定飞书账号；可通过链接或手动连接添加应用可访问的表格")
         self.assertEqual(status.mode, "advanced_only")
 
     async def test_token_expired_status_returns_reauth(self) -> None:
@@ -146,7 +146,7 @@ class BitableDiscoveryTest(IsolatedAsyncioTestCase):
 
         self.assertTrue(status.bound)
         self.assertTrue(status.needs_reauth)
-        self.assertEqual(status.message, "请重新绑定飞书账号")
+        self.assertEqual(status.message, "账号授权已过期，自动发现不可用；已保存连接仍可继续读取")
         self.assertEqual(status.mode, "preset")
 
     async def test_preset_base_returns_masked_token(self) -> None:

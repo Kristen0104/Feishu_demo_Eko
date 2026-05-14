@@ -61,6 +61,7 @@ class CanvasService:
             result = self._board_generate_service.generate(
                 message=task.message,
                 sharing_url=task.sharing_url,
+                whiteboard_id=task.whiteboard_id,
             )
         except Exception as exc:  # noqa: BLE001
             failed = running.model_copy(

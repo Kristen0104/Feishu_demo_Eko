@@ -5,7 +5,13 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Eko",
-  description: "Feishu Eko demo",
+  description: "Feishu Eko",
+  manifest: "/manifest.webmanifest",
+  appleWebApp: {
+    capable: true,
+    title: "Eko",
+    statusBarStyle: "default",
+  },
 };
 
 export default function RootLayout(props: { children: React.ReactNode }) {

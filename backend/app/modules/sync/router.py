@@ -120,6 +120,7 @@ async def select_context_and_run(
                     for message in selected
                 ]
             ),
+            forced_intent=session.intent if session.intent in {"chat", "docx", "ppt", "board"} else None,
         )
     )
     return ApiResponse.success(response).model_dump()

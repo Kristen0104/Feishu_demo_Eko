@@ -17,7 +17,6 @@ export function parseLanguages(input: string): string[] {
     .filter(Boolean);
 }
 
-/** 根据姓名推导头像缩写（演示） */
 export function deriveInitials(displayName: string, nameEn: string): string {
   const d = displayName.trim();
   if (d) {

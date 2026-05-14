@@ -34,9 +34,26 @@ env/
 *~
 .DS_Store
 
+# AI / Cursor local tooling & contributor metadata (do not commit)
+.cursor/
+.cursorrules
+.cursorignore
+**/.cursor/
+AGENTS.md
+.aider*
+.continue/
+.continueignore
+**/.continue/
+*.cursor-chat
+**/agent-transcripts/
+**/.cursorrules
+.github/instructions/
+.copilot/
+
 # Logs
 *.log
 logs/
+**/.deploy-logs/
 tmp/
 
 # Node / frontend

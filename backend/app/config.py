@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     POSTGRES_HOST: str = "39.104.87.235"
     POSTGRES_PORT: int = 5432
     POSTGRES_DB: str = "nexus_pilot"
+    DATABASE_INIT_ON_STARTUP: bool = True
 
     @property
     def DATABASE_URL(self) -> str:
@@ -69,6 +70,14 @@ class Settings(BaseSettings):
         "http://127.0.0.1:8000",
     ]
     FRONTEND_STATIC_DIR: str | None = str(Path(__file__).resolve().parents[2] / "frontend")
+    USER_UPLOADS_DIR: str = "storage/uploads"
+
+    @property
+    def USER_UPLOADS_PATH(self) -> Path:
+        path = Path(self.USER_UPLOADS_DIR)
+        if path.is_absolute():
+            return path
+        return BACKEND_DIR / path
 
     # Feishu
     FEISHU_APP_ID: str = ""
@@ -76,6 +85,8 @@ class Settings(BaseSettings):
     FEISHU_VERIFICATION_TOKEN: str = ""
     FEISHU_ENCRYPT_KEY: str = ""
     FEISHU_WS_AUTO_START: bool = True
+    FEISHU_WS_POLL_CHAT_IDS: str = ""
+    FEISHU_WS_POLL_INTERVAL_SECONDS: float = 5.0
     FEISHU_BASE_URL: str = "https://open.feishu.cn"
     FEISHU_AUTH_BASE_URL: str = "https://accounts.feishu.cn"
     FEISHU_OAUTH_REDIRECT_URI: str = "http://127.0.0.1:3002/login/feishu/callback"

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { ACCESS_PERSIST_KEY, ACCESS_SESSION_KEY } from "@/lib/auth-token";
 import { AUTH_PERSIST_KEY, AUTH_SESSION_KEY } from "@/lib/auth-session";
+import { getServerBackendOrigin } from "@/lib/server/backend";
 
 const REMEMBER_SECONDS = 15 * 24 * 60 * 60;
 
@@ -18,14 +19,6 @@ type FeishuAuthTokenResponse = {
     };
   };
 };
-
-function getBackendOrigin(): string {
-  const raw =
-    process.env.BACKEND_PROXY?.trim() ||
-    process.env.NEXT_PUBLIC_EKO_API_BASE?.trim() ||
-    "http://39.104.87.235:8000";
-  return raw.replace(/\/$/, "");
-}
 
 function getPublicOrigin(request: NextRequest): string {
   const forwardedHost = request.headers.get("x-forwarded-host")?.trim();
@@ -99,7 +92,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const backendOrigin = getBackendOrigin();
+    const backendOrigin = getServerBackendOrigin();
     const endpoint = mode === "bind" ? "/api/v1/auth/feishu/bind" : "/api/v1/auth/feishu/login";
     const token = mode === "bind" ? readAccessToken(request) : null;
     if (mode === "bind" && !token) {

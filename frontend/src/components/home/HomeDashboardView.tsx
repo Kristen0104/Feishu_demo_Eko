@@ -52,10 +52,10 @@ function StatCard({
         : "bg-violet-50 text-violet-600";
 
   return (
-    <div className={cn("rounded-[22px] border px-5 py-4", ring)}>
-      <p className="text-[12px] font-medium uppercase tracking-[0.12em] text-slate-400">{label}</p>
-      <p className="mt-2 text-[28px] font-semibold tracking-tight text-slate-950 tabular-nums">{value}</p>
-      <div className={cn("mt-3 inline-flex rounded-full px-2.5 py-0.5 text-[11px] font-semibold", pill)}>{hint}</div>
+    <div className={cn("flex aspect-square min-w-0 flex-col justify-between rounded-[16px] border px-2.5 py-3 sm:aspect-auto sm:rounded-[22px] sm:px-5 sm:py-4", ring)}>
+      <p className="truncate text-[10px] font-medium uppercase tracking-[0.06em] text-slate-400 sm:text-[12px] sm:tracking-[0.12em]">{label}</p>
+      <p className="text-[22px] font-semibold tracking-tight text-slate-950 tabular-nums sm:mt-2 sm:text-[28px]">{value}</p>
+      <div className={cn("inline-flex max-w-full truncate rounded-full px-1.5 py-0.5 text-[9px] font-semibold sm:mt-3 sm:px-2.5 sm:text-[11px]", pill)}>{hint}</div>
     </div>
   );
 }
@@ -101,7 +101,7 @@ export function HomeDashboardView({ data }: { data: SessionListPageData }) {
               </p>
               <h1 className="mt-1 text-[22px] font-semibold tracking-[-0.04em] text-slate-950">工作台概览</h1>
               <p className="mt-1.5 max-w-xl text-[13px] leading-relaxed text-slate-500">
-                从这里进入会话、文稿与画布；左侧导航可随时切换模块。
+                从这里进入会话与文稿；左侧导航可随时切换模块。
               </p>
             </div>
             <Link
@@ -114,7 +114,7 @@ export function HomeDashboardView({ data }: { data: SessionListPageData }) {
             </Link>
           </div>
 
-          <div className="mt-8 grid gap-4 sm:grid-cols-3">
+          <div className="mt-8 grid grid-cols-3 gap-2 sm:gap-4">
             <StatCard label="进行中会话" value={String(inProgressCount)} hint="来自实时会话" accent="blue" />
             <StatCard label="已同步会话" value={String(syncedCount)} hint="后端最新状态" accent="emerald" />
             <StatCard label="飞书来源" value={String(feishuCount)} hint="由 @机器人 触发" accent="violet" />
@@ -130,29 +130,26 @@ export function HomeDashboardView({ data }: { data: SessionListPageData }) {
               <Link
                 href="/sessions"
                 prefetch={false}
-                className="flex flex-col rounded-[20px] border border-slate-200/90 bg-[linear-gradient(145deg,#ffffff_0%,#f8fafc_100%)] p-5 transition hover:border-blue-200 hover:shadow-md"
+                className="group flex min-h-[74px] flex-col justify-center rounded-[16px] border border-slate-200/90 bg-white px-3.5 py-3 transition hover:border-blue-200 hover:shadow-md sm:min-h-0 sm:rounded-[20px] sm:bg-[linear-gradient(145deg,#ffffff_0%,#f8fafc_100%)] sm:p-5"
               >
-                <span className="text-[13px] font-semibold text-slate-900">查看会话</span>
-                <span className="mt-1 text-[12px] leading-relaxed text-slate-500">管理从 IM 路由来的聊天、文稿与画布会话。</span>
-                <span className="mt-4 text-[12px] font-semibold text-blue-600">打开 →</span>
-              </Link>
-              <Link
-                href="/canvas"
-                prefetch={false}
-                className="flex flex-col rounded-[20px] border border-slate-200/90 bg-[linear-gradient(145deg,#ffffff_0%,#faf5ff_100%)] p-5 transition hover:border-violet-200 hover:shadow-md"
-              >
-                <span className="text-[13px] font-semibold text-slate-900">Tldraw 画布</span>
-                <span className="mt-1 text-[12px] leading-relaxed text-slate-500">全屏故事板与 Agent 生长演示。</span>
-                <span className="mt-4 text-[12px] font-semibold text-violet-600">进入 →</span>
+                <span className="flex items-center justify-between gap-2 text-[13px] font-semibold text-slate-900">
+                  查看会话
+                  <span className="text-blue-500 transition group-hover:translate-x-0.5">→</span>
+                </span>
+                <span className="mt-1 line-clamp-1 text-[11px] leading-snug text-slate-500 sm:text-[12px] sm:leading-relaxed">管理聊天与文稿会话</span>
+                <span className="mt-4 hidden text-[12px] font-semibold text-blue-600 sm:inline">打开 →</span>
               </Link>
               <Link
                 href="/profile"
                 prefetch={false}
-                className="flex flex-col rounded-[20px] border border-slate-200/90 bg-[linear-gradient(145deg,#ffffff_0%,#f0fdf4_100%)] p-5 transition hover:border-emerald-200 hover:shadow-md sm:col-span-2 lg:col-span-1"
+                className="group flex min-h-[74px] flex-col justify-center rounded-[16px] border border-slate-200/90 bg-white px-3.5 py-3 transition hover:border-emerald-200 hover:shadow-md sm:col-span-2 sm:min-h-0 sm:rounded-[20px] sm:bg-[linear-gradient(145deg,#ffffff_0%,#f0fdf4_100%)] sm:p-5 lg:col-span-1"
               >
-                <span className="text-[13px] font-semibold text-slate-900">账户与偏好</span>
-                <span className="mt-1 text-[12px] leading-relaxed text-slate-500">个人资料、通知与安全设置。</span>
-                <span className="mt-4 text-[12px] font-semibold text-emerald-600">设置 →</span>
+                <span className="flex items-center justify-between gap-2 text-[13px] font-semibold text-slate-900">
+                  账户与偏好
+                  <span className="text-emerald-500 transition group-hover:translate-x-0.5">→</span>
+                </span>
+                <span className="mt-1 line-clamp-1 text-[11px] leading-snug text-slate-500 sm:text-[12px] sm:leading-relaxed">资料、通知与安全设置</span>
+                <span className="mt-4 hidden text-[12px] font-semibold text-emerald-600 sm:inline">设置 →</span>
               </Link>
             </div>
           </section>

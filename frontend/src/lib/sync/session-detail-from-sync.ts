@@ -12,6 +12,7 @@ import type {
   SessionDetailData,
 } from "@/types/session-detail";
 
+import { getReadableSessionTitle } from "@/lib/session-title";
 import type { SyncSession } from "./fetch-session";
 
 type SyncSessionMessage = {
@@ -95,6 +96,138 @@ function formatMessageTime(timestamp?: number | null): string {
 
 function normalizeSignal(value?: string | null): string {
   return (value ?? "").trim().toLowerCase();
+}
+
+function isCompletedStatus(status?: string | null): boolean {
+  const normalized = normalizeSignal(status);
+  return status === "已同步" || status === "已完成" || normalized === "completed" || normalized === "done" || normalized === "success";
+}
+
+function isFailedStatus(status?: string | null): boolean {
+  const normalized = normalizeSignal(status);
+  return normalized === "failed" || (status ?? "").includes("失败");
+}
+
+function hasArtifactOutput(session: SyncSession): boolean {
+  const artifact = session.artifact;
+  if (!artifact || isFailedStatus(session.status) || isFailedStatus(artifact.status)) return false;
+  return Boolean(
+    artifact.content ||
+      artifact.download_url ||
+      artifact.sharing_url ||
+      artifact.whiteboard_id ||
+      artifact.preview_url ||
+      artifact.result_summary ||
+      (artifact.job_id && isCompletedStatus(session.status)),
+  );
+}
+
+function looksLikeClarificationPrompt(content: string): boolean {
+  const normalized = content.replace(/\s+/g, "");
+  const asking = normalized.includes("请问") || normalized.includes("需要") || normalized.includes("希望") || normalized.includes("补充");
+  const aboutRequirements = normalized.includes("文档") || normalized.includes("PPT") || normalized.includes("内容") || normalized.includes("需求");
+  const asksForDetails = normalized.includes("哪些") || normalized.includes("具体") || normalized.includes("包含") || normalized.includes("补充");
+  return asking && aboutRequirements && asksForDetails;
+}
+
+function looksCompletedMessage(content: string): boolean {
+  const normalized = content.replace(/\s+/g, "");
+  return (
+    normalized.includes("已生成") ||
+    normalized.includes("已经完成") ||
+    normalized.includes("已完成") ||
+    normalized.includes("生成完成") ||
+    normalized.includes("可在右侧")
+  );
+}
+
+function looksLikeInternalTraceMessage(content: string): boolean {
+  const normalized = content.replace(/\s+/g, "");
+  const markers = [
+    "我先理解你的任务",
+    "拆成可以执行的步骤",
+    "我判断这次要走",
+    "开始检索相关知识",
+    "已检索到",
+    "规划完成",
+    "调用文档生成能力",
+  ];
+  return markers.filter((marker) => normalized.includes(marker)).length >= 2;
+}
+
+function compactInternalTraceMessage(content: string): string {
+  if (!looksLikeInternalTraceMessage(content)) return content;
+  const chunks = content
+    .replace(/\r/g, "\n")
+    .split(/\n{1,}|\s{2,}/)
+    .map((chunk) => chunk.trim())
+    .filter(Boolean);
+  const completion = [...chunks].reverse().find((chunk) => looksCompletedMessage(chunk) || chunk.includes("同步到飞书"));
+  if (completion) return completion;
+  if (content.includes("调用文档生成能力")) return "正在生成文档，右侧会实时输出。";
+  return "正在处理，会在右侧同步结果。";
+}
+
+function isBoardSession(session: SyncSession): boolean {
+  const artifactKind = normalizeSignal(session.artifact?.kind);
+  const intent = normalizeSignal(session.artifact?.intent ?? session.intent);
+  return artifactKind === "board" || intent === "board";
+}
+
+function compactMessageEntries(session: SyncSession, messages: DetailMessage[]): DetailMessage[] {
+  const compacted = messages.map((message) =>
+    message.role === "eko" ? { ...message, body: compactInternalTraceMessage(message.body) } : message,
+  );
+  return compacted.filter((message, index) => {
+    if (message.role !== "eko") return true;
+    if (isBoardSession(session) && looksLikeInternalTraceMessage(message.body)) return false;
+    if (looksLikeClarificationPrompt(message.body)) {
+      return !compacted.slice(index + 1).some((next) => next.role === "eko" && looksCompletedMessage(next.body));
+    }
+    if (message.body.includes("文档已生成，右侧可以查看") || message.body.includes("右侧可以查看、下载或继续编辑")) {
+      return !compacted.slice(0, index).some((prev) => prev.role === "eko" && looksCompletedMessage(prev.body));
+    }
+    const previous = compacted[index - 1];
+    return !(previous?.role === "eko" && previous.body.trim() === message.body.trim());
+  });
+}
+
+function artifactReadyMessage(session: SyncSession): DetailMessage {
+  const kind = normalizeSignal(session.artifact?.kind ?? session.intent);
+  const body =
+    kind === "ppt"
+      ? "PPT 已生成，右侧可以预览和下载。"
+      : kind === "board"
+        ? "画板已生成，右侧可以打开查看。"
+        : kind === "docx"
+          ? "文档已生成，右侧可以查看、下载或继续编辑。"
+          : "处理已完成，右侧可以查看结果。";
+  return {
+    id: `${session.session_id}:artifact-ready`,
+    author: "Eko",
+    role: "eko",
+    time: "刚刚",
+    body,
+    avatar: "E",
+    sent: true,
+  };
+}
+
+function reconcileCompletedArtifactMessages(session: SyncSession, messages: DetailMessage[]): DetailMessage[] {
+  if (!hasArtifactOutput(session)) return compactMessageEntries(session, messages);
+
+  const next = compactMessageEntries(session, messages);
+  while (next.length > 0) {
+    const last = next[next.length - 1];
+    if (last.role !== "eko" || !looksLikeClarificationPrompt(last.body)) break;
+    next.pop();
+  }
+
+  const lastEko = [...next].reverse().find((message) => message.role === "eko");
+  if (!lastEko || !looksCompletedMessage(lastEko.body)) {
+    next.push(artifactReadyMessage(session));
+  }
+  return next;
 }
 
 function splitMarkdownSections(markdown?: string | null): SessionDetailData["document"]["sections"] {
@@ -214,10 +347,13 @@ function buildMessageEntries(messages: SyncSessionMessage[]): DetailMessage[] {
 
 function buildMessages(session: SyncSession): DetailMessage[] {
   if (session.messages && session.messages.length > 0) {
-    return buildMessageEntries(session.messages);
+    return reconcileCompletedArtifactMessages(session, buildMessageEntries(session.messages));
   }
 
-  const body = session.summary || "收到飞书群聊消息，正在拉取上下文并建立会话。";
+  const body =
+    session.status === "等待选择" && isBoardSession(session)
+      ? "已读取候选聊天记录，请先选择上下文，再继续生成画板。"
+      : session.summary || "收到飞书群聊消息，正在拉取上下文并建立会话。";
   const messages: DetailMessage[] = [];
   if (session.instruction?.trim()) {
     const triggerMessage = session.messages?.find((message) => normalizeSignal(message.role) === "user");
@@ -245,7 +381,7 @@ function buildMessages(session: SyncSession): DetailMessage[] {
       sent: true,
     },
   );
-  return messages;
+  return reconcileCompletedArtifactMessages(session, messages);
 }
 
 function buildSourceEvidence(session: SyncSession): DetailEvidenceItem[] {
@@ -295,7 +431,7 @@ function buildRelatedFiles(session: SyncSession): DetailRelatedFile[] {
 }
 
 function buildSyncActions(session: SyncSession): DetailSyncAction[] {
-  const completed = session.status === "已同步" || session.status === "completed" || session.status === "done";
+  const completed = isCompletedStatus(session.status);
   const actions: DetailSyncAction[] = [
     {
       id: `${session.session_id}:sync`,
@@ -344,15 +480,17 @@ function buildArtifact(session: SyncSession): SyncSessionArtifact | null {
     typeof artifact?.content === "string" && artifact.content.trim().length > 0
       ? artifact.content
       : null;
-  const sessionDone = session.status === "completed" || session.status === "已同步" || session.status === "done";
-  const sessionFailed = session.status === "failed" || session.status.includes("失败");
+  const sessionDone = isCompletedStatus(session.status);
+  const sessionFailed = isFailedStatus(session.status);
+  const rawArtifactStatus = typeof artifact?.status === "string" ? artifact.status : null;
+  const artifactFailed = isFailedStatus(rawArtifactStatus);
 
   return {
     kind,
     intent: (artifact?.intent as string | null | undefined) ?? session.intent ?? null,
-    title: typeof artifact?.title === "string" ? artifact.title : session.title,
+    title: typeof artifact?.title === "string" ? artifact.title : getReadableSessionTitle(session),
     job_id: typeof artifact?.job_id === "string" ? artifact.job_id : null,
-    status: typeof artifact?.status === "string" ? artifact.status : sessionDone ? "completed" : sessionFailed ? "failed" : null,
+    status: artifactFailed ? rawArtifactStatus : sessionDone ? "completed" : rawArtifactStatus ?? (sessionFailed ? "failed" : null),
     progress: typeof artifact?.progress === "number" ? artifact.progress : null,
     current_step: typeof artifact?.current_step === "string" ? artifact.current_step : null,
     download_url: typeof artifact?.download_url === "string" ? artifact.download_url : null,
@@ -377,9 +515,10 @@ function buildCanvasNodes(): DetailCanvasNode[] {
 export function buildSessionDetailData(session: SyncSession): SessionDetailData {
   const contextSize = session.context_size ?? 0;
   const badges = [statusBadge(session.source === "feishu" ? "飞书" : "IM"), statusBadge(session.status)] as HeaderBadge[];
-  const sessionCompleted = session.status === "已同步" || session.status === "completed" || session.status === "done";
+  const sessionCompleted = isCompletedStatus(session.status);
   const defaultTab = resolveDefaultTab(session);
   const artifact = buildArtifact(session);
+  const readableTitle = getReadableSessionTitle(session);
   const markdown = artifact?.kind === "docx" ? artifact.content ?? session.summary : session.summary;
   const documentSections =
     artifact?.kind === "docx"
@@ -389,15 +528,15 @@ export function buildSessionDetailData(session: SyncSession): SessionDetailData 
   return {
     id: session.session_id,
     layoutVariant: resolveLayoutVariant(defaultTab),
-    title: session.title,
-    breadcrumb: ["Eko", "会话", session.title],
+    title: readableTitle,
+    breadcrumb: ["Eko", "会话", readableTitle],
     topBadges: badges,
     navItems,
     assistantName: "Eko",
     assistantEmail: session.status,
     conversationTitle: "对话",
     messages: buildMessages(session),
-    missionTitle: session.title,
+    missionTitle: readableTitle,
     missionBadges: [session.source === "feishu" ? "飞书" : "IM", "聊天", session.status],
     missionSubtitle: session.summary,
     confidence: contextSize > 0 ? "已获取上下文" : "暂无上下文",
@@ -424,7 +563,7 @@ export function buildSessionDetailData(session: SyncSession): SessionDetailData 
         ? {
             kind: artifact.kind ?? undefined,
             intent: artifact.intent ?? null,
-            title: artifact.title ?? session.title,
+            title: artifact.title ?? readableTitle,
             jobId: artifact.job_id ?? null,
             status: artifact.status ?? null,
             progress: artifact.progress ?? null,
@@ -448,7 +587,7 @@ export function buildSessionDetailData(session: SyncSession): SessionDetailData 
           ? {
               kind: artifact.kind ?? undefined,
               intent: artifact.intent ?? null,
-              title: artifact.title ?? session.title,
+              title: artifact.title ?? readableTitle,
               status: artifact.status ?? null,
               progress: artifact.progress ?? null,
               currentStep: artifact.current_step ?? null,
@@ -465,7 +604,7 @@ export function buildSessionDetailData(session: SyncSession): SessionDetailData 
       ? {
           kind: artifact.kind ?? undefined,
           intent: artifact.intent ?? null,
-          title: artifact.title ?? session.title,
+          title: artifact.title ?? readableTitle,
           jobId: artifact.job_id ?? null,
           status: artifact.status ?? null,
           progress: artifact.progress ?? null,
@@ -488,7 +627,7 @@ export function buildSessionDetailData(session: SyncSession): SessionDetailData 
     sourceEvidence: buildSourceEvidence(session),
     syncActions: buildSyncActions(session),
     statusBadges: badges,
-    systemNote: "当前展示的是后端真实会话数据，没有 mock 兜底。",
+    systemNote: "当前展示的是后端真实会话数据。",
     actionButtons: ["分享", "导出"],
     workflowCards: [
       { id: `${session.session_id}:wf-1`, title: "会话创建", status: "completed", subtitle: "后端已登记", timestamp: "刚刚" },
@@ -500,11 +639,11 @@ export function buildSessionDetailData(session: SyncSession): SessionDetailData 
       },
       { id: `${session.session_id}:wf-3`, title: "结果同步", status: sessionCompleted ? "completed" : "pending" },
     ],
-    progress: session.status === "已同步" ? 1 : 0.5,
+    progress: sessionCompleted ? 1 : 0.5,
     relatedFiles: buildRelatedFiles(session),
     memoryNote: {
       title: "会话记忆",
-      body: "会话信息来自后端实时登记，不再依赖静态示例数据。",
+      body: "会话信息来自后端实时登记。",
       action: "查看详情",
     },
     syncOverview: {

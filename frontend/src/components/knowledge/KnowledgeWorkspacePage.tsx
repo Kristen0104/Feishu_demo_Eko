@@ -6,6 +6,7 @@ import { deleteRagFile, listRagFiles, searchRag, uploadRagFile, type RagFile, ty
 import { BitableSourcesPanel } from "@/components/knowledge/BitableSourcesPanel";
 
 const SUPPORTED_EXTENSIONS = [".pdf", ".docx", ".md", ".txt", ".json", ".csv", ".log"];
+type KnowledgeSource = "files" | "bitable";
 
 function formatBytes(size: number) {
   if (size < 1024) return `${size} B`;
@@ -20,6 +21,7 @@ function shortText(text: string, max = 180) {
 
 export function KnowledgeWorkspacePage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [activeSource, setActiveSource] = useState<KnowledgeSource>("files");
   const [files, setFiles] = useState<RagFile[]>([]);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [preview, setPreview] = useState("");
@@ -147,129 +149,197 @@ export function KnowledgeWorkspacePage() {
   }
 
   return (
-    <main className="min-h-0 flex-1 overflow-y-auto bg-[#F8F9FA] px-6 py-6">
+    <main className="min-h-0 flex-1 overflow-y-auto bg-[#F8F9FA] px-3 py-4 sm:px-5 lg:px-6 lg:py-6">
       <div className="mx-auto flex w-full max-w-[1180px] flex-col gap-5">
-        <BitableSourcesPanel />
-
-        <section className="rounded-[16px] border border-slate-200 bg-white p-5 shadow-[0_12px_30px_rgba(15,23,42,0.04)]">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <section className="rounded-[16px] border border-slate-200 bg-white p-3 shadow-[0_12px_30px_rgba(15,23,42,0.04)] sm:p-5">
+          <div className="flex flex-col gap-2 lg:flex-row lg:items-end lg:justify-between">
             <div className="min-w-0">
-              <h1 className="text-[22px] font-semibold text-slate-950">知识库导入</h1>
+              <h1 className="text-[22px] font-semibold text-slate-950">知识库数据源</h1>
               <p className="mt-2 max-w-[720px] text-[14px] leading-6 text-slate-500">
-                导入后的文本会进入 RAG 向量库，Agent 每轮会通过检索结果注入上下文。
+                按来源管理知识内容。文件用于非结构化资料检索，多维表格用于结构化素材和成果归档。
               </p>
             </div>
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              className="inline-flex h-10 shrink-0 items-center justify-center rounded-[12px] bg-blue-600 px-4 text-[13px] font-semibold text-white shadow-sm transition hover:bg-blue-700"
-            >
-              选择文件
-            </button>
+            <span className="inline-flex h-8 w-fit items-center rounded-[10px] border border-slate-200 px-3 text-[12px] font-semibold text-slate-600">
+              {activeSource === "files" ? "文件知识库" : "多维表格"}
+            </span>
           </div>
 
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".pdf,.docx,.md,.txt,.json,.csv,.log,text/*,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            className="sr-only"
-            onChange={(event) => void handleFileChange(event.target.files?.[0] ?? null)}
-          />
+          <div className="mt-4 grid gap-2 md:grid-cols-2">
+            <button
+              type="button"
+              aria-pressed={activeSource === "files"}
+              onClick={() => setActiveSource("files")}
+              className={[
+                "group min-h-[84px] rounded-[14px] border px-4 py-3 text-left transition active:translate-y-px",
+                activeSource === "files"
+                  ? "border-blue-200 bg-blue-50/80 text-blue-700 shadow-[inset_3px_0_0_#2563EB]"
+                  : "border-slate-200 bg-slate-50/70 text-slate-700 hover:border-slate-300 hover:bg-white",
+              ].join(" ")}
+            >
+              <span className="block text-[15px] font-semibold">文件知识库</span>
+              <span className={`mt-1 block text-[13px] leading-5 ${activeSource === "files" ? "text-blue-600" : "text-slate-500"}`}>
+                上传 PDF、文档和文本文件，用于 RAG 检索。
+              </span>
+              <span className="mt-2 inline-flex rounded-full bg-white/80 px-2.5 py-1 text-[11px] font-semibold text-slate-600">
+                {loading ? "读取中" : `${files.length} 个文件`}
+              </span>
+            </button>
 
-          <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
-            <div className="min-h-[220px] rounded-[14px] border border-dashed border-slate-300 bg-slate-50/80 p-4">
-              {selectedFile ? (
-                <div className="flex h-full flex-col">
-                  <div className="flex min-w-0 items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="truncate text-[14px] font-semibold text-slate-900">{selectedFile.name}</p>
-                      <p className="mt-1 text-[12px] text-slate-500">{formatBytes(selectedFile.size)}</p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={handleIngest}
-                      disabled={submitting || !selectedFileSupported}
-                      className="inline-flex h-9 shrink-0 items-center rounded-[11px] bg-slate-950 px-3 text-[12px] font-semibold text-white disabled:bg-slate-300"
-                    >
-                      {submitting ? "导入中..." : "导入 RAG"}
-                    </button>
-                  </div>
-                  <pre className="mt-4 min-h-0 flex-1 overflow-auto whitespace-pre-wrap rounded-[12px] border border-slate-200 bg-white p-3 text-[12px] leading-5 text-slate-600">
-                    {preview ? shortText(preview, 1800) : "文件会上传到后端解析。"}
-                  </pre>
-                </div>
-              ) : (
-                <div className="flex h-full min-h-[188px] flex-col items-center justify-center text-center">
-                  <p className="text-[15px] font-semibold text-slate-800">选择本地文本文件导入 RAG</p>
-                  <p className="mt-2 max-w-[420px] text-[13px] leading-6 text-slate-500">支持 pdf、docx、md、txt、json、csv、log。PDF / DOCX 会在后端解析后入库。</p>
-                </div>
-              )}
-            </div>
+            <button
+              type="button"
+              aria-pressed={activeSource === "bitable"}
+              onClick={() => setActiveSource("bitable")}
+              className={[
+                "group min-h-[84px] rounded-[14px] border px-4 py-3 text-left transition active:translate-y-px",
+                activeSource === "bitable"
+                  ? "border-blue-200 bg-blue-50/80 text-blue-700 shadow-[inset_3px_0_0_#2563EB]"
+                  : "border-slate-200 bg-slate-50/70 text-slate-700 hover:border-slate-300 hover:bg-white",
+              ].join(" ")}
+            >
+              <span className="block text-[15px] font-semibold">多维表格</span>
+              <span className={`mt-1 block text-[13px] leading-5 ${activeSource === "bitable" ? "text-blue-600" : "text-slate-500"}`}>
+                连接飞书表格，读取结构化字段并归档成果。
+              </span>
+              <span className="mt-2 inline-flex rounded-full bg-white/80 px-2.5 py-1 text-[11px] font-semibold text-slate-600">
+                配置连接
+              </span>
+            </button>
+          </div>
+        </section>
 
-            <div className="rounded-[14px] border border-slate-200 bg-white p-4">
-              <h2 className="text-[14px] font-semibold text-slate-950">已入库文件</h2>
-              <div className="mt-3 max-h-[264px] space-y-2 overflow-y-auto pr-1">
-                {loading ? <p className="text-[13px] text-slate-500">加载中...</p> : null}
-                {!loading && files.length === 0 ? <p className="text-[13px] text-slate-500">还没有 RAG 文件。</p> : null}
-                {files.map((file) => (
-                  <div key={file.file_id} className="rounded-[12px] border border-slate-200 px-3 py-2.5">
-                    <div className="flex min-w-0 items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <p className="truncate text-[13px] font-semibold text-slate-900">{file.filename}</p>
-                        <p className="mt-1 text-[12px] text-slate-500">{file.chunk_count} chunks</p>
+        {activeSource === "files" ? (
+          <>
+            <section className="rounded-[16px] border border-slate-200 bg-white p-3 shadow-[0_12px_30px_rgba(15,23,42,0.04)] sm:p-5">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div className="min-w-0">
+                  <h2 className="text-[20px] font-semibold text-slate-950">文件导入</h2>
+                  <p className="mt-2 max-w-[720px] text-[14px] leading-6 text-slate-500">
+                    导入后的文本会进入 RAG 向量库，Agent 每轮会通过检索结果注入上下文。
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="inline-flex h-10 w-full shrink-0 items-center justify-center rounded-[12px] bg-blue-600 px-4 text-[13px] font-semibold text-white shadow-sm transition hover:bg-blue-700 sm:w-auto"
+                >
+                  选择文件
+                </button>
+              </div>
+
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".pdf,.docx,.md,.txt,.json,.csv,.log,text/*,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                className="sr-only"
+                onChange={(event) => void handleFileChange(event.target.files?.[0] ?? null)}
+              />
+
+              <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+                <div className="min-h-[220px] rounded-[14px] border border-dashed border-slate-300 bg-slate-50/80 p-4">
+                  {selectedFile ? (
+                    <div className="flex h-full flex-col">
+                      <div className="flex min-w-0 items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-[14px] font-semibold text-slate-900">{selectedFile.name}</p>
+                          <p className="mt-1 text-[12px] text-slate-500">{formatBytes(selectedFile.size)}</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleIngest}
+                          disabled={submitting || !selectedFileSupported}
+                          className="inline-flex h-9 shrink-0 items-center justify-center rounded-[11px] bg-slate-950 px-3 text-[12px] font-semibold text-white disabled:bg-slate-300"
+                        >
+                          {submitting ? "导入中..." : "导入 RAG"}
+                        </button>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => void handleDelete(file)}
-                        disabled={deletingFileId === file.file_id}
-                        className={[
-                          "shrink-0 rounded-[9px] px-2.5 py-1 text-[11px] font-semibold transition disabled:bg-slate-100 disabled:text-slate-400",
-                          confirmDeleteFileId === file.file_id
-                            ? "bg-rose-600 text-white hover:bg-rose-700"
-                            : "bg-rose-50 text-rose-600 hover:bg-rose-100",
-                        ].join(" ")}
-                      >
-                        {deletingFileId === file.file_id ? "删除中" : confirmDeleteFileId === file.file_id ? "确认删除" : "删除"}
-                      </button>
+                      <pre className="mt-4 min-h-0 flex-1 overflow-auto whitespace-pre-wrap rounded-[12px] border border-slate-200 bg-white p-3 text-[12px] leading-5 text-slate-600">
+                        {preview ? shortText(preview, 1800) : "文件会上传到后端解析。"}
+                      </pre>
                     </div>
+                  ) : (
+                    <div className="flex h-full min-h-[188px] flex-col items-center justify-center text-center">
+                      <p className="text-[15px] font-semibold text-slate-800">选择文本文件导入 RAG</p>
+                      <p className="mt-2 max-w-[420px] text-[13px] leading-6 text-slate-500">
+                        支持 pdf、docx、md、txt、json、csv、log。PDF / DOCX 会解析后入库。
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                <div className="rounded-[14px] border border-slate-200 bg-white p-4">
+                  <h3 className="text-[14px] font-semibold text-slate-950">已入库文件</h3>
+                  <div className="mt-3 max-h-[264px] space-y-2 overflow-y-auto pr-1">
+                    {loading ? <p className="text-[13px] text-slate-500">加载中...</p> : null}
+                    {!loading && files.length === 0 ? <p className="text-[13px] text-slate-500">还没有 RAG 文件。</p> : null}
+                    {files.map((file) => (
+                      <div key={file.file_id} className="rounded-[12px] border border-slate-200 px-3 py-2.5">
+                        <div className="flex min-w-0 items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="truncate text-[13px] font-semibold text-slate-900">{file.filename}</p>
+                            <p className="mt-1 text-[12px] text-slate-500">{file.chunk_count} chunks</p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => void handleDelete(file)}
+                            disabled={deletingFileId === file.file_id}
+                            className={[
+                              "shrink-0 rounded-[9px] px-2.5 py-1 text-[11px] font-semibold transition disabled:bg-slate-100 disabled:text-slate-400",
+                              confirmDeleteFileId === file.file_id
+                                ? "bg-rose-600 text-white hover:bg-rose-700"
+                                : "bg-rose-50 text-rose-600 hover:bg-rose-100",
+                            ].join(" ")}
+                          >
+                            {deletingFileId === file.file_id ? "删除中" : confirmDeleteFileId === file.file_id ? "确认删除" : "删除"}
+                          </button>
+                        </div>
+                      </div>
+                    ))}
                   </div>
+                </div>
+              </div>
+
+              {notice ? <p className="mt-4 text-[13px] text-slate-600">{notice}</p> : null}
+            </section>
+
+            <section className="rounded-[16px] border border-slate-200 bg-white p-3 shadow-[0_12px_30px_rgba(15,23,42,0.04)] sm:p-5">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+                <div className="min-w-0 flex-1">
+                  <h2 className="text-[16px] font-semibold text-slate-950">文件检索验证</h2>
+                  <p className="mt-1 text-[13px] text-slate-500">用一个问题测试已导入文件能否被命中。</p>
+                </div>
+                <div className="flex min-w-0 flex-col gap-2 sm:flex-row lg:min-w-[560px]">
+                  <input
+                    value={query}
+                    onChange={(event) => setQuery(event.target.value)}
+                    className="h-10 min-w-0 flex-1 rounded-[12px] border border-slate-200 px-3 text-[14px] text-slate-800 outline-none focus:border-blue-400"
+                    placeholder="输入检索问题"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void handleSearch()}
+                    disabled={searching || !query.trim()}
+                    className="inline-flex h-10 w-full shrink-0 items-center justify-center rounded-[12px] bg-blue-600 px-4 text-[13px] font-semibold text-white disabled:bg-slate-300 sm:w-auto"
+                  >
+                    {searching ? "检索中..." : "测试检索"}
+                  </button>
+                </div>
+              </div>
+              <div className="mt-4 space-y-3">
+                {results.map((result) => (
+                  <article key={result.chunk_id} className="rounded-[14px] border border-slate-200 p-4">
+                    <div className="flex min-w-0 items-center justify-between gap-3">
+                      <h3 className="truncate text-[14px] font-semibold text-slate-950">{result.title}</h3>
+                      <span className="shrink-0 rounded-full bg-blue-50 px-2.5 py-1 text-[11px] font-semibold text-blue-700">{(result.score * 100).toFixed(0)}%</span>
+                    </div>
+                    <p className="mt-2 text-[13px] leading-6 text-slate-600">{shortText(result.content, 260)}</p>
+                  </article>
                 ))}
               </div>
-            </div>
-          </div>
-
-          {notice ? <p className="mt-4 text-[13px] text-slate-600">{notice}</p> : null}
-        </section>
-
-        <section className="rounded-[16px] border border-slate-200 bg-white p-5 shadow-[0_12px_30px_rgba(15,23,42,0.04)]">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
-            <input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              className="h-10 min-w-0 flex-1 rounded-[12px] border border-slate-200 px-3 text-[14px] text-slate-800 outline-none focus:border-blue-400"
-              placeholder="输入检索问题"
-            />
-            <button
-              type="button"
-              onClick={() => void handleSearch()}
-              disabled={searching || !query.trim()}
-              className="inline-flex h-10 shrink-0 items-center justify-center rounded-[12px] bg-blue-600 px-4 text-[13px] font-semibold text-white disabled:bg-slate-300"
-            >
-              {searching ? "检索中..." : "测试检索"}
-            </button>
-          </div>
-          <div className="mt-4 space-y-3">
-            {results.map((result) => (
-              <article key={result.chunk_id} className="rounded-[14px] border border-slate-200 p-4">
-                <div className="flex min-w-0 items-center justify-between gap-3">
-                  <h3 className="truncate text-[14px] font-semibold text-slate-950">{result.title}</h3>
-                  <span className="shrink-0 rounded-full bg-blue-50 px-2.5 py-1 text-[11px] font-semibold text-blue-700">{(result.score * 100).toFixed(0)}%</span>
-                </div>
-                <p className="mt-2 text-[13px] leading-6 text-slate-600">{shortText(result.content, 260)}</p>
-              </article>
-            ))}
-          </div>
-        </section>
+            </section>
+          </>
+        ) : (
+          <BitableSourcesPanel />
+        )}
       </div>
     </main>
   );

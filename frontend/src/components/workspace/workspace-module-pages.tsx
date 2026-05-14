@@ -61,7 +61,7 @@ function SectionCard({
       )}
     >
       <h2 className="border-b border-slate-100 bg-slate-50/80 px-5 py-3 text-[13px] font-semibold text-slate-800">{title}</h2>
-      <div className="p-5">{children}</div>
+      <div className="p-3 sm:p-5">{children}</div>
     </section>
   );
 }
@@ -86,12 +86,12 @@ export function ShareCollaborationPage({ data }: { data: SessionListPageData }) 
         title="分享 / 协作"
         description="从真实同步会话派生可协作对象、待处理状态与近期共享记录。"
         actions={
-          <Link href="/sessions" prefetch={false} className="rounded-[12px] bg-blue-600 px-4 py-2 text-[13px] font-semibold text-white shadow-sm transition hover:bg-blue-700">
+          <Link href="/sessions" prefetch={false} className="inline-flex min-h-10 w-full items-center justify-center rounded-[12px] bg-blue-600 px-4 py-2 text-[13px] font-semibold text-white shadow-sm transition hover:bg-blue-700 sm:w-auto">
             从会话继续协作
           </Link>
         }
       />
-      <div className="min-h-0 flex-1 space-y-5 overflow-auto px-7 py-6">
+      <div className="min-h-0 flex-1 space-y-5 overflow-auto px-3 py-4 sm:px-5 lg:px-7 lg:py-6">
         <div className="grid gap-4 lg:grid-cols-3">
           <div className="rounded-[16px] border border-slate-200/90 bg-gradient-to-br from-white to-slate-50/80 p-5">
             <p className="text-[12px] font-medium uppercase tracking-wide text-slate-400">可分享对象</p>
@@ -161,13 +161,13 @@ export function TasksWorkspacePage({ data }: { data: SessionListPageData }) {
           <Link
             href="/sessions"
             prefetch={false}
-            className="rounded-[12px] border border-slate-200 bg-white px-4 py-2 text-[13px] font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
+            className="inline-flex min-h-10 w-full items-center justify-center rounded-[12px] border border-slate-200 bg-white px-4 py-2 text-[13px] font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 sm:w-auto"
           >
             查看会话
           </Link>
         }
       />
-      <div className="min-h-0 flex-1 overflow-auto px-7 py-6">
+      <div className="min-h-0 flex-1 overflow-auto px-3 py-4 sm:px-5 lg:px-7 lg:py-6">
         <div className="mb-4 flex flex-wrap gap-2">
           {["全部", "我负责的", "今日到期", "已完成"].map((label, i) => (
             <span
@@ -187,7 +187,7 @@ export function TasksWorkspacePage({ data }: { data: SessionListPageData }) {
               key={t.id}
               href={t.href}
               prefetch={false}
-              className="flex flex-wrap items-center justify-between gap-3 rounded-[16px] border border-slate-200/90 bg-[#fafbfc] px-4 py-3 transition hover:border-slate-300 hover:bg-white"
+              className="flex flex-wrap items-center justify-between gap-3 rounded-[16px] border border-slate-200/90 bg-[#fafbfc] px-3 py-3 transition hover:border-slate-300 hover:bg-white sm:px-4"
             >
               <div className="min-w-0 flex-1">
                 <p className="text-[14px] font-semibold text-slate-900">{t.title}</p>
@@ -232,7 +232,7 @@ export function AppsWorkspacePage({ data }: { data: SessionListPageData }) {
   const apps = [
     {
       title: "Tldraw 画布",
-      desc: "全屏故事板与 Agent 生长演示",
+      desc: "全屏无限画布与会话草稿",
       href: "/canvas",
       tone: "violet" as const,
     },
@@ -273,7 +273,7 @@ export function AppsWorkspacePage({ data }: { data: SessionListPageData }) {
         title="应用"
         description={`工作台快捷入口；当前已同步 ${flattenSessions(data).length} 个会话。`}
       />
-      <div className="min-h-0 flex-1 overflow-auto px-7 py-6">
+      <div className="min-h-0 flex-1 overflow-auto px-3 py-4 sm:px-5 lg:px-7 lg:py-6">
         <div className="grid gap-4 sm:grid-cols-2">
           {apps.map((app) => (
             <Link

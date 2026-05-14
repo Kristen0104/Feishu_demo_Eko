@@ -511,6 +511,20 @@ function agentToolCallText(intent: AgentChatResponseWire["intent"], artifact?: D
   return "好的，我现在直接回复这个问题。";
 }
 
+function looksLikeInternalTraceMessage(content: string) {
+  const normalized = content.replace(/\s+/g, "");
+  const markers = [
+    "我先理解你的任务",
+    "拆成可以执行的步骤",
+    "我判断这次要走",
+    "开始检索相关知识",
+    "已检索到",
+    "规划完成",
+    "直接回答用户问题",
+  ];
+  return markers.filter((marker) => normalized.includes(marker)).length >= 2;
+}
+
 function planningMessageBody(plan: PlanningPlanWire) {
   const clarificationLine =
     plan.questions?.[0] ||
@@ -1918,6 +1932,7 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
               return;
             }
             if (channel === "chat" && event.message && !isExistingDocumentEdit) {
+              if (looksLikeInternalTraceMessage(event.message)) return;
               updateStreamMessage(event.message, { sent: true });
             }
           },
@@ -2022,6 +2037,9 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
           continue;
         }
         if (channel === "chat" && event.message) {
+          if (looksLikeInternalTraceMessage(event.message)) {
+            continue;
+          }
           updateReplayMessage(event.message, { sent: true });
         }
       }

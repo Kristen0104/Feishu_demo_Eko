@@ -16,7 +16,7 @@ export function Stepper({ steps, className }: { steps: WorkflowStep[]; className
     <div className={cn("mt-2 min-w-0", className)}>
       <div className="grid min-w-[520px] grid-cols-6 gap-1">
         {steps.map((step, index) => (
-          <div key={`${index}-${step.id}`} className="relative flex min-w-0 flex-col items-center text-center">
+          <div key={step.id || String(index)} className="relative flex min-w-0 flex-col items-center text-center">
             {index < steps.length - 1 && (
               <div className="absolute left-[calc(50%+16px)] top-[14px] flex w-[calc(100%-32px)] items-center">
                 <span className={`h-[2px] flex-1 rounded-full ${lineColor[step.status]} shadow-[0_1px_4px_rgba(148,163,184,0.12)]`} />

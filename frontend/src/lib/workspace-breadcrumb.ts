@@ -8,17 +8,18 @@ export type WorkspaceBreadcrumbSegment = {
 };
 
 /**
- * Top header breadcrumb: Eko (→ /home) + module path + optional session title on `/sessions/[slug]`.
+ * Top header breadcrumb: Eko (→ /home) + module path.
  */
-export function resolveWorkspaceBreadcrumb(pathname: string): WorkspaceBreadcrumbSegment[] {
+export function resolveWorkspaceBreadcrumb(
+  pathname: string,
+  options: { sessionTitle?: string | null } = {},
+): WorkspaceBreadcrumbSegment[] {
   const path = pathname.split("?")[0] ?? pathname;
 
   const root: WorkspaceBreadcrumbSegment = { label: "Eko", href: "/home" };
 
-  const sessionDetailMatch = /^\/sessions\/([^/]+)$/.exec(path);
-  if (sessionDetailMatch?.[1]) {
-    const slug = sessionDetailMatch[1];
-    return [root, { label: "会话", href: "/sessions" }, { label: slug, current: true }];
+  if (/^\/sessions\/[^/]+$/.test(path)) {
+    return [root, { label: "会话", href: "/sessions" }, { label: options.sessionTitle?.trim() || "会话详情", current: true }];
   }
 
   if (path === "/sessions") {

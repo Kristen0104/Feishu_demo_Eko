@@ -4,7 +4,7 @@ import { CanvasEntry } from "./canvas-entry";
 
 export const metadata: Metadata = {
   title: "画布 · Eko",
-  description: "Tldraw 无限画布与 Agent 生长演示",
+  description: "Tldraw 无限画布",
 };
 
 export default function CanvasPage() {

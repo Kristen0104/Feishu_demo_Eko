@@ -116,12 +116,14 @@ class FeishuEventProcessor:
                         message_id=message_id,
                         context_size=len(context_messages),
                         instruction=instruction,
+                        intent=intent.value,
                         context_messages=[],
                         selected_context_messages=context_messages,
                         status="进行中",
                         summary=f"已自动读取最近 {len(context_messages)} 条群聊上下文，正在回复。",
                         messages=[trigger_message],
                     )
+                await self._send_workspace_link_to_chat(chat_id, session_id)
                 request = AgentChatRequest(
                     session_id=session_id,
                     message=instruction,
@@ -151,11 +153,13 @@ class FeishuEventProcessor:
                         message_id=message_id,
                         context_size=0,
                         instruction=instruction,
+                        intent=intent.value,
                         context_messages=[],
                         status="等待选择",
                         summary="收到需求。你这次明确要求基于聊天记录/上下文生成，请先选择消息记录。",
                         messages=[trigger_message],
                     )
+                    await self._send_workspace_link_to_chat(chat_id, session_id)
                     await self._sync_service.publish_agent_message(
                         session_id,
                         role="assistant",
@@ -180,6 +184,7 @@ class FeishuEventProcessor:
                     message_id=message_id,
                     context_size=0,
                     instruction=instruction,
+                    intent=intent.value,
                     context_messages=[],
                     status="进行中",
                     summary="收到 @机器人 消息，正在读取候选消息并继续生成。",
@@ -194,6 +199,7 @@ class FeishuEventProcessor:
                     role="assistant",
                     content="收到。我先读取候选消息，并继续为你生成结果。",
                 )
+            await self._send_workspace_link_to_chat(chat_id, session_id)
             self._schedule_new_session_bootstrap(
                 session_id=session_id,
                 chat_id=chat_id,
@@ -257,20 +263,28 @@ class FeishuEventProcessor:
 
     def _mentions_this_bot(self, message: dict[str, Any]) -> bool:
         mentions = message.get("mentions")
-        if not isinstance(mentions, list) or not mentions:
-            return False
-
         app_id = settings.FEISHU_APP_ID.strip() if isinstance(settings.FEISHU_APP_ID, str) else ""
-        if not app_id:
+        bot_open_id = self._get_bot_open_id()
+        if self.message_mentions_app(message, app_id, bot_open_id=bot_open_id):
+            return True
+
+        text = self._extract_raw_message_text(message)
+        if self._text_might_mention_bot(text):
+            logger.info(
+                "Feishu mention fallback matched by text chat_id=%s message_id=%s text=%s",
+                message.get("chat_id"),
+                message.get("message_id"),
+                text[:120],
+            )
+            return True
+
+        if not isinstance(mentions, list) or not mentions:
             return False
 
         for mention in mentions:
             if not isinstance(mention, dict):
                 continue
-            if mention.get("id_type") == "app_id" and mention.get("id") == app_id:
-                return True
             mention_open_id = self._mention_open_id(mention)
-            bot_open_id = self._get_bot_open_id() if mention_open_id else None
             if mention_open_id and mention_open_id == bot_open_id:
                 return True
             logger.info(
@@ -304,6 +318,43 @@ class FeishuEventProcessor:
                     return True
         return False
 
+    def _extract_raw_message_text(self, message: dict[str, Any]) -> str:
+        body = message.get("content")
+        text = ""
+        if isinstance(body, str):
+            try:
+                parsed = json.loads(body)
+            except json.JSONDecodeError:
+                parsed = None
+            if isinstance(parsed, dict):
+                parsed_text = parsed.get("text")
+                if isinstance(parsed_text, str):
+                    text = parsed_text
+            if not text:
+                text = body
+        return " ".join(text.split()).strip()
+
+    def _text_might_mention_bot(self, text: str) -> bool:
+        if not text:
+            return False
+        normalized = text.casefold()
+        configured_bot_name = getattr(settings, "FEISHU_BOT_NAME", "")
+        bot_name = configured_bot_name.casefold() if isinstance(configured_bot_name, str) and configured_bot_name else ""
+        candidates = [candidate for candidate in (bot_name, "eko_test", "eko test", "eko") if candidate]
+        return any(f"@{candidate}" in normalized for candidate in candidates)
+
+    async def _send_workspace_link_to_chat(self, chat_id: str, session_id: str) -> None:
+        if not chat_id:
+            return
+        workspace_url = f"http://127.0.0.1:3002/sessions/{session_id}"
+        try:
+            await self._feishu_service.send_text_message_to_chat(
+                chat_id,
+                f"Eko 会话已创建，工作台链接：\n{workspace_url}",
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Send workspace link while waiting for selection failed session=%s: %s", session_id, exc)
+
     def _get_bot_open_id(self) -> str | None:
         if self._bot_open_id:
             return self._bot_open_id
@@ -329,19 +380,7 @@ class FeishuEventProcessor:
         return open_id if isinstance(open_id, str) and open_id else None
 
     def _extract_command_text(self, message: dict[str, Any]) -> str:
-        body = message.get("content")
-        text = ""
-        if isinstance(body, str):
-            try:
-                parsed = json.loads(body)
-            except json.JSONDecodeError:
-                parsed = None
-            if isinstance(parsed, dict):
-                parsed_text = parsed.get("text")
-                if isinstance(parsed_text, str):
-                    text = parsed_text
-            if not text:
-                text = body
+        text = self._extract_raw_message_text(message)
         text = self._strip_message_mentions(text, message)
         return " ".join(text.split()).strip()
 
@@ -515,20 +554,21 @@ class FeishuEventProcessor:
                 len(context_candidates),
                 waiting_for_selection,
             )
-            if not waiting_for_selection:
-                request = AgentChatRequest(
-                    session_id=session_id,
-                    message=instruction,
-                    context=AgentContext(
-                        chat_history=[
-                            ChatMessage(role=str(message.get("role") or "user"), content=str(message.get("content") or ""))
-                            for message in context_candidates
-                            if str(message.get("content") or "").strip()
-                        ]
-                    ),
-                    sender=sender_profile,
-                )
-                self._schedule_agent_chat(request)
+            if waiting_for_selection:
+                return
+            request = AgentChatRequest(
+                session_id=session_id,
+                message=instruction,
+                context=AgentContext(
+                    chat_history=[
+                        ChatMessage(role=str(message.get("role") or "user"), content=str(message.get("content") or ""))
+                        for message in context_candidates
+                        if str(message.get("content") or "").strip()
+                    ]
+                ),
+                sender=sender_profile,
+            )
+            self._schedule_agent_chat(request)
 
     async def _resolve_current_artifact_for_followup(
         self,

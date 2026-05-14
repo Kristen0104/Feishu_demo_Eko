@@ -9,6 +9,7 @@ import type { SessionStatus } from "@/types/session";
 export type SessionFilter = "all" | "chat" | "doc" | "canvas" | "recent" | "starred";
 
 type RuntimeSessionPatch = {
+  title?: string;
   status?: SessionStatus;
   updatedAt?: string;
 };

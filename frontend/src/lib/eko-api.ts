@@ -38,12 +38,16 @@ export async function fetchEkoJson<T>(path: string, init?: RequestInit): Promise
   }
 
   if (!json || typeof json !== "object" || !("code" in json)) {
-    throw new Error(`Invalid response (${res.status})`);
+    const error = new Error(res.status === 409 ? "任务已在处理中，请稍等。" : `Invalid response (${res.status})`) as Error & { status?: number };
+    error.status = res.status;
+    throw error;
   }
 
   if (!res.ok || json.code !== 0) {
     const msg = "message" in json && typeof json.message === "string" ? json.message : `HTTP ${res.status}`;
-    throw new Error(msg);
+    const error = new Error(msg) as Error & { status?: number };
+    error.status = res.status;
+    throw error;
   }
 
   return json.data;

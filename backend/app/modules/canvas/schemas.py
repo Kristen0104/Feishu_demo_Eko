@@ -14,6 +14,7 @@ class CanvasSessionSchema(BaseModel):
 class CanvasBoardTaskCreateRequest(BaseModel):
     message: str
     sharing_url: str
+    whiteboard_id: str | None = None
     title: str | None = None
     replace_existing: bool = False
 

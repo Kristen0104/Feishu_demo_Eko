@@ -29,6 +29,7 @@ class CanvasRepository:
             task_id=f"board-task-{uuid4().hex[:12]}",
             message=payload.message,
             sharing_url=payload.sharing_url,
+            whiteboard_id=payload.whiteboard_id,
             title=payload.title,
             render_mode=render_mode,
         )

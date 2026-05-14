@@ -98,6 +98,8 @@ def choose_render_mode(message: str) -> RenderMode:
 
 def choose_import_diagram_type(message: str) -> str:
     lowered = message.lower()
+    if "饼图" in message or "pie" in lowered:
+        return "pie"
     if "mindmap" in lowered or "思维导图" in message:
         return "mindmap"
     if "sequencediagram" in lowered or "时序图" in message:
@@ -130,18 +132,28 @@ class BoardGenerateService:
         self._feishu_board_client = feishu_board_client
         self._llm_client = llm_client or LlmClient()
 
-    def generate(self, *, message: str, sharing_url: str) -> BoardGenerateResult:
+    def generate(
+        self,
+        *,
+        message: str,
+        sharing_url: str,
+        whiteboard_id: str | None = None,
+    ) -> BoardGenerateResult:
         execution_logs: list[tuple[str, str]] = []
         user_message = _strip_rag_context(message)
-        target = resolve_board_target_from_sharing_url(sharing_url)
-        execution_logs.append(("resolving_target", f"开始解析分享链接: {sharing_url}"))
-        whiteboard_id = target.whiteboard_id
-        if whiteboard_id is None and target.doc_token is not None:
-            execution_logs.append(("resolving_target", f"检测到文档链接，开始解析 doc_token={target.doc_token}"))
-            whiteboard_id = self._feishu_board_client.resolve_whiteboard_id_from_document(target.doc_token)
-        if whiteboard_id is None:
+        resolved_whiteboard_id = whiteboard_id
+        if resolved_whiteboard_id:
+            execution_logs.append(("resolving_target", f"使用显式 whiteboard_id={resolved_whiteboard_id}"))
+        else:
+            target = resolve_board_target_from_sharing_url(sharing_url)
+            execution_logs.append(("resolving_target", f"开始解析分享链接: {sharing_url}"))
+            resolved_whiteboard_id = target.whiteboard_id
+            if resolved_whiteboard_id is None and target.doc_token is not None:
+                execution_logs.append(("resolving_target", f"检测到文档链接，开始解析 doc_token={target.doc_token}"))
+                resolved_whiteboard_id = self._feishu_board_client.resolve_whiteboard_id_from_document(target.doc_token)
+        if resolved_whiteboard_id is None:
             raise ValueError(f"Unable to resolve whiteboard from sharing url: {sharing_url}")
-        execution_logs.append(("resolving_target", f"已解析 whiteboard_id={whiteboard_id}"))
+        execution_logs.append(("resolving_target", f"已解析 whiteboard_id={resolved_whiteboard_id}"))
         render_mode = choose_render_mode(user_message)
         execution_logs.append(("planning", f"已选择渲染模式: {render_mode}"))
 
@@ -160,12 +172,14 @@ class BoardGenerateService:
                     fallback=self._build_stub_import_source(user_message, syntax, diagram_type=diagram_type),
                 )
                 source = _normalize_diagram_source(source, syntax=syntax)
+                if syntax == "mermaid" and diagram_type == "pie" and not source.lstrip().lower().startswith("pie"):
+                    source = self._build_stub_import_source(user_message, syntax, diagram_type=diagram_type)
             diagram_type = choose_import_diagram_type(source if embedded is not None else user_message)
             execution_logs.append(("planning", f"导入图表语法={syntax} diagram_type={diagram_type}"))
             execution_logs.append(("rendering", "开始执行 board import"))
             try:
                 import_result = self._feishu_board_client.import_diagram(
-                    whiteboard_id,
+                    resolved_whiteboard_id,
                     source=source,
                     source_type="content",
                     syntax=syntax,
@@ -179,7 +193,7 @@ class BoardGenerateService:
                 raise RuntimeError(f"标准图导入失败，未降级为 create-notes，避免生成错误图形: {exc}") from exc
         else:
             ticket_id, node_ids = self._create_notes_on_board(
-                whiteboard_id=whiteboard_id,
+                whiteboard_id=resolved_whiteboard_id,
                 message=message,
                 user_message=user_message,
                 execution_logs=execution_logs,
@@ -187,18 +201,18 @@ class BoardGenerateService:
 
         if render_mode == "create_notes":
             self._wait_for_created_nodes_visible(
-                whiteboard_id=whiteboard_id,
+                whiteboard_id=resolved_whiteboard_id,
                 expected_node_ids=node_ids,
                 execution_logs=execution_logs,
             )
         execution_logs.append(("exporting_preview", "开始获取画板预览"))
-        preview_url = self._feishu_board_client.get_board_image(whiteboard_id)["preview_url"]
+        preview_url = self._feishu_board_client.get_board_image(resolved_whiteboard_id)["preview_url"]
         execution_logs.append(("exporting_preview", "画板预览已生成"))
         return BoardGenerateResult(
-            whiteboard_id=whiteboard_id,
+            whiteboard_id=resolved_whiteboard_id,
             render_mode=render_mode,
             preview_url=preview_url,
-            result_summary=f"{render_mode} completed for {whiteboard_id}",
+            result_summary=f"{render_mode} completed for {resolved_whiteboard_id}",
             ticket_id=ticket_id,
             node_ids=node_ids,
             deleted_count=0,
@@ -336,6 +350,18 @@ class BoardGenerateService:
 
     def _build_stub_import_source(self, message: str, syntax: str, *, diagram_type: str = "auto") -> str:
         if syntax == "mermaid":
+            if diagram_type == "pie":
+                return "\n".join(
+                    [
+                        "pie showData",
+                        f'title {self._short_chart_title(message)}',
+                        '  "场地" : 25',
+                        '  "搭建" : 20',
+                        '  "媒体和达人" : 18',
+                        '  "直播与拍摄" : 10',
+                        '  "物料和杂项" : 7',
+                    ]
+                )
             if diagram_type == "sequence":
                 return "\n".join(
                     [
@@ -360,8 +386,6 @@ class BoardGenerateService:
                 return "\n".join(["classDiagram", "class 用户", "class 前端", "class 后端", "用户 --> 前端", "前端 --> 后端"])
             if diagram_type == "er":
                 return "\n".join(["erDiagram", "USER ||--o{ ORDER : creates", "USER {", "  string id", "  string name", "}", "ORDER {", "  string id", "  string status", "}"])
-            if "饼图" in message or "pie" in message.lower():
-                return "\n".join(["pie title 数据占比", '  "类别A" : 45', '  "类别B" : 35', '  "类别C" : 20'])
             return "\n".join(
                 [
                     "flowchart TD",
@@ -382,6 +406,14 @@ class BoardGenerateService:
                 "@enduml",
             ]
         )
+
+    def _short_chart_title(self, message: str) -> str:
+        normalized = " ".join(message.split())
+        normalized = normalized.replace("## 用户需求", "").strip()
+        normalized = re.sub(r"^(根据|基于).{0,16}(聊天记录|上下文)", "", normalized).strip()
+        normalized = re.sub(r"^(生成|制作|绘制|帮我做个?|帮我生成)", "", normalized).strip()
+        normalized = normalized.replace("饼图", "").replace("pie chart", "").replace("pie", "").strip()
+        return (normalized or "预算分布")[:24]
 
 
 def _choose_import_syntax(message: str, *, diagram_type: str) -> str:

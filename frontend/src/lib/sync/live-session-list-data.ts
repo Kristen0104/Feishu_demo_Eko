@@ -1,4 +1,8 @@
 import type { SessionItem, SessionListPageData, SessionParticipant, SessionSection, SessionStatus } from "@/types/session";
+import { getServerAuthHeaders, getServerBackendOrigin } from "@/lib/server/backend";
+import { deriveInitials } from "@/lib/profile-merge";
+import { resolveAvatarUrl } from "@/lib/profile-api";
+import { getReadableSessionTitle } from "@/lib/session-title";
 
 export type SyncSession = {
   session_id: string;
@@ -36,13 +40,13 @@ export type SyncSession = {
   }>;
 };
 
-function getBackendOrigin(): string {
-  const raw =
-    process.env.BACKEND_PROXY?.trim() ||
-    process.env.NEXT_PUBLIC_EKO_API_BASE?.trim() ||
-    "http://39.104.87.235:8000";
-  return raw.replace(/\/$/, "");
-}
+type AuthMeResponse = {
+  user_id: string;
+  display_name: string;
+  name_en?: string | null;
+  email?: string | null;
+  avatar_url?: string | null;
+};
 
 function mapStatus(status: string): SessionStatus {
   const normalized = status.trim().toLowerCase();
@@ -103,10 +107,12 @@ function makeSessionItem(session: SyncSession): SessionItem {
   const updatedAt = formatUpdatedAt(session.updated_at);
   const participant = makeParticipant();
   const { kind, kindLabel } = mapKind(session);
+  const title = getReadableSessionTitle(session);
+  const summary = session.summary || "由飞书消息触发的新会话。";
   return {
     id: session.session_id,
-    title: session.title || "未命名会话",
-    summary: session.summary || "由飞书消息触发的新会话。",
+    title,
+    summary,
     source,
     kind,
     kindLabel,
@@ -115,13 +121,13 @@ function makeSessionItem(session: SyncSession): SessionItem {
     participants: [participant],
     preview: {
       id: session.session_id,
-      title: session.title || "未命名会话",
+      title,
       source,
       startedAt: updatedAt,
       outputMode: kindLabel,
       status,
       syncedAt: updatedAt,
-      summary: session.summary || "由飞书消息触发的新会话。",
+      summary,
       collaborators: [participant],
       relatedItems: [],
       activity: {
@@ -158,10 +164,15 @@ function groupSessions(sessions: SyncSession[]): SessionSection[] {
 }
 
 async function fetchSyncSessions(): Promise<SyncSession[]> {
-  const origin = getBackendOrigin();
+  const origin = getServerBackendOrigin();
+  const headers = await getServerAuthHeaders();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 1800);
   try {
     const response = await fetch(`${origin}/api/v1/sync/sessions`, {
       cache: "no-store",
+      headers,
+      signal: controller.signal,
     });
     const body = (await response.json().catch(() => null)) as { code?: number; data?: SyncSession[] } | null;
     if (!response.ok || !body || body.code !== 0 || !Array.isArray(body.data)) {
@@ -170,18 +181,54 @@ async function fetchSyncSessions(): Promise<SyncSession[]> {
     return body.data;
   } catch {
     return [];
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function fetchCurrentUserSummary(): Promise<SessionListPageData["user"] | null> {
+  const origin = getServerBackendOrigin();
+  const headers = await getServerAuthHeaders();
+  if (!headers.Authorization) return null;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 1800);
+  try {
+    const response = await fetch(`${origin}/api/v1/auth/me`, {
+      cache: "no-store",
+      headers,
+      signal: controller.signal,
+    });
+    const body = (await response.json().catch(() => null)) as { code?: number; data?: AuthMeResponse } | null;
+    if (!response.ok || !body || body.code !== 0 || !body.data) {
+      return null;
+    }
+
+    const displayName = body.data.display_name?.trim() || body.data.email?.trim() || "Eko User";
+    const nameEn = body.data.name_en?.trim() || displayName;
+    return {
+      name: displayName,
+      email: body.data.email?.trim() || "",
+      initials: deriveInitials(displayName, nameEn),
+      avatarUrl: resolveAvatarUrl(body.data.avatar_url),
+    };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
 export async function getSessionListPageData(): Promise<SessionListPageData> {
-  const sessions = await fetchSyncSessions();
+  const [sessions, user] = await Promise.all([fetchSyncSessions(), fetchCurrentUserSummary()]);
   return {
     teamName: "Eko 工作区",
     teamMembersLabel: sessions.length > 0 ? `${sessions.length} 个会话` : "暂无会话",
-    user: {
+    user: user ?? {
       name: "Eko User",
       email: "eko.user@eko.ai",
       initials: "EU",
+      avatarUrl: "",
     },
     sections: groupSessions(sessions),
   };

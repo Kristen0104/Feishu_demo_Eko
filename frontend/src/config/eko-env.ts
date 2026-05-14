@@ -7,25 +7,14 @@ export function getApiBaseUrl(): string {
   return raw.replace(/\/$/, "");
 }
 
-/** When false, realtime hook skips opening a WebSocket (protocol mock / SSE only). */
+/** When false, realtime hook skips opening a WebSocket. */
 export function isWebSocketEnabled(): boolean {
   return process.env.NEXT_PUBLIC_EKO_USE_WS !== "false";
 }
 
 /**
- * Protocol mock is a demo fallback, not a production substitute for backend realtime.
- * Production builds only enable it when explicitly requested.
- */
-export function isProtocolMockFallbackEnabled(): boolean {
-  const raw = process.env.NEXT_PUBLIC_EKO_PROTOCOL_MOCK;
-  if (raw === "true") return true;
-  if (raw === "false") return false;
-  return process.env.NODE_ENV !== "production";
-}
-
-/**
  * Build ws/wss URL for session channel. Prefer NEXT_PUBLIC_EKO_WS_BASE (e.g. ws://127.0.0.1:8000).
- * Falls back to deriving from window location when api base is empty (same host).
+ * Falls back to local backend in development, or same host in production.
  */
 export function buildSessionWebSocketUrl(sessionId: string, token: string | null): string | null {
   if (typeof window === "undefined") return null;
@@ -53,5 +42,9 @@ export function buildSessionWebSocketUrl(sessionId: string, token: string | null
     }
   }
 
-  return `ws://39.104.87.235:8000/api/v1/sync/ws/session/${encId}${q}`;
+  const fallbackBase =
+    process.env.NODE_ENV === "development"
+      ? "ws://127.0.0.1:8000"
+      : `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}`;
+  return `${fallbackBase}/api/v1/sync/ws/session/${encId}${q}`;
 }

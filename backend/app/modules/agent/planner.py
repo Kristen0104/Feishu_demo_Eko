@@ -18,6 +18,8 @@ from app.modules.agent.tools import ToolSpec
 
 logger = logging.getLogger(__name__)
 
+_CONTEXT_SELECTION_HINT_RE = re.compile(r"(根据|基于).*(聊天记录|上下文|群聊消息|刚才讨论)|聊天记录|群聊消息|刚才讨论|上下文")
+
 
 class PlannerAgent:
     """Turns user intent into a structured, executable task plan."""
@@ -70,7 +72,7 @@ class PlannerAgent:
 6. step.status 默认 pending，执行中由运行时更新为 in_progress、completed、blocked 或 failed。
 7. tool 可为空；需要工具时使用可用工具名，例如 chat、docx、ppt、ppt_create、ppt_edit、board、docx_edit、knowledge_search、bitable_schema、bitable_search、bitable_archive、artifact_lookup、sync。
 8. visible_summary 必须是给用户看的中文摘要，风格接近 Claude Code / Codex：先说理解，再说计划，再说当前需要什么。
-9. 重要：当用户请求生成 PPT 但没有明确指定设计模式（template/free_design）时，属于信息不足，必须在 missing_info 中注明，设置 need_clarification=true，并在 questions 中询问用户希望使用模板模式（快速稳定生成）还是自由设计（更强视觉表现）。
+9. 重要：PPT 默认使用 template 模式继续执行，绝不为了“模板模式还是自由设计”发起澄清问题；只有用户原文明确写出“自由设计/free design/free_design”时才使用 free_design。
 10. requires_context_selection 由你判断。只有当用户明确要求“基于聊天记录/上下文/刚才讨论/群聊消息”等历史消息来生成时，才设为 true；否则必须设为 false。
 11. 当用户请求“结合项目表/排期/负责人/活动数据/状态/数据记录/Bitable/多维表格”时，应考虑 bitable_search；Bitable 查询失败不是任务失败，查询不到时继续使用聊天上下文和 RAG。
 
@@ -228,7 +230,7 @@ class PlannerAgent:
                 task_complexity="medium",
                 requires_context_selection=False,
                 summary="整理展示目标并创建 AI PPT 任务。",
-                visible_summary="我理解你要生成一份 PPT。我会先梳理展示需求，再确认必要参数，然后创建 PPT 任务并同步状态。",
+                visible_summary="我理解你要生成一份 PPT。我会默认使用模板模式，先梳理展示需求，再创建 PPT 任务并同步状态。",
                 tool_candidates=["knowledge_search", "ppt", "sync"],
                 assumptions=["默认使用 clean_business 风格"],
                 steps=[
@@ -262,13 +264,18 @@ class PlannerAgent:
                 final_output=AgentPlanFinalOutput(format="ppt_file", requirements=["可下载", "状态可追踪"]),
             )
         if routed_intent == AgentIntent.BOARD:
+            requires_context_selection = bool(_CONTEXT_SELECTION_HINT_RE.search(message))
             return AgentTaskPlan(
                 goal=message,
                 intent="board_generation",
                 task_complexity="medium",
-                requires_context_selection=False,
+                requires_context_selection=requires_context_selection,
                 summary="解析飞书目标并生成画板内容。",
-                visible_summary="我理解你要处理飞书画板。我会先确认可写入目标，再生成画板内容，并同步结果。",
+                visible_summary=(
+                    "我理解你要处理飞书画板。你这次明确要求基于聊天记录/上下文生成，请先选择消息记录，我再继续生成。"
+                    if requires_context_selection
+                    else "我理解你要处理飞书画板。我会先确认可写入目标，再生成画板内容，并同步结果。"
+                ),
                 tool_candidates=["feishu", "board", "sync"],
                 assumptions=["如果没有 sharing_url，默认自动创建飞书画板文档"],
                 steps=[

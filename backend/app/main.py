@@ -93,6 +93,15 @@ def maybe_mount_frontend(app: FastAPI, settings: Settings) -> None:
         )
 
 
+def mount_user_uploads(app: FastAPI, settings: Settings) -> None:
+    settings.USER_UPLOADS_PATH.mkdir(parents=True, exist_ok=True)
+    app.mount(
+        "/uploads",
+        StaticFiles(directory=settings.USER_UPLOADS_PATH),
+        name="uploads",
+    )
+
+
 def maybe_mount_root_frontend(app: FastAPI, settings: Settings) -> None:
     if settings.FRONTEND_STATIC_DIR:
 
@@ -118,8 +127,11 @@ def build_lifespan(
         feishu_ws_monitor_task: asyncio.Task[None] | None = None
 
         try:
-            await database_initializer()
-            db_initialized = True
+            if settings.DATABASE_INIT_ON_STARTUP:
+                await database_initializer()
+                db_initialized = True
+            else:
+                logger.info("Database schema initialization skipped by DATABASE_INIT_ON_STARTUP=false")
             await redis_initializer()
             redis_initialized = True
             await get_sync_connection_manager().start_redis_forwarder()
@@ -220,6 +232,7 @@ def create_app(
     )
 
     maybe_mount_frontend(app, app_settings)
+    mount_user_uploads(app, app_settings)
     maybe_mount_root_frontend(app, app_settings)
     configure_middlewares(app, app_settings)
     app.middleware("http")(log_requests)
