@@ -1,6 +1,7 @@
 {
   "name": "feishu-demo-eko",
   "private": true,
+  "description": "飞书 Demo Eko 仓库根脚本",
   "scripts": {
     "dev": "npm run --prefix \"./frontend\" dev",
     "build": "npm run --prefix \"./frontend\" build",

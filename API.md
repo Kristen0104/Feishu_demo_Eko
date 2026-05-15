@@ -1,4 +1,4 @@
-# Eko API 接口定义规范
+# Eko API 接口说明
 
 **版本**：v1  
 **日期**：2026-04-24  
@@ -6,18 +6,18 @@
 
 ---
 
-## 1. 协议说明
+## 1. 通用说明
 
-### 1.1 通用约定
+### 1.1 统一约定
 
 | 项 | 说明 |
 |----|------|
-| **基础路径** | `/api/v1` |
-| **鉴权** | Header: `Authorization: Bearer {token}` |
-| **实时协议** | WebSocket 配合 Redis Pub/Sub 实现 |
-| **响应格式** | JSON |
+| 基础路径 | `/api/v1` |
+| 鉴权 | `Authorization: Bearer {token}` |
+| 响应格式 | `ApiResponse<T>` JSON |
+| 实时协议 | WebSocket / SSE，结合 Redis Pub/Sub |
 
-### 1.2 通用响应结构
+### 1.2 通用响应
 
 ```json
 {
@@ -29,517 +29,267 @@
 
 ---
 
-## 2. 用户与会话管理 (Auth & Sessions)
+## 2. 认证与用户
 
-### 2.1 身份验证
+### 2.1 邮箱密码注册
 
-#### POST /auth/feishu/login
+`POST /auth/register`
 
-接收飞书 code 获取令牌。
+### 2.2 邮箱密码登录
 
-**请求体:**
-```json
-{
-  "code": "string",
-  "state": "string"
-}
-```
+`POST /auth/login`
 
-**响应:**
-```json
-{
-  "code": 0,
-  "data": {
-    "access_token": "string",
-    "expires_in": 7200,
-    "user": {
-      "id": "string",
-      "name": "string",
-      "avatar": "string"
-    }
-  }
-}
-```
+### 2.3 飞书登录授权地址
 
-#### GET /auth/me
+`GET /auth/feishu/login-url`
 
-获取当前用户信息、权限及飞书关联状态。
+### 2.4 飞书登录
 
-**响应:**
-```json
-{
-  "code": 0,
-  "data": {
-    "id": "string",
-    "name": "string",
-    "avatar": "string",
-    "feishu_connected": true,
-    "permissions": ["create", "edit", "delete"]
-  }
-}
-```
+`POST /auth/feishu/login`
 
-### 2.2 会话生命周期
+### 2.5 飞书 OAuth 回调登录
 
-#### GET /sessions
+`GET /auth/feishu/callback`
 
-分页获取会话列表（含最后一次意图、更新时间）。
+### 2.6 当前用户
 
-**Query 参数:**
-- `page`: 页码 (默认 1)
-- `limit`: 每页数量 (默认 20)
+`GET /auth/me`
 
-**响应:**
-```json
-{
-  "code": 0,
-  "data": {
-    "items": [
-      {
-        "id": "string",
-        "title": "string",
-        "last_intent": "CHAT|DOC|PPT",
-        "updated_at": "2026-04-24T10:00:00Z",
-        "is_pinned": false
-      }
-    ],
-    "total": 100,
-    "page": 1,
-    "limit": 20
-  }
-}
-```
+### 2.7 修改当前用户资料
 
-#### POST /sessions
+`PATCH /auth/me`
 
-手动新建空会话。
+### 2.8 上传头像
 
-**请求体:**
-```json
-{
-  "title": "string (可选)"
-}
-```
+`POST /auth/me/avatar`
 
-**响应:**
-```json
-{
-  "code": 0,
-  "data": {
-    "id": "string",
-    "title": "string",
-    "created_at": "2026-04-24T10:00:00Z"
-  }
-}
-```
+### 2.9 修改密码
 
-#### PATCH /sessions/{id}
+`PATCH /auth/me/password`
 
-更新标题、置顶状态或清除上下文。
+### 2.10 绑定飞书账号
 
-**请求体:**
-```json
-{
-  "title": "string (可选)",
-  "is_pinned": true (可选),
-  "clear_context": false (可选)
-}
-```
-
-#### DELETE /sessions/{id}
-
-删除会话及其关联的所有临时缓存。
+`POST /auth/feishu/bind`
 
 ---
 
-## 3. 知识库管理 (Knowledge & RAG)
+## 3. Agent
 
-### 3.1 文件管理
+### 3.1 创建任务骨架
 
-#### GET /rag/files
+`POST /agent/tasks`
 
-获取当前会话/全局知识库文件列表及处理状态。
+### 3.2 Agent 对话
 
-**Query 参数:**
-- `session_id`: 会话 ID (可选，不传则返回全局)
-- `status`: 过滤状态 `pending|processing|completed|failed` (可选)
+`POST /agent/chat`
 
-**响应:**
-```json
-{
-  "code": 0,
-  "data": [
-    {
-      "id": "string",
-      "filename": "string",
-      "status": "completed",
-      "chunk_count": 10,
-      "created_at": "2026-04-24T10:00:00Z"
-    }
-  ]
-}
-```
+### 3.3 Agent 流式对话
 
-#### POST /rag/ingest
+`POST /agent/chat/stream`
 
-上传文件（Multipart）或输入 URL，触发分片与向量化。
-
-**请求 (Multipart Form):**
-- `file`: 文件 (可选)
-- `url`: URL (可选)
-- `session_id`: 会话 ID (可选)
-
-**响应:**
-```json
-{
-  "code": 0,
-  "data": {
-    "file_id": "string",
-    "status": "processing"
-  }
-}
-```
-
-#### DELETE /rag/files/{file_id}
-
-从向量库和存储中彻底移除。
-
-### 3.2 向量检索调试
-
-#### POST /rag/search/test
-
-仅返回检索到的 Top-K 文本片段（不调用 LLM），用于调试 RAG 准确度。
-
-**请求体:**
-```json
-{
-  "query": "string",
-  "k": 5,
-  "session_id": "string (可选)"
-}
-```
-
-**响应:**
-```json
-{
-  "code": 0,
-  "data": [
-    {
-      "content": "string",
-      "score": 0.95,
-      "source_file": "string"
-    }
-  ]
-}
-```
+说明：
+- 自动识别 `chat`、`docx`、`ppt`、`board` 意图。
+- 若传入 `forced_intent`，服务端会优先按该意图执行。
+- 运行时会进入 `context -> retrieval -> planner -> tool_execute` 流程。
 
 ---
 
-## 4. Agent 核心控制 (Agent Brain)
+## 4. RAG
 
-### 4.1 任务执行
+### 4.1 文件列表
 
-#### POST /agent/execute
+`GET /rag/files`
 
-投递指令（主入口）。支持 `stream=true` 模式。
+### 4.2 删除文件
 
-**请求体:**
-```json
-{
-  "session_id": "string",
-  "query": "帮我梳理运营方案",
-  "stream": true,
-  "intent_hint": "DOC|PPT|CHAT (可选)"
-}
-```
+`DELETE /rag/files/{file_id}`
 
-**响应 (非 stream 模式):**
-```json
-{
-  "code": 0,
-  "data": {
-    "task_id": "string",
-    "intent": "DOC",
-    "result": {}
-  }
-}
-```
+### 4.3 文件入库
 
-**Stream 事件流:**
-```
-data: {"type":"INTENT_RECOGNIZED","payload":{"intent":"DOC"}}
-data: {"type":"AGENT_PLANNING","payload":{"steps":[...]}}
-data: {"type":"DOC_STREAM","payload":{"chunk":"# 运营方案..."}}
-data: {"type":"TASK_COMPLETED","payload":{"result_url":"..."}}
-```
+`POST /rag/files`
 
-#### POST /agent/stop
+### 4.4 上传文件并入库
 
-强制中断当前正在运行的 Agent 任务（任务终止/紧急停止）。
+`POST /rag/files/upload`
 
-**请求体:**
-```json
-{
-  "task_id": "string"
-}
-```
+### 4.5 RAG 检索
 
-### 4.2 任务回溯
+`GET /rag/search?query=...&limit=8`
 
-#### GET /agent/tasks/{task_id}/plan
-
-获取当前任务被拆解后的 JSON 步骤。
-
-**响应:**
-```json
-{
-  "code": 0,
-  "data": {
-    "task_id": "string",
-    "steps": [
-      {
-        "id": "1",
-        "name": "意图分析",
-        "status": "completed",
-        "result": {}
-      }
-    ]
-  }
-}
-```
-
-#### GET /agent/history
-
-获取该会话下的所有指令与执行结果历史（用于上下文注入）。
-
-**Query 参数:**
-- `session_id`: 会话 ID
-
-**响应:**
-```json
-{
-  "code": 0,
-  "data": [
-    {
-      "role": "user",
-      "content": "string",
-      "timestamp": "2026-04-24T10:00:00Z"
-    },
-    {
-      "role": "assistant",
-      "content": "string",
-      "timestamp": "2026-04-24T10:00:05Z"
-    }
-  ]
-}
-```
+说明：
+- 默认 `limit=8`
+- 最大 `limit=20`
+- 当前实现使用 Embedding + pgvector cosine distance 排序，没有独立 reranker
 
 ---
 
-## 5. 画布与文档同步 (Canvas & Doc)
+## 5. 飞书与画板
 
-### 5.1 状态快照
+### 5.1 飞书卡片骨架
 
-#### GET /canvas/{session_id}
+`GET /feishu/cards/{card_id}`
 
-拉取当前画布全量 Tldraw JSON 数据。
+### 5.2 飞书画板导入
 
-**响应:**
-```json
-{
-  "code": 0,
-  "data": {
-    "tldraw": { /* Tldraw JSON 格式 */ },
-    "version": 10,
-    "updated_at": "2026-04-24T10:00:00Z"
-  }
-}
-```
+`POST /feishu/board/import`
 
-#### POST /canvas/snapshot
+### 5.3 创建飞书画板节点
 
-存入当前画布状态快照（防止 AI 生成过程中数据丢失）。
+`POST /feishu/board/create-notes`
 
-**请求体:**
-```json
-{
-  "session_id": "string",
-  "tldraw": { /* Tldraw JSON 格式 */ },
-  "version": 11
-}
-```
+### 5.4 获取飞书画板节点
 
-### 5.2 协作交互
+`GET /feishu/board/nodes/{whiteboard_id}`
 
-#### PATCH /canvas/elements
+### 5.5 获取飞书画板图片
 
-增量更新元素（移动、改色、修改文字）。
+`GET /feishu/board/image/{whiteboard_id}`
 
-**请求体:**
-```json
-{
-  "session_id": "string",
-  "upsert": [
-    {
-      "id": "string",
-      "type": "text",
-      "props": { "text": "新内容", "x": 100, "y": 100 }
-    }
-  ],
-  "delete": ["element_id_1"]
-}
-```
+### 5.6 更新飞书画板
 
-#### GET /canvas/versions
+`POST /feishu/board/update`
 
-获取历史版本记录，支持回滚。
+### 5.7 删除飞书画板节点
 
-**Query 参数:**
-- `session_id`: 会话 ID
+`POST /feishu/board/delete`
 
-**响应:**
-```json
-{
-  "code": 0,
-  "data": [
-    {
-      "version": 10,
-      "created_at": "2026-04-24T10:00:00Z",
-      "snapshot_url": "string"
-    }
-  ]
-}
-```
+### 5.8 发布 Markdown 到飞书
+
+`POST /feishu/sync/publish`
+
+### 5.9 查询导入任务状态
+
+`GET /feishu/sync/status/{ticket}`
+
+### 5.10 飞书事件回调
+
+`POST /feishu/events`
 
 ---
 
-## 6. 飞书集成与设置 (Integration)
+## 6. Bitable
 
-### 6.1 Bitable 同步配置
+### 6.1 发现状态
 
-#### GET /settings/feishu/bitable/tables
+`GET /bitable/discovery/status`
 
-获取飞书多维表格的所有数据表。
+### 6.2 列出可选多维表格
 
-**响应:**
-```json
-{
-  "code": 0,
-  "data": [
-    {
-      "app_token": "string",
-      "table_id": "string",
-      "name": "string"
-    }
-  ]
-}
-```
+`GET /bitable/discovery/bases`
 
-#### GET /settings/feishu/bitable/fields
+### 6.3 解析多维表格链接
 
-获取特定数据表的字段列表（用于配置映射）。
+`POST /bitable/discovery/resolve-url`
 
-**Query 参数:**
-- `app_token`: App Token
-- `table_id`: Table ID
+### 6.4 列出表
 
-**响应:**
-```json
-{
-  "code": 0,
-  "data": [
-    {
-      "field_id": "string",
-      "field_name": "string",
-      "type": "text|number|date"
-    }
-  ]
-}
-```
+`GET /bitable/discovery/tables`
 
-#### POST /settings/feishu/bitable/config
+### 6.5 列出视图
 
-设置同步目标（AppToken, TableID）。
+`GET /bitable/discovery/views`
 
-**请求体:**
-```json
-{
-  "app_token": "string",
-  "table_id": "string",
-  "field_mapping": {
-    "title": "field_id_1",
-    "content_url": "field_id_2",
-    "created_at": "field_id_3"
-  }
-}
-```
+### 6.6 列出字段
 
-### 6.2 飞书 Webhook (后端专用)
+`GET /bitable/discovery/fields`
 
-#### POST /webhook/feishu
+### 6.7 列出数据源
 
-接收飞书开放平台的消息事件（IM 消息、语音、卡片点击）。
+`GET /bitable/sources`
+
+### 6.8 新增数据源
+
+`POST /bitable/sources`
+
+### 6.9 更新数据源
+
+`PATCH /bitable/sources/{source_id}`
+
+### 6.10 删除数据源
+
+`DELETE /bitable/sources/{source_id}`
+
+### 6.11 检查数据源结构
+
+`POST /bitable/sources/{source_id}/inspect`
+
+### 6.12 获取 schema 摘要
+
+`GET /bitable/schema`
+
+### 6.13 查询记录
+
+`POST /bitable/query`
+
+### 6.14 归档产物
+
+`POST /bitable/archive`
 
 ---
 
-## 7. 实时同步消息 (WebSocket Payloads)
+## 7. 同步
 
-| type (事件) | payload (数据内容) | 业务场景 |
-|-------------|-------------------|----------|
-| `INTENT_RECOGNIZED` | `{ intent: 'CHAT'\|'DOC'\|'PPT' }` | Agent 刚识别完意图，通知前端切换 UI 模式。 |
-| `AGENT_PLANNING` | `{ steps: [] }` | 展示 Agent 正在拆解的任务链路。 |
-| `DOC_STREAM` | `{ chunk: '' }` | Word 文稿正在流式吐字。 |
-| `CANVAS_UPDATE` | `{ upsert: [], delete: [] }` | 画布元素（卡片/连线）的实时增删。 |
-| `TASK_COMPLETED` | `{ result_url: '', bitable_id: '' }` | 任务完成，告知最终成果路径。 |
-| `CURSOR_SYNC` | `{ user_id: '', x: 0, y: 0 }` | 多端用户光标实时位置同步。 |
+### 7.1 同步通道骨架
 
-**WebSocket 连接路径:**
-```
-/ws/session/{session_id}?token={bearer_token}
-```
+`GET /sync/ws/{session_id}`
 
----
+### 7.2 会话列表
 
-## 8. 系统状态与错误
+`GET /sync/sessions`
 
-### 8.1 健康检查
+### 7.3 会话详情
 
-#### GET /system/ping
+`GET /sync/sessions/{session_id}`
 
-健康检查。
+### 7.4 删除会话
 
-**响应:**
-```json
-{
-  "code": 0,
-  "data": {
-    "status": "ok",
-    "timestamp": "2026-04-24T10:00:00Z"
-  }
-}
-```
+`DELETE /sync/sessions/{session_id}`
 
-### 8.2 错误码
+### 7.5 选择上下文并运行 Agent
 
-| HTTP 状态码 | code | 说明 |
-|-------------|------|------|
-| 401 | 40100 | 认证失效 |
-| 422 | 42200 | 意图无法识别（Agent 困惑） |
-| 429 | 42900 | 达到 Token 消耗限制 |
-| 502 | 50200 | 飞书 API 响应超时 |
+`POST /sync/sessions/{session_id}/context/selection`
 
-**错误响应格式:**
-```json
-{
-  "code": 40100,
-  "message": "Authentication expired",
-  "data": null
-}
-```
+### 7.6 WebSocket 连接
+
+`WS /sync/ws/session/{session_id}`
 
 ---
 
-## 相关文档
+## 8. 团队协作
 
-- [产品需求文档 (PRD.md)](PRD.md)
-- [技术架构文档 (ARCHITECTURE.md)](ARCHITECTURE.md)
+### 8.1 团队成员列表
+
+`GET /team/members`
+
+### 8.2 邀请成员
+
+`POST /team/members/invite`
+
+### 8.3 移除成员
+
+`DELETE /team/members/{member_id}`
+
+### 8.4 邀请成员加入会话协作
+
+`POST /team/sessions/{session_id}/invites`
+
+### 8.5 获取会话邀请
+
+`GET /team/sessions/{session_id}/invites`
+
+### 8.6 获取我的会话邀请
+
+`GET /team/session-invites`
+
+### 8.7 处理邀请
+
+`PATCH /team/session-invites/{invite_id}`
+
+---
+
+## 9. 补充说明
+
+- Agent 意图识别由 `RouterAgent.classify_chat_intent()` 负责。
+- RAG 检索默认走 Embedding + pgvector 相似度排序。
+- Bitable 查询和归档都是可选能力，失败不会阻断主任务。
+- Redis 用于实时广播和状态同步，不只是缓存。

@@ -1,4 +1,4 @@
-# Environment and secrets
+# 环境变量与密钥
 .env
 .env.local
 .env.*.local
@@ -20,7 +20,7 @@ eggs/
 .eggs/
 *.egg
 
-# Virtual environments
+# 虚拟环境
 .venv/
 venv/
 ENV/
@@ -34,7 +34,7 @@ env/
 *~
 .DS_Store
 
-# AI / Cursor local tooling & contributor metadata (do not commit)
+# AI / 本地协作工具和贡献者元数据
 .cursor/
 .cursorrules
 .cursorignore
@@ -50,13 +50,13 @@ AGENTS.md
 .github/instructions/
 .copilot/
 
-# Logs
+# 日志
 *.log
 logs/
 **/.deploy-logs/
 tmp/
 
-# Node / frontend
+# Node / 前端
 node_modules/
 .npm
 .yarn
@@ -67,7 +67,7 @@ frontend/dist/
 frontend/.next/
 frontend/tsconfig.tsbuildinfo
 
-# Test
+# 测试
 .coverage
 htmlcov/
 .pytest_cache/
@@ -76,7 +76,7 @@ htmlcov/
 # Docker
 *.dockerignore
 
-# Runtime data and generated artifacts
+# 运行数据和生成物
 backend/dump.rdb
 backend/runtime/
 backend/generated/
@@ -84,11 +84,11 @@ backend/storage/
 generated/
 storage/
 
-# Generated PPT/media artifacts
+# 生成的 PPT / 媒体文件
 *.pptx
 *.ppt
 
-# Misc
+# 其他临时文件
 *.bak
 *.tmp
 *.swp
