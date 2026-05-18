@@ -88,18 +88,18 @@ class AgentEventProtocol:
 
     @staticmethod
     def from_traces(traces: list[AgentTraceEvent]) -> list[AgentEventV1]:
-        return [AgentEventProtocol.from_trace(trace) for trace in traces]
+        return [
+            AgentEventProtocol.from_trace(trace)
+            for trace in traces
+            if trace.type in {"clarification_requested", "artifact_archived", "artifact_archive_failed"}
+        ]
 
     @staticmethod
     def start(planning_enabled: bool) -> dict[str, Any]:
         return AgentEventProtocol._event(
             event="turn.started",
             status="running",
-            message=(
-                "收到。我先理解你的任务，并拆成可以执行的步骤。"
-                if planning_enabled
-                else "收到。任务理解与规划已关闭，我会直接执行。"
-            ),
+            message="",
             payload={"planning_enabled": planning_enabled},
         ).model_dump()
 
@@ -108,7 +108,7 @@ class AgentEventProtocol:
         return AgentEventProtocol._event(
             event="intent.recognized",
             status="completed",
-            message=message or f"我判断这次要走 {intent} 能力。",
+            message=message or "",
             payload={"intent": intent},
         ).model_dump()
 
@@ -117,7 +117,7 @@ class AgentEventProtocol:
         return AgentEventProtocol._event(
             event="plan.created",
             status="completed",
-            message=message or "规划完成。下面按这些子任务执行。",
+            message=message or "",
             payload={"plan": plan.model_dump()},
         ).model_dump()
 

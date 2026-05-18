@@ -728,6 +728,24 @@ class FeishuEventProcessor:
         message = event.get("message")
         channel = event.get("channel")
         visibility = event.get("visibility")
+        if event_type == "result.created":
+            payload = event.get("payload")
+            response = payload.get("response") if isinstance(payload, dict) else None
+            if isinstance(response, dict):
+                plan = response.get("plan")
+                final_output = plan.get("final_output") if isinstance(plan, dict) else None
+                if (
+                    response.get("intent") == AgentIntent.CHAT.value
+                    and response.get("artifact") is None
+                    and isinstance(plan, dict)
+                    and (
+                        plan.get("intent") == "intent_clarification"
+                        or plan.get("need_clarification") is True
+                        or plan.get("clarification_needed") is True
+                        or (isinstance(final_output, dict) and final_output.get("format") == "clarification")
+                    )
+                ):
+                    return None
         if event_type in {"clarification.requested", "result.created", "turn.failed"} and channel in {"chat", "error"}:
             return message if isinstance(message, str) and message.strip() else None
         return None

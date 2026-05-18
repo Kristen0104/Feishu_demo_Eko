@@ -143,16 +143,22 @@ function looksCompletedMessage(content: string): boolean {
 
 function looksLikeInternalTraceMessage(content: string): boolean {
   const normalized = content.replace(/\s+/g, "");
-  const markers = [
-    "我先理解你的任务",
-    "拆成可以执行的步骤",
-    "我判断这次要走",
-    "开始检索相关知识",
-    "已检索到",
-    "规划完成",
-    "调用文档生成能力",
-  ];
-  return markers.filter((marker) => normalized.includes(marker)).length >= 2;
+  return (
+    /走(?:chat|docx|ppt|board)?能力/i.test(normalized) ||
+    /(?:chat|docx|ppt|board)能力/i.test(normalized) ||
+    normalized.includes("意图已识别") ||
+    normalized.includes("规划已更新")
+  );
+}
+
+function isClarificationAssistantMessage(content: string): boolean {
+  const normalized = content.replace(/\s+/g, "");
+  return (
+    normalized.includes("你是想直接讨论") ||
+    normalized.includes("还是生成一份文档") ||
+    normalized.includes("执行前还需要确认") ||
+    normalized.includes("请确认你希望我执行哪种动作")
+  );
 }
 
 function compactInternalTraceMessage(content: string): string {
@@ -164,7 +170,6 @@ function compactInternalTraceMessage(content: string): string {
     .filter(Boolean);
   const completion = [...chunks].reverse().find((chunk) => looksCompletedMessage(chunk) || chunk.includes("同步到飞书"));
   if (completion) return completion;
-  if (content.includes("调用文档生成能力")) return "正在生成文档，右侧会实时输出。";
   return "正在处理，会在右侧同步结果。";
 }
 
@@ -321,6 +326,8 @@ function buildMessageEntries(messages: SyncSessionMessage[]): DetailMessage[] {
       if (!nextContent || previousContent.includes(nextContent)) continue;
       if (nextContent.includes(previousContent)) {
         previous.content = nextContent;
+      } else if (isClarificationAssistantMessage(previousContent) || isClarificationAssistantMessage(nextContent)) {
+        previous.content = isClarificationAssistantMessage(previousContent) ? previousContent : nextContent;
       } else {
         previous.content = `${previousContent}\n\n${nextContent}`;
       }

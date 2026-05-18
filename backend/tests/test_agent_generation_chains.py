@@ -217,6 +217,31 @@ class AgentGenerationChainsTest(IsolatedAsyncioTestCase):
         self.assertEqual(response.artifact.job_id, "job_stub")
         self.assertEqual(ppt.requests[0].page_count, 3)
 
+    async def test_ppt_stream_returns_artifact_without_legacy_chat_noise(self) -> None:
+        service, _, _ = self._service()
+
+        events = [
+            event
+            async for event in service.chat_stream_events(
+                AgentChatRequest(
+                    session_id="local-ppt-stream",
+                    message="生成一份3页测试PPT",
+                    forced_intent="ppt",
+                    planning_enabled=False,
+                )
+            )
+        ]
+
+        rendered = "\n".join(str(event.get("message") or "") for event in events)
+        self.assertNotIn("chat 能力", rendered)
+        self.assertNotIn("我先理解你的任务", rendered)
+        self.assertNotIn("开始检索相关知识", rendered)
+        result = events[-1]
+        self.assertEqual(result["event"], "result.created")
+        self.assertEqual(result["channel"], "artifact")
+        response = result["payload"]["response"]
+        self.assertEqual(response["artifact"]["kind"], "ppt")
+
     async def test_board_chain_generates_board_artifact_once(self) -> None:
         service, _, canvas = self._service()
 
@@ -236,3 +261,28 @@ class AgentGenerationChainsTest(IsolatedAsyncioTestCase):
         self.assertEqual(response.artifact.sharing_url, "https://example.feishu.cn/docx/doc_board")
         self.assertEqual(len(canvas.requests), 1)
         self.assertIn("## 用户需求", canvas.requests[0].message)
+
+    async def test_board_stream_returns_artifact_without_legacy_chat_noise(self) -> None:
+        service, _, _ = self._service()
+
+        events = [
+            event
+            async for event in service.chat_stream_events(
+                AgentChatRequest(
+                    session_id="local-board-stream",
+                    message="生成一个测试画板",
+                    forced_intent="board",
+                    planning_enabled=False,
+                )
+            )
+        ]
+
+        rendered = "\n".join(str(event.get("message") or "") for event in events)
+        self.assertNotIn("chat 能力", rendered)
+        self.assertNotIn("我先理解你的任务", rendered)
+        self.assertNotIn("开始检索相关知识", rendered)
+        result = events[-1]
+        self.assertEqual(result["event"], "result.created")
+        self.assertEqual(result["channel"], "artifact")
+        response = result["payload"]["response"]
+        self.assertEqual(response["artifact"]["kind"], "board")

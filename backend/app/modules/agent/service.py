@@ -273,9 +273,6 @@ class RouterAgent:
                 candidates=self._candidate_list(local_intents, model_route),
             )
 
-        if self._is_vague_action_request(message):
-            return self._generic_intent_clarification(message, model_route, reason="泛化处理动作缺少明确产物类型")
-
         if model_route is not None:
             if model_route.confidence < 0.45:
                 return self._generic_intent_clarification(message, model_route, reason="意图置信度较低")
@@ -524,42 +521,6 @@ class RouterAgent:
         if any(keyword in message or keyword in normalized for keyword in vague_actions):
             return not any(keyword in message or keyword in normalized for keyword in ("新建", "生成一份", "生成一个", "ppt", "文档", "画板", "流程图"))
         return False
-
-    def _is_vague_action_request(self, message: str) -> bool:
-        text = message.strip()
-        if not text:
-            return False
-        normalized = text.lower()
-        vague_actions = (
-            "整理一下",
-            "优化一下",
-            "改一下",
-            "处理一下",
-            "完善一下",
-            "帮我整理",
-            "帮我优化",
-            "帮我改",
-            "帮我处理",
-        )
-        if not any(keyword in text or keyword in normalized for keyword in vague_actions):
-            return False
-        explicit_product_markers = (
-            "新建",
-            "生成一份",
-            "生成一个",
-            "生成文档",
-            "生成ppt",
-            "ppt",
-            "幻灯片",
-            "演示文稿",
-            "文档",
-            "画板",
-            "流程图",
-            "时序图",
-            "脑图",
-            "架构图",
-        )
-        return not any(keyword in text or keyword in normalized for keyword in explicit_product_markers)
 
     def _clarification_route(
         self,
@@ -1829,13 +1790,12 @@ class AgentService:
                 intent = AgentIntent.BOARD
             if self._should_edit_current_document(editable_document, request, intent):
                 intent = AgentIntent.DOCX
-                yield AgentEventProtocol.intent(intent.value, "我判断这次是修改当前文档，不会重新生成文档。")
                 if request.planning_enabled:
                     plan = self._build_document_edit_plan(request.message)
-                    yield AgentEventProtocol.plan(plan, "规划完成。下面直接修改当前文档。")
+                    yield AgentEventProtocol.plan(plan, "")
                     async for event in self._stream_plan_progress(plan):
                         yield event
-                yield AgentEventProtocol.tool_started(intent.value, "docx_edit", "好的，我现在调用文档编辑能力，直接修改当前文档内容。")
+                yield AgentEventProtocol.tool_started(intent.value, "docx_edit", "正在处理。")
                 response = await self._edit_current_document(request, editable_document, plan=plan)
                 await self._publish_chat_result(request, response)
                 yield AgentEventProtocol.result(response, response.message)
@@ -1843,31 +1803,21 @@ class AgentService:
 
             if current_ppt_update or current_artifact_operation == "board":
                 artifact_kind = "ppt" if current_ppt_update else "board"
-                yield AgentEventProtocol.intent(
-                    intent.value,
-                    "我判断这次是修改当前 PPT，不会重新生成一份。"
-                    if artifact_kind == "ppt"
-                    else "我判断这次是修改当前飞书画板，不会新建画板文档。",
-                )
                 if request.planning_enabled:
                     plan = self._build_current_artifact_edit_plan(artifact_kind, request.message)
-                    yield AgentEventProtocol.plan(plan, "规划完成。下面直接修改当前产物。")
+                    yield AgentEventProtocol.plan(plan, "")
                     async for event in self._stream_plan_progress(plan):
                         yield event
                 yield AgentEventProtocol.tool_started(
                     intent.value,
                     "ppt_edit" if artifact_kind == "ppt" else "board_edit",
-                    "好的，我现在调用 AI PPT 编辑能力，保留原结构并修改指定页面。"
-                    if artifact_kind == "ppt"
-                    else "好的，我现在调用飞书画板编辑能力，基于当前画板执行修改。",
+                    "正在处理。",
                 )
                 execution_request = request.model_copy(update={"planning_enabled": False})
                 response = await self.chat(execution_request)
                 response.plan = plan
                 yield AgentEventProtocol.result(response, response.message)
                 return
-
-            yield AgentEventProtocol.intent(intent.value)
 
             runtime_turn = await self._prepare_agent_turn(
                 request,
@@ -1883,12 +1833,11 @@ class AgentService:
             )
             trace_events = runtime_turn.trace_events
             for trace_event in trace_events:
-                if trace_event.type in {"intent_recognized", "clarification_requested", "retrieval_started", "retrieval_completed"}:
+                if trace_event.type in {"clarification_requested"}:
                     yield AgentEventProtocol.from_trace(trace_event).model_dump()
             clarification_response = self._clarification_response_from_turn(request, runtime_turn)
             if clarification_response is not None:
                 await self._publish_chat_result(request, clarification_response)
-                yield AgentEventProtocol.result(clarification_response, clarification_response.message)
                 return
             runtime_plan = runtime_turn.plan
             docx_tool_result = self._runtime_tool_result(runtime_turn, "docx")
@@ -1897,7 +1846,7 @@ class AgentService:
 
             if request.planning_enabled:
                 plan = runtime_plan or await self._create_plan_with_timeout(request, intent)
-                yield AgentEventProtocol.plan(plan, "规划完成。下面按这些子任务执行。")
+                yield AgentEventProtocol.plan(plan, "")
                 async for event in self._stream_plan_progress(plan):
                     yield event
                 if self._should_pause_for_clarification(intent, plan):
@@ -1912,10 +1861,9 @@ class AgentService:
                         events=self._events_from_traces(trace_events),
                     )
                     await self._publish_chat_result(request, response)
-                    yield AgentEventProtocol.result(response, response.message)
                     return
 
-            yield AgentEventProtocol.tool_started(intent.value, intent.value, self._tool_call_message(intent))
+            yield AgentEventProtocol.tool_started(intent.value, intent.value, "正在处理。")
 
             if intent == AgentIntent.DOCX and docx_tool_result is not None and docx_tool_result.get("content") is not None:
                 content = str(docx_tool_result["content"])
@@ -2425,11 +2373,11 @@ class AgentService:
 
     def _tool_call_message(self, intent: AgentIntent) -> str:
         if intent == AgentIntent.DOCX:
-            return "好的，我现在调用文档生成能力，生成内容并同步到飞书。"
+            return "正在处理。"
         if intent == AgentIntent.PPT:
-            return "好的，我现在调用 AI PPT 能力，创建生成任务并等待导出。"
+            return "正在处理。"
         if intent == AgentIntent.BOARD:
-            return "好的，我现在调用飞书画板能力，把任务落到画板流程里。"
+            return "正在处理。"
         return "好的，我现在直接回复这个问题。"
 
     def _forced_or_classified_intent(self, request: AgentChatRequest) -> AgentIntent:

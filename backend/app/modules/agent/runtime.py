@@ -106,19 +106,6 @@ class AgentRuntime:
             turn.routed_intent = AgentIntent(route.intent)
         except ValueError:
             turn.routed_intent = AgentIntent.CHAT
-        turn.add_event(
-            "intent_recognized",
-            f"我判断这次要走 {turn.routed_intent.value} 能力。",
-            data={
-                "intent": turn.routed_intent.value,
-                "primary_tool": route.primary_tool,
-                "confidence": route.confidence,
-                "reason": route.reason,
-                "intent_candidates": [candidate.model_dump() for candidate in route.candidates],
-                "clarification_options": [option.model_dump() for option in route.clarification_options],
-                "pending_route": route.pending_route,
-            },
-        )
         return {"turn": turn}
 
     async def _clarification_gate_node(self, state: AgentGraphState) -> AgentGraphState:
@@ -201,24 +188,8 @@ class AgentRuntime:
 
     async def _retrieval_node(self, state: AgentGraphState) -> AgentGraphState:
         turn = state["turn"]
-        turn.add_event("retrieval_started", "开始检索相关知识、历史上下文和当前产物。", status="in_progress")
-        turn.add_event("source_bitable_started", "开始读取 Bitable 结构化数据。", status="in_progress")
         chunks = await self._retriever.retrieve(turn.request, current_artifact=turn.current_artifact)
         turn.retrieved_context = chunks
-        bitable_chunks = [chunk for chunk in chunks if chunk.source_type == "bitable"]
-        if bitable_chunks:
-            turn.add_event(
-                "source_bitable_completed",
-                f"已读取 {len(bitable_chunks)} 条 Bitable 记录。",
-                data={"records": [chunk.model_dump() for chunk in bitable_chunks]},
-            )
-        else:
-            turn.add_event("source_bitable_empty", "未读取到可用 Bitable 记录。")
-        turn.add_event(
-            "retrieval_completed",
-            f"已检索到 {len(chunks)} 条相关上下文。",
-            data={"sources": [chunk.model_dump() for chunk in chunks]},
-        )
         return {"turn": turn}
 
     async def _planner_node(self, state: AgentGraphState) -> AgentGraphState:

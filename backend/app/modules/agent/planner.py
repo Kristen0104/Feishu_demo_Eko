@@ -190,7 +190,7 @@ class PlannerAgent:
                 task_complexity="medium",
                 requires_context_selection=False,
                 summary="整理上下文并生成文档。",
-                visible_summary="我理解你要生成一份文档。我会先梳理写作目标，再调用文档生成能力，最后同步结果。",
+                visible_summary="整理上下文并生成文档。",
                 tool_candidates=["docx", "sync"],
                 assumptions=["默认使用当前会话上下文作为写作依据"],
                 steps=[

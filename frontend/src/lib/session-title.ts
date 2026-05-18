@@ -70,7 +70,7 @@ function isLowValueCandidate(value: string): boolean {
   if (normalized.includes("正在加载真实会话数据")) return true;
   if (normalized.includes("文档生成完成") || normalized.includes("处理已完成")) return true;
   if (normalized.includes("已同步到飞书") && normalized.length < 24) return true;
-  if (normalized.includes("我先理解你的任务") || normalized.includes("规划完成")) return true;
+  if (normalized.includes("规划已更新")) return true;
   return false;
 }
 

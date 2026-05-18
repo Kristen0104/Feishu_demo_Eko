@@ -66,7 +66,7 @@ export function DetailConversationMessage({
           }
         >
           {message.mention && <span className={`inline-flex rounded-xl bg-white px-2 py-1 text-[12px] font-semibold ${mentionClass} shadow-[0_3px_8px_rgba(15,23,42,0.05)]`}>{message.mention}</span>}
-          <p className="mt-1.5 whitespace-pre-line break-words text-[13px] leading-[23px] text-slate-700">{message.body}</p>
+          {message.body ? <p className="mt-1.5 whitespace-pre-line break-words text-[13px] leading-[23px] text-slate-700">{message.body}</p> : null}
           {message.helperText ? <div className={`mt-2.5 inline-flex max-w-full items-center gap-2 rounded-full bg-white/80 px-3 py-1.5 text-[12px] ${helperClass}`}><span className={`h-3 w-3 shrink-0 rounded-full border-2 ${tone === "canvas" ? "border-violet-500" : tone === "chat" ? "border-emerald-500" : "border-blue-500"} border-t-transparent animate-spin`} />{message.helperText}</div> : null}
           {message.plannerCard ? (
             <div className="mt-3 rounded-[16px] border border-blue-100 bg-white/90 p-3 text-left shadow-[0_8px_18px_rgba(37,99,235,0.06)]">

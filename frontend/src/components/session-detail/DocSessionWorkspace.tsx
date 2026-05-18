@@ -43,8 +43,8 @@ function inferAgentEventChannel(event: {
   event?: string | null;
   channel?: AgentEventChannel | null;
 }): AgentEventChannel {
-  if (event.channel) return event.channel;
-  switch (event.event) {
+    if (event.channel) return event.channel;
+    switch (event.event) {
     case "turn.started":
     case "intent.recognized":
     case "retrieval.started":
@@ -504,25 +504,19 @@ function formatMessageTime(date = new Date()) {
 }
 
 function agentToolCallText(intent: AgentChatResponseWire["intent"], artifact?: DetailDocumentArtifact) {
-  const kind = artifact?.kind || intent;
-  if (kind === "docx") return "好的，我现在调用文档生成能力，生成内容并同步到飞书。";
-  if (kind === "ppt") return "好的，我现在调用 AI PPT 能力，创建生成任务并等待导出。";
-  if (kind === "board") return "好的，我现在调用飞书画板能力，把任务落到画板流程里。";
-  return "好的，我现在直接回复这个问题。";
+  void intent;
+  void artifact;
+  return "正在处理。";
 }
 
 function looksLikeInternalTraceMessage(content: string) {
   const normalized = content.replace(/\s+/g, "");
-  const markers = [
-    "我先理解你的任务",
-    "拆成可以执行的步骤",
-    "我判断这次要走",
-    "开始检索相关知识",
-    "已检索到",
-    "规划完成",
-    "直接回答用户问题",
-  ];
-  return markers.filter((marker) => normalized.includes(marker)).length >= 2;
+  return (
+    /走(?:chat|docx|ppt|board)?能力/i.test(normalized) ||
+    /(?:chat|docx|ppt|board)能力/i.test(normalized) ||
+    normalized.includes("意图已识别") ||
+    normalized.includes("规划已更新")
+  );
 }
 
 function planningMessageBody(plan: PlanningPlanWire) {
@@ -535,6 +529,19 @@ function planningMessageBody(plan: PlanningPlanWire) {
     .slice(0, 6)
     .map((step, index) => `${index + 1}. ${step.title}${step.description ? `：${step.description}` : ""}`);
   return [...lines, ...steps].join("\n");
+}
+
+function isClarificationResponse(response?: AgentChatResponseWire | null) {
+  if (!response) return false;
+  const plan = response.plan;
+  return (
+    response.intent === "chat" &&
+    !response.artifact &&
+    (plan?.intent === "intent_clarification" ||
+      plan?.need_clarification === true ||
+      plan?.clarification_needed === true ||
+      plan?.final_output?.format === "clarification")
+  );
 }
 
 function ragScoreLabel(score: number) {
@@ -1379,6 +1386,8 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
   const contextMessages = data.contextMessages ?? [];
   const shouldShowContextSelector = contextMessages.length > 0 && data.intent !== "chat";
   const hasActiveRealtimeConversationRef = useRef(false);
+  const blockedByClarificationRef = useRef(false);
+  const activeSseReplyRef = useRef(false);
 
   hasActiveRealtimeConversationRef.current =
     agentSlice?.phase === "ANALYZING" ||
@@ -1535,6 +1544,7 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
     if (!raw || typeof raw !== "object") return;
     const body = raw as Record<string, unknown>;
     if (body.type === "TASK_COMPLETED") {
+      if (blockedByClarificationRef.current) return;
       const payload = (body.payload ?? {}) as Record<string, unknown>;
       const artifact = payload.artifact && typeof payload.artifact === "object" ? toDetailArtifact(payload.artifact as AgentChatResponseWire["artifact"]) : undefined;
       if (artifact?.kind === "docx" && (manualDocumentMarkdown === null || docAutoSyncState === "idle" || docAutoSyncState === "synced")) {
@@ -1552,47 +1562,7 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
       }
       return;
     }
-    if (body.type !== "AGENT_MESSAGE") return;
-    const payload = (body.payload ?? {}) as Record<string, unknown>;
-    const content = typeof payload.content === "string" ? payload.content : "";
-    if (!content.trim()) return;
-    const role = typeof payload.role === "string" ? payload.role : "assistant";
-    const isEko = role === "assistant" || role === "eko" || role === "bot" || role === "system";
-    const replaceLast = payload.replace_last === true;
-    const time = formatMessageTime();
-    setMessages((prev) => {
-      const nextMessage: SessionDetailData["messages"][number] = {
-        id: `ws-${Date.now()}`,
-        author: isEko ? "Eko" : "成员",
-        role: isEko ? "eko" : "member",
-        time,
-        body: content,
-        avatar: isEko ? "E" : "成",
-        sent: true,
-      };
-      if (isEko) {
-        const duplicateReplay = prev.some((message) => {
-          if (message.role !== "eko") return false;
-          const existing = message.body.trim();
-          const incoming = content.trim();
-          return existing === incoming || existing.includes(incoming);
-        });
-        if (duplicateReplay) return prev;
-      }
-      if (replaceLast && prev.length > 0 && prev[prev.length - 1].role === nextMessage.role) {
-        const existing = prev[prev.length - 1].body.trim();
-        const incoming = content.trim();
-        if (existing.includes(incoming)) return prev;
-        if (incoming.includes(existing)) {
-          return [...prev.slice(0, -1), { ...nextMessage, id: prev[prev.length - 1].id }];
-        }
-        return [...prev.slice(0, -1), { ...nextMessage, id: prev[prev.length - 1].id }];
-      }
-      if (prev.length > 0 && prev[prev.length - 1].role === nextMessage.role && prev[prev.length - 1].body === content) {
-        return prev;
-      }
-      return [...prev, nextMessage];
-    });
+    if (body.type === "AGENT_MESSAGE") return;
   }, [docAutoSyncState, manualDocumentMarkdown]);
 
   useEkoSessionRealtime({ sessionId: data.id, onEnvelope: handleRealtimeEnvelope });
@@ -1776,6 +1746,8 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
 
   const handleChatSend = useCallback(
     async (text: string) => {
+      blockedByClarificationRef.current = false;
+      activeSseReplyRef.current = true;
       const time = formatMessageTime();
       const requestId = Date.now();
       const userHistoryMessage = {
@@ -1803,6 +1775,20 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
       const store = useAgentRuntimeStore.getState();
       const isExistingDocumentEdit = resourceKind === "docx" && Boolean(currentDocumentMarkdown.trim()) && !wantsNewDocument(text);
       store.patchSession(data.id, { phase: "ANALYZING", lastError: null, useMockFallback: false });
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: streamMessageId,
+          author: "Eko",
+          role: "eko" as const,
+          time: formatMessageTime(),
+          body: "",
+          avatar: "E",
+          helperText: plannerEnabled && !isExistingDocumentEdit ? "正在规划" : "正在处理",
+          sent: false,
+        },
+      ]);
 
       setSending(true);
       try {
@@ -1848,6 +1834,21 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
         };
 
         const applyResponse = (response: AgentChatResponseWire) => {
+          if (isClarificationResponse(response)) {
+            store.patchSession(data.id, {
+              phase: "ANALYZING",
+              intent: "CHAT",
+              planningPlan: plannerEnabled ? toPlanningPlan(response.plan) : null,
+              planningSteps: [],
+              lastError: null,
+              isDocStreaming: false,
+            });
+            updateStreamMessage(response.message || response.plan?.questions?.[0] || "请确认要执行的动作。", {
+              sent: true,
+              replace: true,
+            });
+            return;
+          }
           const nextArtifact = toDetailArtifact(response.artifact);
           const planningPlan = plannerEnabled ? toPlanningPlan(response.plan) : null;
           const planningSteps = planningPlan?.steps ?? [];
@@ -1904,14 +1905,15 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
             store.patchSession(data.id, { useMockFallback: false });
             store.ingestEnvelope(data.id, event);
             if (event.event === "turn.started") {
-              const planningEnabled = payload.planning_enabled !== false;
-              updateStreamMessage(isExistingDocumentEdit ? "好的，直接修改当前文档。" : event.message || "收到。我开始处理。", {
-                helperText: planningEnabled ? "理解与规划中" : "直接执行中",
-                replace: isExistingDocumentEdit,
+              updateStreamMessage("", {
+                helperText: payload.planning_enabled !== false ? "正在规划" : "正在处理",
+                replace: true,
               });
               return;
             }
             if (event.event === "clarification.requested") {
+              blockedByClarificationRef.current = true;
+              activeSseReplyRef.current = false;
               store.patchSession(data.id, { phase: "ANALYZING" });
               const questions = Array.isArray(payload.questions) ? payload.questions.filter((item): item is string => typeof item === "string") : [];
               const options = Array.isArray(payload.clarification_options)
@@ -1929,18 +1931,18 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
               return;
             }
             if (event.event === "result.created") {
+              if (blockedByClarificationRef.current) return;
+              activeSseReplyRef.current = false;
               applyResponse(payload.response as AgentChatResponseWire);
               return;
             }
             if (event.event === "turn.failed") {
+              activeSseReplyRef.current = false;
               const error = typeof payload.error === "string" ? payload.error : "";
               streamError = error || event.message || "处理失败，请稍后重试。";
               return;
             }
-            if (channel === "chat" && event.message && !isExistingDocumentEdit) {
-              if (looksLikeInternalTraceMessage(event.message)) return;
-              updateStreamMessage(event.message, { sent: true });
-            }
+            void channel;
           },
         );
 
@@ -1951,6 +1953,7 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
           throw new Error(streamError);
         }
       } catch (error) {
+        activeSseReplyRef.current = false;
         store.patchSession(data.id, { phase: "ERROR", lastError: error instanceof Error ? error.message : "处理失败" });
         setMessages((prev) => [
           ...prev,
@@ -1965,6 +1968,7 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
           },
         ]);
       } finally {
+        activeSseReplyRef.current = false;
         setSending(false);
       }
     },
@@ -1973,89 +1977,6 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
 
   const handleContextSelectionRun = useCallback(async () => {
     if (contextMessages.length === 0) return;
-    const replayContextRunEvents = (
-      response: AgentChatResponseWire | undefined,
-      options: { skipContext?: boolean } = {},
-    ) => {
-      const events = Array.isArray(response?.events) ? response.events : [];
-      if (!events.length) return;
-
-      const replayMessageId = `eko-context-run-${Date.now()}`;
-        const updateReplayMessage = (
-          chunk: string,
-          eventOptions: {
-            helperText?: string;
-            sent?: boolean;
-            replace?: boolean;
-          } = {},
-        ) => {
-        setMessages((prev) => {
-          const existingIndex = prev.findIndex((message) => message.id === replayMessageId);
-          if (existingIndex === -1) {
-            return [
-              ...prev,
-                {
-                  id: replayMessageId,
-                  author: "Eko",
-                  role: "eko" as const,
-                  time: "刚刚",
-                  body: chunk,
-                  avatar: "E",
-                  helperText: eventOptions.helperText,
-                  sent: eventOptions.sent,
-                },
-              ];
-            }
-          return prev.map((message, index) => {
-            if (index !== existingIndex) return message;
-              return {
-                ...message,
-                body: eventOptions.replace ? chunk || message.body : chunk ? `${message.body}${message.body ? "\n\n" : ""}${chunk}` : message.body,
-                helperText: eventOptions.helperText,
-                sent: eventOptions.sent ?? message.sent,
-              };
-            });
-          });
-      };
-
-      for (const event of events) {
-        const payload = event.payload ?? {};
-        const channel = inferAgentEventChannel(event);
-        useAgentRuntimeStore.getState().ingestEnvelope(data.id, event);
-        if (event.event === "turn.started") {
-          const message = options.skipContext
-            ? "收到。本次将忽略群聊消息记录，直接继续处理。"
-            : event.message || "收到。我开始处理。";
-          updateReplayMessage(message, {
-            helperText: payload.planning_enabled !== false ? "理解与规划中" : "直接执行中",
-            replace: true,
-          });
-          continue;
-        }
-        if (event.event === "clarification.requested") {
-          const questions = Array.isArray(payload.questions) ? payload.questions.filter((item): item is string => typeof item === "string") : [];
-          const options = Array.isArray(payload.clarification_options)
-            ? payload.clarification_options
-                .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
-                .map((item) => (typeof item.label === "string" ? item.label : ""))
-                .filter(Boolean)
-            : [];
-          updateReplayMessage(
-            questions.length
-              ? `执行前还需要确认：\n${questions.map((question, index) => `${index + 1}. ${question}`).join("\n")}${options.length ? `\n\n可选：${options.join(" / ")}` : ""}`
-              : event.message || "执行前还需要补充关键信息。",
-            { sent: true },
-          );
-          continue;
-        }
-        if (channel === "chat" && event.message) {
-          if (looksLikeInternalTraceMessage(event.message)) {
-            continue;
-          }
-          updateReplayMessage(event.message, { sent: true });
-        }
-      }
-    };
     const startIndex = Math.min(contextStart, contextEnd);
     const endIndex = Math.max(contextStart, contextEnd);
     setContextSubmitting(true);
@@ -2070,7 +1991,6 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
       if (!response.ok || !body || body.code !== 0) {
         throw new Error("上下文提交失败");
       }
-      replayContextRunEvents(body.data);
       const planningPlan = plannerEnabled ? toPlanningPlan(body.data?.plan) : null;
       if (planningPlan) {
         useAgentRuntimeStore.getState().patchSession(data.id, {
@@ -2113,87 +2033,6 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
       const body = (await response.json().catch(() => null)) as { code?: number; data?: AgentChatResponseWire } | null;
       if (!response.ok || !body || body.code !== 0) {
         throw new Error("跳过上下文后生成失败");
-      }
-      const events = Array.isArray(body.data?.events) ? body.data.events : [];
-      if (events.length) {
-        const payload = body.data;
-        const replayMessageId = `eko-context-run-${Date.now()}`;
-        const updateReplayMessage = (
-          chunk: string,
-          options: {
-            helperText?: string;
-            sent?: boolean;
-            replace?: boolean;
-          } = {},
-        ) => {
-          setMessages((prev) => {
-            const existingIndex = prev.findIndex((message) => message.id === replayMessageId);
-            if (existingIndex === -1) {
-              return [
-                ...prev,
-                {
-                  id: replayMessageId,
-                  author: "Eko",
-                  role: "eko" as const,
-                  time: "刚刚",
-                  body: chunk,
-                  avatar: "E",
-                  helperText: options.helperText,
-                  sent: options.sent,
-                },
-              ];
-            }
-            return prev.map((message, index) => {
-              if (index !== existingIndex) return message;
-              return {
-                ...message,
-                body: options.replace ? chunk || message.body : chunk ? `${message.body}${message.body ? "\n\n" : ""}${chunk}` : message.body,
-                helperText: options.helperText,
-                sent: options.sent ?? message.sent,
-              };
-            });
-          });
-        };
-        for (const event of events) {
-          const eventPayload = event.payload ?? {};
-          const channel = inferAgentEventChannel(event);
-          useAgentRuntimeStore.getState().ingestEnvelope(data.id, event);
-          if (event.event === "turn.started") {
-            updateReplayMessage("收到。本次将忽略群聊消息记录，直接继续处理。", {
-              helperText: eventPayload.planning_enabled !== false ? "理解与规划中" : "直接执行中",
-              replace: true,
-            });
-            continue;
-          }
-          if (event.event === "clarification.requested") {
-            const questions = Array.isArray(eventPayload.questions) ? eventPayload.questions.filter((item): item is string => typeof item === "string") : [];
-            const options = Array.isArray(eventPayload.clarification_options)
-              ? eventPayload.clarification_options
-                  .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
-                  .map((item) => (typeof item.label === "string" ? item.label : ""))
-                  .filter(Boolean)
-              : [];
-            updateReplayMessage(
-              questions.length
-                ? `执行前还需要确认：\n${questions.map((question, index) => `${index + 1}. ${question}`).join("\n")}${options.length ? `\n\n可选：${options.join(" / ")}` : ""}`
-                : event.message || "执行前还需要补充关键信息。",
-              { sent: true },
-            );
-            continue;
-          }
-          if (channel === "chat" && event.message) {
-            updateReplayMessage(event.message, { sent: true });
-          }
-        }
-        const planningPlan = plannerEnabled ? toPlanningPlan(payload?.plan) : null;
-        if (planningPlan) {
-          useAgentRuntimeStore.getState().patchSession(data.id, {
-            phase: "COMPLETED",
-            planningPlan,
-            planningSteps: planningPlan.steps,
-            lastError: null,
-          });
-        }
       }
       const finalPlanningPlan = plannerEnabled ? toPlanningPlan(body.data?.plan) : null;
       setMessages((prev) => [
