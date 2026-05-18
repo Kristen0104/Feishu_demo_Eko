@@ -43,10 +43,15 @@ class _FeishuServiceStub:
 
 
 class _DocumentServiceStub:
+    def __init__(self) -> None:
+        self.requests: list[object] = []
+
     async def generate_document(self, _request: object) -> str:
+        self.requests.append(_request)
         return "# Stub 文档\n\n内容生成成功。"
 
     async def generate_document_stream(self, _request: object):
+        self.requests.append(_request)
         yield "# Stub 文档\n\n内容生成成功。"
 
     def ground_document_if_needed(self, _request: object, content: str) -> str:
@@ -146,6 +151,22 @@ class AgentGenerationChainsTest(IsolatedAsyncioTestCase):
         self.assertIsNotNone(response.artifact)
         self.assertEqual(response.artifact.kind, "docx")
         self.assertIn("内容生成成功", response.artifact.content or "")
+
+    async def test_docx_chain_generates_document_once_when_planning_enabled(self) -> None:
+        service, _, _ = self._service()
+
+        response = await service.chat(
+            AgentChatRequest(
+                session_id="local-docx-once",
+                message="生成一份测试文档",
+                forced_intent="docx",
+                planning_enabled=True,
+            )
+        )
+
+        self.assertEqual(response.status, "completed")
+        self.assertEqual(response.artifact.kind if response.artifact else None, "docx")
+        self.assertEqual(service._document_service.requests.__len__(), 1)
 
     async def test_docx_chain_does_not_pause_for_planner_clarification(self) -> None:
         service, _, _ = self._service()

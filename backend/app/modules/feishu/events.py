@@ -13,7 +13,7 @@ except ImportError:  # pragma: no cover - optional dependency for encrypted even
 
 from app.config import settings
 from app.core.database import AsyncSessionLocal
-from app.modules.agent.schemas import AgentChatArtifact, AgentChatRequest, AgentContext, AgentIntent, ChatMessage
+from app.modules.agent.schemas import AgentChatArtifact, AgentChatRequest, AgentContext, AgentIntent, ChatMessage, IntentRouteResult
 from app.modules.auth.repository import AuthRepository
 from app.modules.feishu.service import FeishuService
 from app.modules.sync.service import SyncService
@@ -92,7 +92,8 @@ class FeishuEventProcessor:
         session_id = f"feishu:{chat_id}:{message_id}"
         if command_name == "new":
             instruction = self._normalize_instruction(command_prompt)
-            intent = await self._classify_new_session_intent(instruction)
+            route = await self._route_new_session_intent(instruction)
+            intent = AgentIntent(route.intent)
             sender_profile = self._build_fast_sender_profile(event.get("sender"))
             resolved_profile = await self._resolve_sender_profile(event.get("sender"))
             trigger_message = self._build_user_message(
@@ -100,6 +101,35 @@ class FeishuEventProcessor:
                 timestamp=create_time,
                 sender_profile=sender_profile,
             )
+            if route.needs_clarification:
+                if self._sync_service is not None:
+                    question = route.clarification_question or "请确认你希望我执行哪种动作。"
+                    await self._sync_service.publish_session_opened(
+                        session_id,
+                        source="feishu",
+                        user_id=resolved_profile.get("platform_user_id"),
+                        chat_id=chat_id,
+                        message_id=message_id,
+                        context_size=0,
+                        instruction=instruction,
+                        intent=intent.value,
+                        context_messages=[],
+                        selected_context_messages=[],
+                        status="等待确认意图",
+                        summary=question,
+                        messages=[trigger_message],
+                    )
+                await self._send_workspace_link_to_chat(chat_id, session_id)
+                self._schedule_agent_chat(
+                    AgentChatRequest(
+                        session_id=session_id,
+                        message=instruction,
+                        sender=resolved_profile,
+                    )
+                )
+                logger.info("Feishu direct mention waiting for intent clarification session=%s", session_id)
+                return {"msg": "success"}
+
             if intent == AgentIntent.CHAT:
                 context_messages = await self._load_context_candidates(
                     session_id=session_id,
@@ -485,15 +515,32 @@ class FeishuEventProcessor:
         task.add_done_callback(lambda finished: self._log_agent_task_result(session_id, finished))
 
     async def _classify_new_session_intent(self, instruction: str) -> AgentIntent:
+        route = await self._route_new_session_intent(instruction)
+        return AgentIntent(route.intent)
+
+    async def _route_new_session_intent(self, instruction: str) -> IntentRouteResult:
         router = getattr(self._agent_service, "_router", None)
-        if router is None or not hasattr(router, "classify_chat_intent"):
-            return AgentIntent.CHAT
+        if router is None:
+            return IntentRouteResult(intent=AgentIntent.CHAT.value, primary_tool="chat", confidence=0.8, reason="no router")
         try:
-            intent = await router.classify_chat_intent(instruction)
+            if hasattr(router, "route_chat_intent"):
+                route = await router.route_chat_intent(instruction)
+            elif hasattr(router, "classify_chat_intent"):
+                intent = await router.classify_chat_intent(instruction)
+                route = IntentRouteResult(
+                    intent=intent.value if intent in {AgentIntent.CHAT, AgentIntent.DOCX, AgentIntent.PPT, AgentIntent.BOARD} else AgentIntent.CHAT.value,
+                    primary_tool=(intent.value if intent in {AgentIntent.DOCX, AgentIntent.PPT, AgentIntent.BOARD} else "chat"),
+                    confidence=0.8,
+                    reason="legacy classifier",
+                )
+            else:
+                route = IntentRouteResult(intent=AgentIntent.CHAT.value, primary_tool="chat", confidence=0.8, reason="no classifier")
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Feishu intent pre-classification failed; defaulting to chat: %s", exc)
-            return AgentIntent.CHAT
-        return intent if intent in {AgentIntent.CHAT, AgentIntent.DOCX, AgentIntent.PPT, AgentIntent.BOARD} else AgentIntent.CHAT
+            logger.warning("Feishu intent pre-routing failed; defaulting to chat: %s", exc)
+            return IntentRouteResult(intent=AgentIntent.CHAT.value, primary_tool="chat", confidence=0.5, reason="route failed")
+        if route.intent not in {AgentIntent.CHAT.value, AgentIntent.DOCX.value, AgentIntent.PPT.value, AgentIntent.BOARD.value}:
+            return IntentRouteResult(intent=AgentIntent.CHAT.value, primary_tool="chat", confidence=0.5, reason="unsupported intent")
+        return route
 
     async def _load_context_candidates(
         self,

@@ -5,17 +5,20 @@ from unittest.mock import patch
 
 from app.modules.agent.schemas import AgentPlanFinalOutput, AgentTaskPlan
 from app.modules.agent.schemas import AgentIntent
+from app.modules.agent.schemas import IntentClarificationOption, IntentRouteResult
 from app.modules.feishu.events import FeishuEventProcessor
 
 
 class _SyncServiceStub:
     def __init__(self) -> None:
         self.opened_sessions: list[str] = []
+        self.opened_payloads: list[dict[str, object]] = []
         self.agent_messages: list[tuple[str, str]] = []
         self.context_updates: list[dict[str, object]] = []
 
-    async def publish_session_opened(self, session_id: str, **_: object) -> None:
+    async def publish_session_opened(self, session_id: str, **kwargs: object) -> None:
         self.opened_sessions.append(session_id)
+        self.opened_payloads.append({"session_id": session_id, **kwargs})
 
     async def publish_agent_message(self, session_id: str, *, content: str, **_: object) -> None:
         self.agent_messages.append((session_id, content))
@@ -41,9 +44,20 @@ class _FeishuServiceStub:
 class _RouterStub:
     def __init__(self, intent: AgentIntent = AgentIntent.DOCX) -> None:
         self.intent = intent
+        self.route: IntentRouteResult | None = None
 
     async def classify_chat_intent(self, instruction: str) -> AgentIntent:
         return self.intent
+
+    async def route_chat_intent(self, instruction: str) -> IntentRouteResult:
+        if self.route is not None:
+            return self.route
+        return IntentRouteResult(
+            intent=self.intent.value,
+            primary_tool=self.intent.value if self.intent != AgentIntent.CHAT else "chat",
+            confidence=0.8,
+            reason="test route",
+        )
 
 
 class _AgentServiceStub:
@@ -77,6 +91,25 @@ class _ProcessorForTest(FeishuEventProcessor):
 
     def _schedule_agent_chat(self, request):  # noqa: ANN001
         self.scheduled_chat_requests.append(request)
+
+
+class _ProcessorClarificationForTest(_ProcessorForTest):
+    def __init__(self) -> None:
+        super().__init__(intent=AgentIntent.CHAT)
+        self.agent_service._router.route = IntentRouteResult(
+            intent="chat",
+            primary_tool="chat",
+            confidence=0.0,
+            reason="泛化处理动作缺少明确产物类型",
+            needs_clarification=True,
+            clarification_question="你是想直接讨论这个主题，还是生成一份文档、PPT 或画板？",
+            clarification_options=[
+                IntentClarificationOption(label="直接讨论", intent="chat", tool="chat"),
+                IntentClarificationOption(label="生成文档", intent="docx", tool="docx"),
+                IntentClarificationOption(label="生成 PPT", intent="ppt", tool="ppt"),
+                IntentClarificationOption(label="生成画板", intent="board", tool="board"),
+            ],
+        )
 
 
 class _ProcessorBootstrapForTest(_ProcessorForTest):
@@ -230,6 +263,23 @@ class FeishuEventProcessorMentionGateTest(IsolatedAsyncioTestCase):
         request = processor.scheduled_chat_requests[0]
         self.assertEqual(request.message, "NovaMind 模型分级策略")
         self.assertEqual([message.content for message in request.context.chat_history], ["会议记录 1"])
+
+    async def test_vague_direct_mention_routes_to_standard_clarification(self) -> None:
+        processor = _ProcessorClarificationForTest()
+
+        result = await processor.handle(_payload(text="帮我处理一下这个", chat_type="p2p"))
+
+        self.assertEqual(result, {"msg": "success"})
+        self.assertEqual(processor.sync.opened_sessions, ["feishu:oc_test:om_test"])
+        self.assertEqual(processor.scheduled_sessions, [])
+        self.assertEqual(len(processor.scheduled_chat_requests), 1)
+        request = processor.scheduled_chat_requests[0]
+        self.assertEqual(request.message, "帮我处理一下这个")
+        self.assertIsNone(request.context)
+        opened = processor.sync.opened_payloads[0]
+        self.assertEqual(opened["status"], "等待确认意图")
+        self.assertIn("直接讨论", opened["summary"])
+        self.assertEqual(len(processor.feishu.sent_messages), 1)
 
     async def test_board_chart_request_runs_immediately_without_context_selection(self) -> None:
         processor = _ProcessorForTest(intent=AgentIntent.BOARD)

@@ -8,6 +8,7 @@ from app.modules.agent.schemas import (
     AgentChatArtifact,
     AgentChatRequest,
     AgentIntent,
+    IntentRouteResult,
     AgentRetrievedContext,
     AgentTaskPlan,
     AgentTraceEvent,
@@ -19,6 +20,8 @@ class AgentTurnState(BaseModel):
     user_id: str | None = None
     user_message: str
     routed_intent: AgentIntent
+    route_result: IntentRouteResult | None = None
+    clarification_requested: bool = False
     request: AgentChatRequest
     current_artifact: AgentChatArtifact | None = None
     execute_tools: bool = False

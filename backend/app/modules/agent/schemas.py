@@ -105,6 +105,32 @@ class AgentPlanFinalOutput(BaseModel):
     requirements: list[str] = Field(default_factory=list)
 
 
+class IntentCandidate(BaseModel):
+    intent: Literal["chat", "docx", "ppt", "board"]
+    tool: str | None = None
+    confidence: float = 0.0
+    reason: str = ""
+
+
+class IntentClarificationOption(BaseModel):
+    label: str
+    intent: Literal["chat", "docx", "ppt", "board"]
+    tool: str | None = None
+    description: str = ""
+
+
+class IntentRouteResult(BaseModel):
+    intent: Literal["chat", "docx", "ppt", "board"] = "chat"
+    primary_tool: str = "chat"
+    confidence: float = 1.0
+    reason: str = ""
+    candidates: list[IntentCandidate] = Field(default_factory=list)
+    needs_clarification: bool = False
+    clarification_question: str | None = None
+    clarification_options: list[IntentClarificationOption] = Field(default_factory=list)
+    pending_route: dict[str, Any] = Field(default_factory=dict)
+
+
 class AgentPlanStep(BaseModel):
     id: str
     title: str

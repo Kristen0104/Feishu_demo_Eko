@@ -26,6 +26,9 @@ from app.modules.agent.schemas import (
     AgentTraceEvent,
     BitableRecord,
     ChatMessage,
+    IntentCandidate,
+    IntentClarificationOption,
+    IntentRouteResult,
     KnowledgeDoc,
     SubagentType,
     SyncDocumentRequest,
@@ -222,6 +225,75 @@ class RouterAgent:
 
     async def classify_chat_intent(self, message: str) -> AgentIntent:
         """识别 Agent chat 路由意图"""
+        route = await self.route_chat_intent(message)
+        return AgentIntent(route.intent)
+
+    async def route_chat_intent(
+        self,
+        message: str,
+        *,
+        current_artifact: AgentChatArtifact | None = None,
+        forced_intent: str | None = None,
+    ) -> IntentRouteResult:
+        """Return a standard route result that can interrupt for clarification."""
+        forced = (forced_intent or "").strip().lower()
+        if forced in {"chat", "docx", "ppt", "board"}:
+            intent = AgentIntent(forced)
+            return IntentRouteResult(
+                intent=intent.value,
+                primary_tool=self._primary_tool_for_intent(intent, current_artifact=current_artifact, message=message),
+                confidence=1.0,
+                reason="forced_intent",
+                candidates=[IntentCandidate(intent=intent.value, tool=self._primary_tool_for_intent(intent, current_artifact=current_artifact, message=message), confidence=1.0, reason="forced")],
+            )
+
+        model_route = await self._classify_chat_intent_with_model(message)
+        local_intents = self._local_explicit_intents(message)
+        if self._is_current_artifact_ambiguous(message, current_artifact):
+            return self._clarification_route(
+                message,
+                question=f"这是要修改当前 {self._artifact_label(current_artifact)}，还是新建一个产物？",
+                options=[
+                    IntentClarificationOption(label=f"修改当前{self._artifact_label(current_artifact)}", intent=current_artifact.kind if current_artifact and current_artifact.kind in {"docx", "ppt", "board"} else "chat", tool=self._edit_tool_for_artifact(current_artifact)),
+                    IntentClarificationOption(label="新建文档", intent="docx", tool="docx"),
+                    IntentClarificationOption(label="新建 PPT", intent="ppt", tool="ppt"),
+                    IntentClarificationOption(label="普通回复", intent="chat", tool="chat"),
+                ],
+                reason="当前产物编辑/新建意图不明确",
+                candidates=self._candidate_list(local_intents, model_route),
+            )
+
+        if local_intents:
+            intent = local_intents[0]
+            return IntentRouteResult(
+                intent=intent.value,
+                primary_tool=self._primary_tool_for_intent(intent, current_artifact=current_artifact, message=message),
+                confidence=0.95,
+                reason="本地规则识别到明确动作",
+                candidates=self._candidate_list(local_intents, model_route),
+            )
+
+        if self._is_vague_action_request(message):
+            return self._generic_intent_clarification(message, model_route, reason="泛化处理动作缺少明确产物类型")
+
+        if model_route is not None:
+            if model_route.confidence < 0.45:
+                return self._generic_intent_clarification(message, model_route, reason="意图置信度较低")
+            candidate_intents = {candidate.intent for candidate in model_route.candidates}
+            if len(candidate_intents - {"chat"}) > 1:
+                return self._generic_intent_clarification(message, model_route, reason="存在多个可能工具")
+            return model_route
+
+        return IntentRouteResult(
+            intent=AgentIntent.CHAT.value,
+            primary_tool="chat",
+            confidence=0.8,
+            reason="未发现明确产物动作，按普通回复处理",
+            candidates=[IntentCandidate(intent="chat", tool="chat", confidence=0.8, reason="default")],
+        )
+
+    async def _classify_chat_intent_with_model(self, message: str) -> IntentRouteResult | None:
+        """识别 Agent chat 路由意图"""
         tools = [
             {
                 "name": tool.name,
@@ -255,21 +327,56 @@ class RouterAgent:
             result = (await self._llm.generate(system_prompt, user_prompt, temperature=0.0)).strip()
         except Exception as exc:  # noqa: BLE001
             logger.warning("Agent chat intent classification failed: %s", exc)
-            result = ""
+            return None
+        return self._parse_model_route(result, message=message)
 
-        model_intent = self._parse_model_intent(result, message=message)
-        if model_intent is not None:
-            if model_intent != AgentIntent.CHAT:
-                return model_intent
+    def _parse_model_route(self, result: str, *, message: str = "") -> IntentRouteResult | None:
+        normalized = result.strip().lower()
+        if not normalized:
+            return None
 
-        if self._tool_intent_has_explicit_user_action(message, AgentIntent.BOARD):
-            return AgentIntent.BOARD
-        if self._tool_intent_has_explicit_user_action(message, AgentIntent.PPT):
-            return AgentIntent.PPT
-        if self._tool_intent_has_explicit_user_action(message, AgentIntent.DOCX):
-            return AgentIntent.DOCX
+        try:
+            parsed = json.loads(normalized)
+        except json.JSONDecodeError:
+            parsed = None
 
-        return AgentIntent.CHAT
+        intent_value = normalized
+        tool_value = ""
+        confidence = 1.0
+        reason = ""
+        if isinstance(parsed, dict):
+            raw_intent = parsed.get("intent")
+            intent_value = raw_intent.strip().lower() if isinstance(raw_intent, str) else ""
+            raw_tool = parsed.get("primary_tool") or parsed.get("tool")
+            tool_value = raw_tool.strip().lower() if isinstance(raw_tool, str) else ""
+            raw_confidence = parsed.get("confidence")
+            if isinstance(raw_confidence, int | float):
+                confidence = float(raw_confidence)
+            raw_reason = parsed.get("reason")
+            reason = raw_reason.strip() if isinstance(raw_reason, str) else ""
+
+        tool_intent = self._intent_from_tool(tool_value)
+        parsed_intent = tool_intent or self._intent_from_value(intent_value)
+        if parsed_intent is None:
+            return None
+        if parsed_intent != AgentIntent.CHAT and not self._tool_intent_has_explicit_user_action(message, parsed_intent):
+            return IntentRouteResult(
+                intent=AgentIntent.CHAT.value,
+                primary_tool="chat",
+                confidence=min(confidence, 0.7),
+                reason=reason or "模型选择了产物工具，但用户缺少明确动作",
+                candidates=[
+                    IntentCandidate(intent=parsed_intent.value, tool=tool_value or self._primary_tool_for_intent(parsed_intent), confidence=confidence, reason=reason),
+                    IntentCandidate(intent="chat", tool="chat", confidence=0.75, reason="缺少明确生成/修改动作"),
+                ],
+            )
+        return IntentRouteResult(
+            intent=parsed_intent.value,
+            primary_tool=tool_value or self._primary_tool_for_intent(parsed_intent),
+            confidence=confidence,
+            reason=reason or "模型路由",
+            candidates=[IntentCandidate(intent=parsed_intent.value, tool=tool_value or self._primary_tool_for_intent(parsed_intent), confidence=confidence, reason=reason)],
+        )
 
     def _parse_model_intent(self, result: str, *, message: str = "") -> AgentIntent | None:
         normalized = result.strip().lower()
@@ -328,6 +435,172 @@ class RouterAgent:
         if tool_name in {"chat", "knowledge_search", "artifact_lookup"}:
             return AgentIntent.CHAT
         return None
+
+    def _intent_from_value(self, value: str) -> AgentIntent | None:
+        if value in {"chat"}:
+            return AgentIntent.CHAT
+        if value in {"docx", "document"}:
+            return AgentIntent.DOCX
+        if value in {"ppt", "presentation"}:
+            return AgentIntent.PPT
+        if value in {"board"}:
+            return AgentIntent.BOARD
+        return None
+
+    def _local_explicit_intents(self, message: str) -> list[AgentIntent]:
+        intents: list[AgentIntent] = []
+        for intent in (AgentIntent.BOARD, AgentIntent.PPT, AgentIntent.DOCX):
+            if self._tool_intent_has_explicit_user_action(message, intent):
+                intents.append(intent)
+        return intents
+
+    def _candidate_list(
+        self,
+        local_intents: list[AgentIntent],
+        model_route: IntentRouteResult | None,
+    ) -> list[IntentCandidate]:
+        candidates: list[IntentCandidate] = []
+        for intent in local_intents:
+            candidates.append(IntentCandidate(intent=intent.value, tool=self._primary_tool_for_intent(intent), confidence=0.95, reason="local_rule"))
+        if model_route is not None:
+            candidates.extend(model_route.candidates)
+        if not candidates:
+            candidates.append(IntentCandidate(intent="chat", tool="chat", confidence=0.8, reason="default"))
+        deduped: dict[str, IntentCandidate] = {}
+        for candidate in candidates:
+            key = f"{candidate.intent}:{candidate.tool or ''}"
+            if key not in deduped or candidate.confidence > deduped[key].confidence:
+                deduped[key] = candidate
+        return list(deduped.values())
+
+    def _primary_tool_for_intent(
+        self,
+        intent: AgentIntent,
+        *,
+        current_artifact: AgentChatArtifact | None = None,
+        message: str = "",
+    ) -> str:
+        if current_artifact is not None and self._is_current_artifact_ambiguous(message, current_artifact):
+            edit_tool = self._edit_tool_for_artifact(current_artifact)
+            if edit_tool:
+                return edit_tool
+        if intent == AgentIntent.DOCX:
+            return "docx"
+        if intent == AgentIntent.PPT:
+            return "ppt"
+        if intent == AgentIntent.BOARD:
+            return "board"
+        return "chat"
+
+    def _edit_tool_for_artifact(self, artifact: AgentChatArtifact | None) -> str | None:
+        if artifact is None:
+            return None
+        if artifact.kind == "docx":
+            return "docx_edit"
+        if artifact.kind == "ppt":
+            return "ppt_edit"
+        if artifact.kind == "board":
+            return "board_edit"
+        return None
+
+    def _artifact_label(self, artifact: AgentChatArtifact | None) -> str:
+        if artifact is None:
+            return "产物"
+        if artifact.kind == "docx":
+            return "文档"
+        if artifact.kind == "ppt":
+            return "PPT"
+        if artifact.kind == "board":
+            return "画板"
+        return "产物"
+
+    def _is_current_artifact_ambiguous(self, message: str, artifact: AgentChatArtifact | None) -> bool:
+        if artifact is None:
+            return False
+        if not message.strip():
+            return False
+        normalized = message.lower()
+        vague_actions = ("整理一下", "优化一下", "改一下", "处理一下", "完善一下", "帮我整理", "帮我优化", "帮我改", "帮我处理")
+        if any(keyword in message or keyword in normalized for keyword in vague_actions):
+            return not any(keyword in message or keyword in normalized for keyword in ("新建", "生成一份", "生成一个", "ppt", "文档", "画板", "流程图"))
+        return False
+
+    def _is_vague_action_request(self, message: str) -> bool:
+        text = message.strip()
+        if not text:
+            return False
+        normalized = text.lower()
+        vague_actions = (
+            "整理一下",
+            "优化一下",
+            "改一下",
+            "处理一下",
+            "完善一下",
+            "帮我整理",
+            "帮我优化",
+            "帮我改",
+            "帮我处理",
+        )
+        if not any(keyword in text or keyword in normalized for keyword in vague_actions):
+            return False
+        explicit_product_markers = (
+            "新建",
+            "生成一份",
+            "生成一个",
+            "生成文档",
+            "生成ppt",
+            "ppt",
+            "幻灯片",
+            "演示文稿",
+            "文档",
+            "画板",
+            "流程图",
+            "时序图",
+            "脑图",
+            "架构图",
+        )
+        return not any(keyword in text or keyword in normalized for keyword in explicit_product_markers)
+
+    def _clarification_route(
+        self,
+        message: str,
+        *,
+        question: str,
+        options: list[IntentClarificationOption],
+        reason: str,
+        candidates: list[IntentCandidate],
+    ) -> IntentRouteResult:
+        return IntentRouteResult(
+            intent="chat",
+            primary_tool="chat",
+            confidence=0.0,
+            reason=reason,
+            candidates=candidates,
+            needs_clarification=True,
+            clarification_question=question,
+            clarification_options=options,
+            pending_route={"original_message": message, "reason": reason},
+        )
+
+    def _generic_intent_clarification(
+        self,
+        message: str,
+        model_route: IntentRouteResult | None,
+        *,
+        reason: str,
+    ) -> IntentRouteResult:
+        return self._clarification_route(
+            message,
+            question="你是想直接讨论这个主题，还是生成一份文档、PPT 或画板？",
+            options=[
+                IntentClarificationOption(label="直接讨论", intent="chat", tool="chat", description="只做普通回复，不创建产物。"),
+                IntentClarificationOption(label="生成文档", intent="docx", tool="docx", description="输出 Markdown 文档并可同步飞书。"),
+                IntentClarificationOption(label="生成 PPT", intent="ppt", tool="ppt", description="创建 AI PPT 后台任务。"),
+                IntentClarificationOption(label="生成画板", intent="board", tool="board", description="创建飞书画板或图示。"),
+            ],
+            reason=reason,
+            candidates=self._candidate_list([], model_route),
+        )
 
     def _tool_intent_has_explicit_user_action(self, message: str, intent: AgentIntent) -> bool:
         if intent == AgentIntent.CHAT:
@@ -739,6 +1012,74 @@ class AgentService:
 
         await self._sync_service.publish_error(response.session_id, response.message, response.error)
 
+    async def _resolve_pending_route_reply(self, request: AgentChatRequest) -> AgentChatRequest:
+        if request.forced_intent is not None:
+            return request
+        if self._sync_service is None or not hasattr(self._sync_service, "get_session"):
+            return request
+        try:
+            session = await self._sync_service.get_session(request.session_id)
+        except Exception:  # noqa: BLE001
+            return request
+        messages = getattr(session, "messages", None)
+        if not isinstance(messages, list) or len(messages) < 2:
+            return request
+
+        def _payload(message: Any) -> dict[str, Any]:
+            if isinstance(message, dict):
+                return message
+            if hasattr(message, "model_dump"):
+                dumped = message.model_dump()
+                return dumped if isinstance(dumped, dict) else {}
+            return {
+                "role": getattr(message, "role", None),
+                "content": getattr(message, "content", None),
+            }
+
+        normalized = [_payload(message) for message in messages]
+        last = normalized[-1]
+        last_role = str(last.get("role") or "").lower()
+        last_content = str(last.get("content") or "")
+        if last_role not in {"assistant", "eko", "bot", "system"}:
+            return request
+        if "确认" not in last_content and "直接讨论" not in last_content and "修改当前" not in last_content:
+            return request
+
+        original = next(
+            (
+                str(message.get("content") or "").strip()
+                for message in reversed(normalized[:-1])
+                if str(message.get("role") or "").lower() == "user" and str(message.get("content") or "").strip()
+            ),
+            "",
+        )
+        if not original:
+            return request
+
+        selected_intent = self._intent_from_clarification_reply(request.message)
+        if selected_intent is None:
+            return request
+        return request.model_copy(
+            update={
+                "message": original,
+                "forced_intent": selected_intent.value,
+            }
+        )
+
+    def _intent_from_clarification_reply(self, message: str) -> AgentIntent | None:
+        normalized = message.strip().lower()
+        if not normalized:
+            return None
+        if any(keyword in message or keyword in normalized for keyword in ("直接讨论", "普通回复", "直接回复", "chat")):
+            return AgentIntent.CHAT
+        if any(keyword in message or keyword in normalized for keyword in ("生成文档", "新建文档", "文档", "docx", "document")):
+            return AgentIntent.DOCX
+        if any(keyword in message or keyword in normalized for keyword in ("修改当前ppt", "生成 ppt", "生成PPT", "新建 ppt", "ppt", "slides", "presentation")):
+            return AgentIntent.PPT
+        if any(keyword in message or keyword in normalized for keyword in ("修改当前画板", "生成画板", "新建画板", "画板", "board", "流程图", "时序图")):
+            return AgentIntent.BOARD
+        return None
+
     async def _echo_feishu_chat_reply_if_needed(
         self,
         request: AgentChatRequest,
@@ -788,7 +1129,7 @@ class AgentService:
             return True
         if session_status == "等待选择":
             return True
-        return self._tool_intent_has_explicit_user_action(request.message, AgentIntent.BOARD)
+        return self._router._tool_intent_has_explicit_user_action(request.message, AgentIntent.BOARD)
 
     async def _create_plan_with_timeout(
         self,
@@ -814,12 +1155,14 @@ class AgentService:
         intent: AgentIntent,
         session_artifact: AgentChatArtifact | None,
         *,
+        route_result: IntentRouteResult | None = None,
         execute_tools: bool = False,
     ):
         return await self._runtime.prepare_turn(
             request,
             routed_intent=intent,
             current_artifact=session_artifact,
+            route_result=route_result,
             execute_tools=execute_tools,
         )
 
@@ -840,6 +1183,39 @@ class AgentService:
 
     def _events_from_traces(self, trace_events: list[Any]) -> list[Any]:
         return AgentEventProtocol.from_traces(trace_events)
+
+    def _clarification_response_from_turn(
+        self,
+        request: AgentChatRequest,
+        runtime_turn: Any,
+    ) -> AgentChatResponse | None:
+        if not getattr(runtime_turn, "clarification_requested", False):
+            return None
+        route = getattr(runtime_turn, "route_result", None)
+        question = getattr(route, "clarification_question", None) or "请确认你希望我执行哪种动作。"
+        plan = AgentTaskPlan(
+            goal="确认用户要执行的动作",
+            intent="intent_clarification",
+            task_complexity="simple",
+            missing_info=["intent"],
+            need_clarification=True,
+            clarification_needed=True,
+            questions=[question],
+            assumptions=[],
+            summary=question,
+            visible_summary=question,
+            tool_candidates=[],
+            steps=[],
+            final_output=AgentPlanFinalOutput(format="clarification", requirements=["等待用户确认意图后继续执行"]),
+        )
+        return AgentChatResponse(
+            session_id=request.session_id,
+            intent=AgentIntent.CHAT.value,
+            status="completed",
+            message=question,
+            plan=plan,
+            events=self._events_from_traces(getattr(runtime_turn, "trace_events", [])),
+        )
 
     async def _runtime_docx_tool(
         self,
@@ -1136,12 +1512,25 @@ class AgentService:
         plan = None
         trace_events = []
         try:
+            request = await self._resolve_pending_route_reply(request)
             request = await self._context_assembler.assemble(request, sync_service=self._sync_service)
             session_artifact = await self._get_session_artifact(request)
             editable_document = await self._get_editable_document(request)
+            route_result: IntentRouteResult | None = None
             intent = self._forced_or_classified_intent(request)
             if intent == AgentIntent.UNKNOWN:
-                intent = await self._router.classify_chat_intent(request.message)
+                route_result = await self._router.route_chat_intent(
+                    request.message,
+                    current_artifact=session_artifact,
+                    forced_intent=request.forced_intent,
+                )
+                intent = AgentIntent(route_result.intent)
+            else:
+                route_result = await self._router.route_chat_intent(
+                    request.message,
+                    current_artifact=session_artifact,
+                    forced_intent=intent.value,
+                )
             current_artifact_operation = self._resolve_current_artifact_operation(session_artifact, request, intent)
             if current_artifact_operation == "docx":
                 editable_document = session_artifact if session_artifact and session_artifact.kind == "docx" else editable_document
@@ -1154,8 +1543,7 @@ class AgentService:
             should_execute_runtime_tools = (
                 request.planning_enabled
                 and (
-                    intent == AgentIntent.DOCX
-                    or (intent == AgentIntent.PPT and not current_ppt_update)
+                    intent == AgentIntent.PPT and not current_ppt_update
                 )
                 and current_artifact_operation != "docx"
                 and not self._should_edit_current_document(editable_document, request, intent)
@@ -1164,10 +1552,15 @@ class AgentService:
                 request,
                 intent,
                 session_artifact,
+                route_result=route_result,
                 execute_tools=should_execute_runtime_tools,
             )
             trace_events = runtime_turn.trace_events
             plan = runtime_turn.plan
+            clarification_response = self._clarification_response_from_turn(request, runtime_turn)
+            if clarification_response is not None:
+                await self._publish_chat_result(request, clarification_response)
+                return clarification_response
             docx_tool_result = self._runtime_tool_result(runtime_turn, "docx")
             ppt_tool_result = self._runtime_tool_result(runtime_turn, "ppt")
             board_tool_result = self._runtime_tool_result(runtime_turn, "board")
@@ -1405,12 +1798,25 @@ class AgentService:
         yield AgentEventProtocol.start(request.planning_enabled)
 
         try:
+            request = await self._resolve_pending_route_reply(request)
             request = await self._context_assembler.assemble(request, sync_service=self._sync_service)
             session_artifact = await self._get_session_artifact(request)
             editable_document = await self._get_editable_document(request)
+            route_result: IntentRouteResult | None = None
             intent = self._forced_or_classified_intent(request)
             if intent == AgentIntent.UNKNOWN:
-                intent = await self._router.classify_chat_intent(request.message)
+                route_result = await self._router.route_chat_intent(
+                    request.message,
+                    current_artifact=session_artifact,
+                    forced_intent=request.forced_intent,
+                )
+                intent = AgentIntent(route_result.intent)
+            else:
+                route_result = await self._router.route_chat_intent(
+                    request.message,
+                    current_artifact=session_artifact,
+                    forced_intent=intent.value,
+                )
             current_artifact_operation = self._resolve_current_artifact_operation(session_artifact, request, intent)
             if current_artifact_operation == "docx":
                 editable_document = session_artifact if session_artifact and session_artifact.kind == "docx" else editable_document
@@ -1467,18 +1873,23 @@ class AgentService:
                 request,
                 intent,
                 session_artifact,
+                route_result=route_result,
                 execute_tools=(
                     request.planning_enabled
                     and (
-                        intent == AgentIntent.DOCX
-                        or (intent == AgentIntent.PPT and not current_ppt_update)
+                        intent == AgentIntent.PPT and not current_ppt_update
                     )
                 ),
             )
             trace_events = runtime_turn.trace_events
             for trace_event in trace_events:
-                if trace_event.type in {"retrieval_started", "retrieval_completed"}:
+                if trace_event.type in {"intent_recognized", "clarification_requested", "retrieval_started", "retrieval_completed"}:
                     yield AgentEventProtocol.from_trace(trace_event).model_dump()
+            clarification_response = self._clarification_response_from_turn(request, runtime_turn)
+            if clarification_response is not None:
+                await self._publish_chat_result(request, clarification_response)
+                yield AgentEventProtocol.result(clarification_response, clarification_response.message)
+                return
             runtime_plan = runtime_turn.plan
             docx_tool_result = self._runtime_tool_result(runtime_turn, "docx")
             ppt_tool_result = self._runtime_tool_result(runtime_turn, "ppt")

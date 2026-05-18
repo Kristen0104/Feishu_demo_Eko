@@ -497,6 +497,31 @@ export const useAgentRuntimeStore = create<AgentRuntimeStore>((set, get) => ({
         return;
       }
 
+      if (eventName === "clarification.requested") {
+        const questions = Array.isArray(payload.questions) ? payload.questions.filter((item): item is string => typeof item === "string") : [];
+        const planningPlan = parsePlanningPayload({
+          goal: "确认用户意图",
+          intent: "intent_clarification",
+          missing_info: ["intent"],
+          need_clarification: true,
+          clarification_needed: true,
+          clarification_question: typeof body.message === "string" ? body.message : questions[0] ?? "请确认要执行的动作。",
+          questions,
+          assumptions: [],
+          summary: typeof body.message === "string" ? body.message : questions[0] ?? "请确认要执行的动作。",
+          steps: [],
+          final_output: { format: "clarification", requirements: [] },
+        });
+        get().patchSession(sid, {
+          phase: "ANALYZING",
+          planningPlan,
+          planningSteps: [],
+          isDocStreaming: false,
+          lastError: null,
+        });
+        return;
+      }
+
       if (eventName === "tool.selected" || eventName === "tool.started" || eventName === "tool.completed") {
         get().patchSession(sid, { phase: "GENERATING" });
         return;

@@ -10,7 +10,7 @@ from langgraph.graph import END, StateGraph
 
 from app.modules.agent.planner import PlannerAgent
 from app.modules.agent.rag import AgentRAGRetriever
-from app.modules.agent.schemas import AgentChatArtifact, AgentChatRequest, AgentIntent
+from app.modules.agent.schemas import AgentChatArtifact, AgentChatRequest, AgentIntent, IntentRouteResult
 from app.modules.agent.state import AgentGraphState, AgentTurnState
 from app.modules.agent.tools import AgentToolRegistry
 
@@ -42,6 +42,7 @@ class AgentRuntime:
         *,
         routed_intent: AgentIntent,
         current_artifact: AgentChatArtifact | None,
+        route_result: IntentRouteResult | None = None,
         execute_tools: bool = False,
     ) -> AgentTurnState:
         initial = AgentTurnState(
@@ -49,6 +50,7 @@ class AgentRuntime:
             user_id=self._resolve_user_id(request),
             user_message=request.message,
             routed_intent=routed_intent,
+            route_result=route_result,
             request=request,
             current_artifact=current_artifact,
             execute_tools=execute_tools,
@@ -62,11 +64,15 @@ class AgentRuntime:
     def _build_graph(self):  # type: ignore[no-untyped-def]
         graph = StateGraph(AgentGraphState)
         graph.add_node("context", self._context_node)
+        graph.add_node("intent_route", self._intent_route_node)
+        graph.add_node("clarification_gate", self._clarification_gate_node)
         graph.add_node("retrieval", self._retrieval_node)
         graph.add_node("planner", self._planner_node)
         graph.add_node("tool_execute", self._tool_execute_node)
         graph.set_entry_point("context")
-        graph.add_edge("context", "retrieval")
+        graph.add_edge("context", "intent_route")
+        graph.add_edge("intent_route", "clarification_gate")
+        graph.add_conditional_edges("clarification_gate", self._route_after_clarification, {"retrieval": "retrieval", "end": END})
         graph.add_edge("retrieval", "planner")
         graph.add_conditional_edges("planner", self._route_after_planner, {"tool_execute": "tool_execute", "end": END})
         graph.add_edge("tool_execute", END)
@@ -86,6 +92,59 @@ class AgentRuntime:
             },
         )
         return {"turn": turn}
+
+    async def _intent_route_node(self, state: AgentGraphState) -> AgentGraphState:
+        turn = state["turn"]
+        route = turn.route_result or IntentRouteResult(
+            intent=turn.routed_intent.value if turn.routed_intent in {AgentIntent.CHAT, AgentIntent.DOCX, AgentIntent.PPT, AgentIntent.BOARD} else "chat",
+            primary_tool=self._default_tool_candidates(turn.routed_intent)[0],
+            confidence=1.0,
+            reason="legacy_route",
+        )
+        turn.route_result = route
+        try:
+            turn.routed_intent = AgentIntent(route.intent)
+        except ValueError:
+            turn.routed_intent = AgentIntent.CHAT
+        turn.add_event(
+            "intent_recognized",
+            f"我判断这次要走 {turn.routed_intent.value} 能力。",
+            data={
+                "intent": turn.routed_intent.value,
+                "primary_tool": route.primary_tool,
+                "confidence": route.confidence,
+                "reason": route.reason,
+                "intent_candidates": [candidate.model_dump() for candidate in route.candidates],
+                "clarification_options": [option.model_dump() for option in route.clarification_options],
+                "pending_route": route.pending_route,
+            },
+        )
+        return {"turn": turn}
+
+    async def _clarification_gate_node(self, state: AgentGraphState) -> AgentGraphState:
+        turn = state["turn"]
+        route = turn.route_result
+        if route is None or not route.needs_clarification:
+            return {"turn": turn}
+        question = route.clarification_question or "请确认你希望我执行哪种动作。"
+        turn.clarification_requested = True
+        turn.add_event(
+            "clarification_requested",
+            question,
+            status="blocked",
+            data={
+                "intent": route.intent,
+                "primary_tool": route.primary_tool,
+                "intent_candidates": [candidate.model_dump() for candidate in route.candidates],
+                "clarification_options": [option.model_dump() for option in route.clarification_options],
+                "pending_route": route.pending_route,
+                "questions": [question],
+            },
+        )
+        return {"turn": turn}
+
+    def _route_after_clarification(self, state: AgentGraphState) -> str:
+        return "end" if state["turn"].clarification_requested else "retrieval"
 
     async def _tool_execute_node(self, state: AgentGraphState) -> AgentGraphState:
         turn = state["turn"]

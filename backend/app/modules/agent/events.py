@@ -69,6 +69,8 @@ class AgentEventProtocol:
             "tool_selected": "tool.selected",
             "tool_started": "tool.started",
             "tool_completed": "tool.completed",
+            "intent_recognized": "intent.recognized",
+            "clarification_requested": "clarification.requested",
         }
         status_map = {
             "pending": "pending",

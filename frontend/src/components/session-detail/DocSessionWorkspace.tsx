@@ -1912,11 +1912,17 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
               return;
             }
             if (event.event === "clarification.requested") {
-              store.patchSession(data.id, { phase: "COMPLETED" });
+              store.patchSession(data.id, { phase: "ANALYZING" });
               const questions = Array.isArray(payload.questions) ? payload.questions.filter((item): item is string => typeof item === "string") : [];
+              const options = Array.isArray(payload.clarification_options)
+                ? payload.clarification_options
+                    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
+                    .map((item) => (typeof item.label === "string" ? item.label : ""))
+                    .filter(Boolean)
+                : [];
               updateStreamMessage(
                 questions.length
-                  ? `执行前还需要补充这些信息：\n${questions.map((question, index) => `${index + 1}. ${question}`).join("\n")}`
+                  ? `执行前还需要确认：\n${questions.map((question, index) => `${index + 1}. ${question}`).join("\n")}${options.length ? `\n\n可选：${options.join(" / ")}` : ""}`
                   : event.message || "执行前还需要补充关键信息。",
                 { sent: true },
               );
@@ -2028,9 +2034,15 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
         }
         if (event.event === "clarification.requested") {
           const questions = Array.isArray(payload.questions) ? payload.questions.filter((item): item is string => typeof item === "string") : [];
+          const options = Array.isArray(payload.clarification_options)
+            ? payload.clarification_options
+                .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
+                .map((item) => (typeof item.label === "string" ? item.label : ""))
+                .filter(Boolean)
+            : [];
           updateReplayMessage(
             questions.length
-              ? `执行前还需要补充这些信息：\n${questions.map((question, index) => `${index + 1}. ${question}`).join("\n")}`
+              ? `执行前还需要确认：\n${questions.map((question, index) => `${index + 1}. ${question}`).join("\n")}${options.length ? `\n\n可选：${options.join(" / ")}` : ""}`
               : event.message || "执行前还需要补充关键信息。",
             { sent: true },
           );
@@ -2155,9 +2167,15 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
           }
           if (event.event === "clarification.requested") {
             const questions = Array.isArray(eventPayload.questions) ? eventPayload.questions.filter((item): item is string => typeof item === "string") : [];
+            const options = Array.isArray(eventPayload.clarification_options)
+              ? eventPayload.clarification_options
+                  .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
+                  .map((item) => (typeof item.label === "string" ? item.label : ""))
+                  .filter(Boolean)
+              : [];
             updateReplayMessage(
               questions.length
-                ? `执行前还需要补充这些信息：\n${questions.map((question, index) => `${index + 1}. ${question}`).join("\n")}`
+                ? `执行前还需要确认：\n${questions.map((question, index) => `${index + 1}. ${question}`).join("\n")}${options.length ? `\n\n可选：${options.join(" / ")}` : ""}`
                 : event.message || "执行前还需要补充关键信息。",
               { sent: true },
             );
