@@ -243,8 +243,8 @@ class RouterAgent:
                 candidates=[IntentCandidate(intent=intent.value, tool=self._primary_tool_for_intent(intent, current_artifact=current_artifact, message=message), confidence=1.0, reason="forced")],
             )
 
-        model_route = await self._classify_chat_intent_with_model(message)
         local_intents = self._local_explicit_intents(message)
+        model_route = await self._classify_chat_intent_with_model(message)
         if self._is_current_artifact_ambiguous(message, current_artifact):
             return self._clarification_route(
                 message,
@@ -270,12 +270,26 @@ class RouterAgent:
             )
 
         if model_route is not None:
+            if self._looks_like_vague_office_action(message):
+                return self._generic_intent_clarification(message, model_route, reason="办公动作不完整")
             if model_route.confidence < 0.45:
                 return self._generic_intent_clarification(message, model_route, reason="意图置信度较低")
             candidate_intents = {candidate.intent for candidate in model_route.candidates}
             if len(candidate_intents - {"chat"}) > 1:
                 return self._generic_intent_clarification(message, model_route, reason="存在多个可能工具")
             return model_route
+
+        if self._is_bare_topic_message(message):
+            return IntentRouteResult(
+                intent=AgentIntent.CHAT.value,
+                primary_tool="chat",
+                confidence=0.95,
+                reason="topic_discussion",
+                candidates=[IntentCandidate(intent="chat", tool="chat", confidence=0.95, reason="topic_discussion")],
+            )
+
+        if self._looks_like_vague_office_action(message):
+            return self._generic_intent_clarification(message, model_route, reason="办公动作不完整")
 
         return IntentRouteResult(
             intent=AgentIntent.CHAT.value,
@@ -352,6 +366,17 @@ class RouterAgent:
         parsed_intent = tool_intent or self._intent_from_value(intent_value)
         if parsed_intent is None:
             return None
+        if parsed_intent != AgentIntent.CHAT and self._looks_like_vague_office_action(message):
+            return IntentRouteResult(
+                intent=AgentIntent.CHAT.value,
+                primary_tool="chat",
+                confidence=min(confidence, 0.4),
+                reason=reason or "用户动作缺少范围和格式",
+                candidates=[
+                    IntentCandidate(intent=parsed_intent.value, tool=tool_value or self._primary_tool_for_intent(parsed_intent), confidence=confidence, reason=reason),
+                    IntentCandidate(intent="chat", tool="chat", confidence=0.45, reason="可直接讨论"),
+                ],
+            )
         if parsed_intent != AgentIntent.CHAT and not self._tool_intent_has_explicit_user_action(message, parsed_intent):
             return IntentRouteResult(
                 intent=AgentIntent.CHAT.value,
@@ -583,6 +608,67 @@ class RouterAgent:
                 )
             )
         return False
+
+    def _is_bare_topic_message(self, message: str) -> bool:
+        normalized = message.strip()
+        if not normalized:
+            return False
+        if len(normalized) > 80:
+            return False
+        if re.search(r"[?？]", normalized):
+            return False
+        if re.search(
+            r"(怎么|如何|为什么|是否|吗|么|多少|哪|谁|何时|何地|what|why|how|when|where|who)",
+            normalized,
+            flags=re.I,
+        ):
+            return False
+        if re.search(
+            r"(请|帮我|帮忙|需要|我要|想要|生成|创建|新建|制作|做一份|做个|写|写成|起草|整理|整理成|输出|导出|同步|更新|修改|改|画|绘制|来一份|"
+            r"generate|create|make|draw|update|edit)",
+            normalized,
+            flags=re.I,
+        ):
+            return False
+        compact = re.sub(r"\s+", "", normalized)
+        if len(compact) < 2:
+            return False
+        return bool(re.search(r"[\u4e00-\u9fffA-Za-z0-9]", compact))
+
+    def _looks_like_vague_office_action(self, message: str) -> bool:
+        compact = re.sub(r"[\s，。！？!?、,.；;：:（）()【】\[\]「」『』\"'“”‘’]+", "", message).lower()
+        if not compact:
+            return False
+        for suffix in ("吧", "呗", "哈", "呀", "啊", "呢", "啦", "哦"):
+            while compact.endswith(suffix):
+                compact = compact[: -len(suffix)]
+        vague_requests = {
+            "整理",
+            "整理下",
+            "整理一下",
+            "处理",
+            "处理下",
+            "处理一下",
+            "帮我整理",
+            "帮我整理下",
+            "帮我整理一下",
+            "帮我处理",
+            "帮我处理下",
+            "帮我处理一下",
+            "麻烦整理",
+            "麻烦整理下",
+            "麻烦整理一下",
+            "麻烦处理",
+            "麻烦处理下",
+            "麻烦处理一下",
+            "请整理",
+            "请整理下",
+            "请整理一下",
+            "请处理",
+            "请处理下",
+            "请处理一下",
+        }
+        return compact in vague_requests
 
 
 class CollectorSubagent:
@@ -962,6 +1048,12 @@ class AgentService:
                 messages=await self._build_merged_sync_messages(request, response),
                 error=response.error,
             )
+            if (
+                hasattr(self._sync_service, "update_session_route_state")
+                and not self._is_pending_clarification_request(request)
+                and not self._response_is_clarification_request(response)
+            ):
+                await self._sync_service.update_session_route_state(response.session_id, None)
             await self._echo_feishu_chat_reply_if_needed(request, response, artifact=artifact)
             return
 
@@ -982,6 +1074,8 @@ class AgentService:
             if selected_intent is None:
                 return request.model_copy(update={"forced_intent": "chat", "sender": {**(request.sender or {}), "pending_clarification": True}})
             original = str(route_state.get("original_message") or "").strip()
+            if hasattr(self._sync_service, "update_session_route_state"):
+                await self._sync_service.update_session_route_state(request.session_id, None)
             return request.model_copy(
                 update={
                     "message": original or request.message,
@@ -1036,6 +1130,12 @@ class AgentService:
 
     def _is_waiting_clarification_route(self, route_state: Any) -> bool:
         return isinstance(route_state, dict) and route_state.get("state") == "awaiting_clarification"
+
+    def _is_pending_clarification_request(self, request: AgentChatRequest) -> bool:
+        return bool(request.sender and request.sender.get("pending_clarification") is True)
+
+    def _response_is_clarification_request(self, response: AgentChatResponse) -> bool:
+        return any(getattr(event, "event", None) == "clarification.requested" for event in (response.events or []))
 
     def _intent_from_clarification_reply(self, message: str) -> AgentIntent | None:
         normalized = message.strip().lower()
@@ -1231,6 +1331,41 @@ class AgentService:
             message=question,
             events=self._events_from_traces(getattr(runtime_turn, "trace_events", [])),
         )
+
+    async def _persist_runtime_clarification_route(
+        self,
+        request: AgentChatRequest,
+        runtime_turn: Any,
+    ) -> None:
+        if self._sync_service is None or not hasattr(self._sync_service, "update_session_route_state"):
+            return
+        if not getattr(runtime_turn, "clarification_requested", False):
+            return
+        route = getattr(runtime_turn, "route_result", None)
+        if route is None:
+            return
+        pending_route = getattr(route, "pending_route", None)
+        original_message = request.message
+        if isinstance(pending_route, dict):
+            original_message = str(pending_route.get("original_message") or request.message)
+        route_state = {
+            "state": "awaiting_clarification",
+            "clarification_type": "intent_route",
+            "original_message": original_message,
+            "reason": getattr(route, "reason", "") or "",
+            "intent": getattr(route, "intent", "chat") or "chat",
+            "primary_tool": getattr(route, "primary_tool", "chat") or "chat",
+            "confidence": getattr(route, "confidence", 0.0) or 0.0,
+            "candidates": [
+                candidate.model_dump() if hasattr(candidate, "model_dump") else dict(candidate)
+                for candidate in (getattr(route, "candidates", None) or [])
+            ],
+            "options": [
+                option.model_dump() if hasattr(option, "model_dump") else dict(option)
+                for option in (getattr(route, "clarification_options", None) or [])
+            ],
+        }
+        await self._sync_service.update_session_route_state(request.session_id, route_state)
 
     async def _runtime_docx_tool(
         self,
@@ -1501,6 +1636,7 @@ class AgentService:
         self,
         request: AgentChatRequest,
         retrieved_context: list[Any] | None = None,
+        route_result: IntentRouteResult | None = None,
     ) -> str:
         enriched_request = self._request_with_retrieved_context(request, retrieved_context or [])
         sections: list[str] = []
@@ -1518,8 +1654,43 @@ class AgentService:
         if enriched_request.context and enriched_request.context.bitable_records:
             sections.extend(self._format_agent_bitable_records(enriched_request.context.bitable_records))
             sections.append("")
+        if route_result is not None and route_result.reason == "topic_discussion":
+            sections.extend(
+                [
+                    "## 回复要求",
+                    "用户只给了一个主题或议题。请直接围绕这个主题给出简洁、有结构的讨论起点：先说明你对主题的理解，再给 3-5 个可展开的方向或关键问题。不要询问是否生成文档、PPT 或画板，不要承诺创建任何产物。",
+                    "",
+                ]
+            )
         sections.extend(["## 当前问题", enriched_request.message])
         return "\n".join(sections)
+
+    def _clean_chat_reply(self, reply: str) -> str:
+        lines = reply.splitlines()
+        noisy_prefixes = (
+            "收到。我先理解你的任务",
+            "我判断这次要走",
+            "开始检索相关知识",
+            "已检索到",
+            "规划完成",
+            "直接回答用户问题",
+        )
+        noisy_exact = {"1. 生成回复", "好的，我现在直接回复这个问题。"}
+        cleaned: list[str] = []
+        for line in lines:
+            stripped = line.strip()
+            if not stripped and not cleaned:
+                continue
+            if stripped in noisy_exact:
+                continue
+            if any(stripped.startswith(prefix) for prefix in noisy_prefixes):
+                continue
+            cleaned.append(line)
+        while cleaned and not cleaned[0].strip():
+            cleaned.pop(0)
+        while cleaned and not cleaned[-1].strip():
+            cleaned.pop()
+        return "\n".join(cleaned).strip() or reply.strip()
 
     async def chat(self, request: AgentChatRequest) -> AgentChatResponse:
         """Handle direct agent chat requests with intent-based routing."""
@@ -1573,6 +1744,7 @@ class AgentService:
             trace_events = runtime_turn.trace_events
             clarification_response = self._clarification_response_from_turn(request, runtime_turn)
             if clarification_response is not None:
+                await self._persist_runtime_clarification_route(request, runtime_turn)
                 await self._publish_chat_result(request, clarification_response)
                 return clarification_response
             docx_tool_result = self._runtime_tool_result(runtime_turn, "docx")
@@ -1740,12 +1912,13 @@ class AgentService:
                 await self._publish_chat_result(request, response)
                 return response
 
-            chat_prompt = self._build_chat_prompt(request, runtime_turn.retrieved_context)
+            chat_prompt = self._build_chat_prompt(request, runtime_turn.retrieved_context, route_result=route_result)
 
             reply = await self._llm.generate(
                 "你是 Eko 智能办公助手。请直接、友好地回答用户问题。若 RAG 知识库资料与问题相关，必须优先依据知识库资料回答；不要编造知识库未提供的信息。",
                 chat_prompt,
             )
+            reply = self._clean_chat_reply(reply)
             response = AgentChatResponse(
                 session_id=request.session_id,
                 intent=AgentIntent.CHAT.value,
@@ -1849,6 +2022,7 @@ class AgentService:
                     yield AgentEventProtocol.from_trace(trace_event).model_dump()
             clarification_response = self._clarification_response_from_turn(request, runtime_turn)
             if clarification_response is not None:
+                await self._persist_runtime_clarification_route(request, runtime_turn)
                 await self._publish_chat_result(request, clarification_response)
                 yield AgentEventProtocol.result(clarification_response, clarification_response.message)
                 return
@@ -1932,8 +2106,9 @@ class AgentService:
             elif intent == AgentIntent.CHAT:
                 reply = await self._llm.generate(
                     "你是 Eko 智能办公助手。请直接、友好地回答用户问题。若 RAG 知识库资料与问题相关，必须优先依据知识库资料回答；不要编造知识库未提供的信息。",
-                    self._build_chat_prompt(request, runtime_turn.retrieved_context),
+                    self._build_chat_prompt(request, runtime_turn.retrieved_context, route_result=route_result),
                 )
+                reply = self._clean_chat_reply(reply)
                 response = AgentChatResponse(
                     session_id=request.session_id,
                     intent=AgentIntent.CHAT.value,

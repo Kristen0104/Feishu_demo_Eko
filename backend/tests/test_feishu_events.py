@@ -4,7 +4,7 @@ from unittest import IsolatedAsyncioTestCase
 from unittest.mock import patch
 
 from app.modules.agent.schemas import AgentIntent
-from app.modules.feishu.events import FeishuEventProcessor, VAGUE_CLARIFICATION_QUESTION
+from app.modules.feishu.events import FeishuEventProcessor
 
 
 class _SyncServiceStub:
@@ -218,7 +218,7 @@ class FeishuEventProcessorMentionGateTest(IsolatedAsyncioTestCase):
         self.assertIn("工作台链接", processor.feishu.sent_messages[0][1])
         self.assertIn("http://127.0.0.1:3002/sessions/feishu:oc_test:om_test", processor.feishu.sent_messages[0][1])
 
-    async def test_vague_organize_request_only_sends_workspace_link_and_clarification(self) -> None:
+    async def test_vague_organize_request_uses_normal_agent_bootstrap(self) -> None:
         processor = _ProcessorForTest()
 
         with patch("app.modules.feishu.events.settings.FEISHU_APP_ID", "cli_app_test"):
@@ -226,31 +226,41 @@ class FeishuEventProcessorMentionGateTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(result, {"msg": "success"})
         self.assertEqual(processor.sync.opened_sessions, ["feishu:oc_test:om_test"])
-        self.assertEqual(processor.scheduled_sessions, [])
+        self.assertEqual(processor.scheduled_sessions, ["feishu:oc_test:om_test"])
         self.assertEqual(processor.scheduled_chat_requests, [])
-        self.assertEqual(processor.sync.agent_messages, [])
+        self.assertEqual(processor.sync.agent_messages, [("feishu:oc_test:om_test", "收到。我先读取群聊上下文，并继续处理。")])
         self.assertEqual(processor.sync.context_updates, [])
-        self.assertEqual(len(processor.feishu.sent_messages), 2)
+        self.assertEqual(len(processor.feishu.sent_messages), 1)
         self.assertIn("http://127.0.0.1:3002/sessions/feishu:oc_test:om_test", processor.feishu.sent_messages[0][1])
-        self.assertEqual(processor.feishu.sent_messages[1], ("oc_test", VAGUE_CLARIFICATION_QUESTION))
         opened = processor.sync.opened_payloads[0]
-        self.assertEqual(opened["status"], "等待确认意图")
-        self.assertEqual(opened["summary"], VAGUE_CLARIFICATION_QUESTION)
+        self.assertEqual(opened["status"], "进行中")
         self.assertEqual(opened["context_size"], 0)
-        self.assertEqual(
-            opened["route_state"],
-            {
-                "state": "awaiting_clarification",
-                "clarification_type": "organize_request",
-                "original_message": "整理一下",
-                "slots": {},
-                "required_slots": ["content_scope", "output_format"],
-                "options": {
-                    "content_scope": ["recent_chat", "other_information"],
-                    "output_format": ["summary", "bullet_list", "minutes", "document"],
-                },
-            },
-        )
+        self.assertNotIn("route_state", opened)
+
+    async def test_vague_organize_request_with_modal_particle_uses_normal_agent_bootstrap(self) -> None:
+        for text, original_message in (
+            ("@_user_1 整理一下吧", "整理一下吧"),
+            ("@_user_1 帮我整理一下吧", "帮我整理一下吧"),
+            ("@_user_1 整理下吧", "整理下吧"),
+        ):
+            processor = _ProcessorForTest()
+
+            with patch("app.modules.feishu.events.settings.FEISHU_APP_ID", "cli_app_test"):
+                result = await processor.handle(
+                    _payload(
+                        text=text,
+                        chat_type="group",
+                        mentions=[{"key": "@_user_1", "id": "cli_app_test", "id_type": "app_id", "name": "Eko"}],
+                    )
+                )
+
+            self.assertEqual(result, {"msg": "success"})
+            self.assertEqual(processor.sync.opened_sessions, ["feishu:oc_test:om_test"])
+            self.assertEqual(processor.scheduled_sessions, ["feishu:oc_test:om_test"])
+            self.assertEqual(processor.scheduled_chat_requests, [])
+            self.assertEqual(processor.sync.opened_payloads[0]["instruction"], original_message)
+            self.assertNotIn("route_state", processor.sync.opened_payloads[0])
+            self.assertEqual(len(processor.feishu.sent_messages), 1)
 
     async def test_direct_message_uses_same_bootstrap_without_feishu_prerouting(self) -> None:
         processor = _ProcessorForTest(intent=AgentIntent.CHAT)

@@ -27,7 +27,6 @@ logger = logging.getLogger(__name__)
 _MENTION_TAG_RE = re.compile(r"<at[^>]*>.*?</at>", re.IGNORECASE | re.DOTALL)
 _MAX_DEDUPED_MESSAGE_IDS = 1000
 _DEDUPED_MESSAGE_TTL_SECONDS = 24 * 60 * 60
-VAGUE_CLARIFICATION_QUESTION = "请问你想整理什么内容？是整理刚才的对话记录，还是其他信息？另外，你希望整理成什么形式？比如摘要、要点列表，或者生成一个文档？"
 _deduped_message_ids: set[str] = set()
 _deduped_message_order: deque[str] = deque()
 
@@ -135,41 +134,6 @@ class FeishuEventProcessor:
                 timestamp=create_time,
                 sender_profile=sender_profile,
             )
-            if self._needs_new_session_clarification(instruction):
-                assistant_message = {
-                    "role": "assistant",
-                    "content": VAGUE_CLARIFICATION_QUESTION,
-                }
-                if self._sync_service is not None:
-                    await self._sync_service.publish_session_opened(
-                        session_id,
-                        source="feishu",
-                        user_id=resolved_profile.get("platform_user_id"),
-                        chat_id=chat_id,
-                        message_id=message_id,
-                        context_size=0,
-                        instruction=instruction,
-                        context_messages=[],
-                        status="等待确认意图",
-                        summary=VAGUE_CLARIFICATION_QUESTION,
-                        messages=[trigger_message, assistant_message],
-                        route_state={
-                            "state": "awaiting_clarification",
-                            "clarification_type": "organize_request",
-                            "original_message": instruction,
-                            "slots": {},
-                            "required_slots": ["content_scope", "output_format"],
-                            "options": {
-                                "content_scope": ["recent_chat", "other_information"],
-                                "output_format": ["summary", "bullet_list", "minutes", "document"],
-                            },
-                        },
-                    )
-                    logger.info("Feishu vague direct mention opened clarification session=%s", session_id)
-                await self._send_workspace_link_to_chat(chat_id, session_id)
-                await self._feishu_service.send_text_message_to_chat(chat_id, VAGUE_CLARIFICATION_QUESTION)
-                return {"msg": "success"}
-
             if self._sync_service is not None:
                 await self._sync_service.publish_session_opened(
                     session_id,
@@ -405,58 +369,6 @@ class FeishuEventProcessor:
                 instruction = instruction[len(prefix) :].strip()
                 break
         return instruction or "请基于最近群聊上下文继续回复。"
-
-    def _needs_new_session_clarification(self, instruction: str) -> bool:
-        compact = re.sub(r"[\s，。！？!?、,.；;：:（）()【】\[\]「」『』\"'“”‘’]+", "", instruction).lower()
-        if not compact:
-            return True
-
-        explicit_keywords = (
-            "ppt",
-            "powerpoint",
-            "docx",
-            "word",
-            "文档",
-            "飞书文档",
-            "画板",
-            "白板",
-            "图表",
-            "饼图",
-            "摘要",
-            "要点",
-            "列表",
-            "会议纪要",
-            "周报",
-            "报告",
-            "聊天记录",
-            "对话记录",
-            "刚才",
-            "上下文",
-            "群聊",
-            "生成",
-            "写",
-            "做",
-            "创建",
-            "输出",
-        )
-        if any(keyword in compact for keyword in explicit_keywords):
-            return False
-
-        vague_requests = {
-            "整理",
-            "整理下",
-            "整理一下",
-            "帮我整理",
-            "帮我整理下",
-            "帮我整理一下",
-            "麻烦整理",
-            "麻烦整理下",
-            "麻烦整理一下",
-            "请整理",
-            "请整理下",
-            "请整理一下",
-        }
-        return compact in vague_requests
 
     def _parse_trigger_command(self, text: str) -> tuple[str, str | None, str]:
         stripped = " ".join(text.split()).strip()
