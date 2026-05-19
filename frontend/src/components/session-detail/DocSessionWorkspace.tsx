@@ -17,7 +17,7 @@ import { fetchSyncSession } from "@/lib/sync/fetch-session";
 import { streamAgentChat, type AgentChatStreamEvent } from "@/lib/agent/sse-stream";
 import { createSessionInvite, fetchMySessionInvites, fetchSessionInvites, fetchTeamMembers, updateSessionInvite } from "@/lib/team-api";
 import { useAppStore } from "@/store/app-store";
-import { useAgentRuntimeStore, type PlanningPlanWire, type PlanningStepWire, type RetrievedSourceWire } from "@/store/agent-runtime-store";
+import { useAgentRuntimeStore, type RetrievedSourceWire } from "@/store/agent-runtime-store";
 import {
   DetailActivity,
   DetailCanvasNode,
@@ -37,7 +37,7 @@ import { useSessionWorkspaceSearch } from "@/components/workspace/session-worksp
 import { DetailConversationMessage } from "./DetailConversationMessage";
 import { detailDesignTokens } from "./designTokens";
 
-type AgentEventChannel = "chat" | "status" | "plan" | "sources" | "artifact" | "log" | "error";
+type AgentEventChannel = NonNullable<AgentChatStreamEvent["channel"]>;
 
 function inferAgentEventChannel(event: {
   event?: string | null;
@@ -57,10 +57,6 @@ function inferAgentEventChannel(event: {
     case "source.bitable.empty":
     case "source.bitable.failed":
       return "sources";
-    case "plan.created":
-    case "plan.summary":
-    case "plan.step":
-      return "plan";
     case "result.created":
     case "clarification.requested":
       return "chat";
@@ -371,35 +367,6 @@ type AgentChatResponseWire = {
     error_message?: string | null;
     bitable_archive_results?: DetailDocumentArtifact["bitableArchiveResults"];
   } | null;
-  plan?: {
-    goal?: string | null;
-    intent?: string | null;
-    task_complexity?: string | null;
-    missing_info?: string[] | null;
-    need_clarification?: boolean | null;
-    questions?: string[] | null;
-    assumptions?: string[] | null;
-    clarification_needed?: boolean | null;
-    clarification_question?: string | null;
-    summary?: string | null;
-    visible_summary?: string | null;
-    final_output?: {
-      format?: string | null;
-      requirements?: string[] | null;
-    } | null;
-    steps?: Array<{
-      id?: string | null;
-      step_id?: string | null;
-      title?: string | null;
-      description?: string | null;
-      type?: string | null;
-      tool?: string | null;
-      input?: Record<string, unknown> | null;
-      expected_output?: string | null;
-      depends_on?: string[] | null;
-      status?: string | null;
-    }>;
-  } | null;
   error?: string | null;
 };
 
@@ -454,49 +421,6 @@ function toDetailArtifact(artifact?: AgentChatResponseWire["artifact"]): DetailD
   };
 }
 
-function toPlanningSteps(plan?: AgentChatResponseWire["plan"]): PlanningStepWire[] {
-  const steps = plan?.steps;
-  if (!Array.isArray(steps)) return [];
-  return steps.map((step, index) => ({
-    id: step.id || step.step_id || String(index + 1),
-    title: step.title || step.description || `步骤 ${index + 1}`,
-    description: step.description || undefined,
-    type: step.type || undefined,
-    tool: step.tool || undefined,
-    input: step.input || undefined,
-    expectedOutput: step.expected_output || undefined,
-    dependsOn: step.depends_on || [],
-    status: step.status === "completed" || step.status === "running" || step.status === "warning" ? step.status : "pending",
-  }));
-}
-
-function toPlanningPlan(plan?: AgentChatResponseWire["plan"]): PlanningPlanWire | null {
-  const steps = toPlanningSteps(plan);
-  const hasSummary = Boolean(plan?.visible_summary || plan?.summary || plan?.goal);
-  const hasClarification = Boolean(plan?.clarification_question) || Boolean(plan?.questions?.length) || Boolean(plan?.missing_info?.length);
-  const hasFinalOutput = Boolean(plan?.final_output?.format) || Boolean(plan?.final_output?.requirements?.length);
-  if (!plan || (!steps.length && !hasSummary && !hasClarification && !hasFinalOutput)) return null;
-  return {
-    goal: plan.goal || "",
-    intent: plan.intent || "",
-    taskComplexity: plan.task_complexity || "medium",
-    missingInfo: plan.missing_info || [],
-    needClarification: Boolean(plan.need_clarification),
-    questions: plan.questions || [],
-    assumptions: plan.assumptions || [],
-    clarificationNeeded: Boolean(plan.clarification_needed),
-    clarificationQuestion: plan.clarification_question || null,
-    summary: plan.visible_summary || plan.summary || "",
-    steps,
-    finalOutput: plan.final_output
-      ? {
-          format: plan.final_output.format || "",
-          requirements: plan.final_output.requirements || [],
-        }
-      : undefined,
-  };
-}
-
 function formatMessageTime(date = new Date()) {
   const hh = date.getHours().toString().padStart(2, "0");
   const mm = date.getMinutes().toString().padStart(2, "0");
@@ -519,29 +443,9 @@ function looksLikeInternalTraceMessage(content: string) {
   );
 }
 
-function planningMessageBody(plan: PlanningPlanWire) {
-  const clarificationLine =
-    plan.questions?.[0] ||
-    plan.clarificationQuestion ||
-    (plan.missingInfo?.length ? `待补充信息：${plan.missingInfo.join("、")}` : "");
-  const lines = ["任务理解与规划", plan.summary || plan.goal, clarificationLine].filter(Boolean);
-  const steps = plan.steps
-    .slice(0, 6)
-    .map((step, index) => `${index + 1}. ${step.title}${step.description ? `：${step.description}` : ""}`);
-  return [...lines, ...steps].join("\n");
-}
-
 function isClarificationResponse(response?: AgentChatResponseWire | null) {
   if (!response) return false;
-  const plan = response.plan;
-  return (
-    response.intent === "chat" &&
-    !response.artifact &&
-    (plan?.intent === "intent_clarification" ||
-      plan?.need_clarification === true ||
-      plan?.clarification_needed === true ||
-      plan?.final_output?.format === "clarification")
-  );
+  return response.intent === "chat" && !response.artifact && response.events?.some((event) => event.event === "clarification.requested");
 }
 
 function ragScoreLabel(score: number) {
@@ -1217,14 +1121,13 @@ function canonicalWorkflowSteps(kind: "ppt" | "docx" | "board" | "unknown"): Wor
 
 function mergeWorkflowSteps(
   base: WorkflowStep[],
-  live: PlanningStepWire[],
   kind: "ppt" | "docx" | "board" | "unknown",
   phase: string,
   artifactStatus?: string | null,
 ): WorkflowStep[] {
   const canonical = canonicalWorkflowSteps(kind);
-  const source = live.length ? live : canonical;
-  const byPosition = new Map((live.length ? live : base).map((step, index) => [String(index + 1), step.status]));
+  const source = canonical;
+  const byPosition = new Map(base.map((step, index) => [String(index + 1), step.status]));
   const normalizedStatus = (artifactStatus ?? "").toLowerCase();
   const terminalDone = normalizedStatus === "done" || normalizedStatus === "completed" || normalizedStatus === "已同步";
   const terminalFailed = normalizedStatus === "failed" || phase === "ERROR";
@@ -1246,15 +1149,8 @@ function mergeWorkflowSteps(
     }));
   }
 
-  const activeIndex = live.length
-    ? phase === "ANALYZING" || phase === "RETRIEVING"
-      ? 0
-      : phase === "GENERATING"
-        ? Math.min(1, withSourceStatus.length - 1)
-        : phase === "SYNCING"
-          ? withSourceStatus.length - 1
-          : -1
-    : phase === "ANALYZING"
+  const activeIndex =
+    phase === "ANALYZING"
       ? 0
       : phase === "RETRIEVING"
         ? 2
@@ -1366,7 +1262,6 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
   const docAutoSyncAbortRef = useRef<AbortController | null>(null);
   const docAutoSyncSeqRef = useRef(0);
   const [sending, setSending] = useState(false);
-  const [plannerEnabled, setPlannerEnabled] = useState(true);
   const isCanvasMode = data.layoutVariant === "canvas";
   const [canvasNodes, setCanvasNodes] = useState<DetailCanvasNode[]>(() => (isCanvasMode ? data.canvas.nodes : []));
   const [canvasActivities, setCanvasActivities] = useState<DetailActivity[]>(() =>
@@ -1600,18 +1495,8 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
   const workspaceExpanded = resourceTab !== null;
   const displayTab = resourceTab ?? activeTab;
   const mergedWorkflow = useMemo(
-    () => mergeWorkflowSteps(data.workflow, plannerEnabled ? agentSlice?.planningSteps ?? [] : [], resourceKind, phase, detailArtifact?.status),
-    [agentSlice?.planningSteps, data.workflow, detailArtifact?.status, phase, plannerEnabled, resourceKind],
-  );
-
-  const handlePlannerToggle = useCallback(
-    (nextEnabled: boolean) => {
-      setPlannerEnabled(nextEnabled);
-      if (!nextEnabled) {
-        useAgentRuntimeStore.getState().patchSession(data.id, { planningPlan: null, planningSteps: [] });
-      }
-    },
-    [data.id],
+    () => mergeWorkflowSteps(data.workflow, resourceKind, phase, detailArtifact?.status),
+    [data.workflow, detailArtifact?.status, phase, resourceKind],
   );
 
   useEffect(() => {
@@ -1785,7 +1670,7 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
           time: formatMessageTime(),
           body: "",
           avatar: "E",
-          helperText: plannerEnabled && !isExistingDocumentEdit ? "正在规划" : "正在处理",
+          helperText: "正在思考",
           sent: false,
         },
       ]);
@@ -1797,7 +1682,6 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
           chunk: string,
           options: {
             helperText?: string;
-            plannerCard?: PlanningPlanWire;
             sent?: boolean;
             replace?: boolean;
           } = {},
@@ -1815,7 +1699,6 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                   body: chunk,
                   avatar: "E",
                   helperText: options.helperText,
-                  plannerCard: options.plannerCard,
                   sent: options.sent,
                 },
               ];
@@ -1826,7 +1709,6 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                 ...message,
                 body: options.replace ? chunk || message.body : chunk ? `${message.body}${message.body ? "\n\n" : ""}${chunk}` : message.body,
                 helperText: options.helperText,
-                plannerCard: options.plannerCard ?? message.plannerCard,
                 sent: options.sent ?? message.sent,
               };
             });
@@ -1838,28 +1720,22 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
             store.patchSession(data.id, {
               phase: "ANALYZING",
               intent: "CHAT",
-              planningPlan: plannerEnabled ? toPlanningPlan(response.plan) : null,
-              planningSteps: [],
               lastError: null,
               isDocStreaming: false,
             });
-            updateStreamMessage(response.message || response.plan?.questions?.[0] || "请确认要执行的动作。", {
+            updateStreamMessage(response.message || "请确认要执行的动作。", {
               sent: true,
               replace: true,
             });
             return;
           }
           const nextArtifact = toDetailArtifact(response.artifact);
-          const planningPlan = plannerEnabled ? toPlanningPlan(response.plan) : null;
-          const planningSteps = planningPlan?.steps ?? [];
           if (nextArtifact) {
             setLocalArtifact(nextArtifact);
             setActiveTab(nextArtifact.kind === "board" ? "canvas" : "doc");
             store.patchSession(data.id, {
               phase: response.status === "failed" ? "ERROR" : response.status === "completed" ? "COMPLETED" : "GENERATING",
               intent: nextArtifact.kind === "ppt" ? "PPT" : nextArtifact.kind === "board" ? "CANVAS" : "DOC",
-              planningPlan,
-              planningSteps,
               lastError: response.error ?? nextArtifact.errorMessage ?? null,
               isDocStreaming: false,
               docMarkdownStream: "",
@@ -1868,8 +1744,6 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
             store.patchSession(data.id, {
               phase: response.status === "failed" ? "ERROR" : "COMPLETED",
               intent: "CHAT",
-              planningPlan,
-              planningSteps,
               lastError: response.error ?? null,
             });
           }
@@ -1897,7 +1771,7 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                   }
                 : undefined,
             context: { chat_history: chatHistory },
-            planning_enabled: isExistingDocumentEdit ? false : plannerEnabled,
+            planning_enabled: true,
           },
           (event: AgentChatStreamEvent) => {
             const payload = event.payload ?? {};
@@ -1906,7 +1780,7 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
             store.ingestEnvelope(data.id, event);
             if (event.event === "turn.started") {
               updateStreamMessage("", {
-                helperText: payload.planning_enabled !== false ? "正在规划" : "正在处理",
+                helperText: "正在思考",
                 replace: true,
               });
               return;
@@ -1972,7 +1846,7 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
         setSending(false);
       }
     },
-    [currentDocumentMarkdown, data.id, messages, plannerEnabled, resourceArtifact, resourceKind, setRuntimeSessionPatch],
+    [currentDocumentMarkdown, data.id, messages, resourceArtifact, resourceKind, setRuntimeSessionPatch],
   );
 
   const handleContextSelectionRun = useCallback(async () => {
@@ -1990,15 +1864,6 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
       const body = (await response.json().catch(() => null)) as { code?: number; data?: AgentChatResponseWire } | null;
       if (!response.ok || !body || body.code !== 0) {
         throw new Error("上下文提交失败");
-      }
-      const planningPlan = plannerEnabled ? toPlanningPlan(body.data?.plan) : null;
-      if (planningPlan) {
-        useAgentRuntimeStore.getState().patchSession(data.id, {
-          phase: "COMPLETED",
-          planningPlan,
-          planningSteps: planningPlan.steps,
-          lastError: null,
-        });
       }
       setMessages((prev) => [
         ...prev,
@@ -2019,7 +1884,7 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
     } finally {
       setContextSubmitting(false);
     }
-  }, [contextEnd, contextMessages.length, contextStart, data.id, plannerEnabled, setRuntimeSessionPatch]);
+  }, [contextEnd, contextMessages.length, contextStart, data.id, setRuntimeSessionPatch]);
 
   const handleContextSkipRun = useCallback(async () => {
     setContextSubmitting(true);
@@ -2034,7 +1899,6 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
       if (!response.ok || !body || body.code !== 0) {
         throw new Error("跳过上下文后生成失败");
       }
-      const finalPlanningPlan = plannerEnabled ? toPlanningPlan(body.data?.plan) : null;
       setMessages((prev) => [
         ...prev,
         {
@@ -2054,7 +1918,7 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
     } finally {
       setContextSubmitting(false);
     }
-  }, [data.id, plannerEnabled, setRuntimeSessionPatch]);
+  }, [data.id, setRuntimeSessionPatch]);
 
   function prependCanvasActivity(title: string, tone: DetailActivity["tone"]) {
     setCanvasActivities((prev) => [
@@ -2320,23 +2184,6 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                                 <p className="shrink-0 text-[10px] font-medium text-rose-600">生成失败：{lastErr}</p>
                               ) : (
                                 <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-                                  <button
-                                    type="button"
-                                    role="switch"
-                                    aria-checked={plannerEnabled}
-                                    onClick={() => handlePlannerToggle(!plannerEnabled)}
-                                    className={[
-                                      "inline-flex h-7 shrink-0 items-center gap-2 rounded-full border px-2 text-[10px] font-semibold transition-colors",
-                                      plannerEnabled
-                                        ? "border-blue-200 bg-blue-50 text-blue-700"
-                                        : "border-slate-200 bg-slate-50 text-slate-500",
-                                    ].join(" ")}
-                                  >
-                                    <span className={`relative h-3.5 w-6 rounded-full transition-colors ${plannerEnabled ? "bg-blue-600" : "bg-slate-300"}`} aria-hidden>
-                                      <span className={`absolute top-0.5 h-2.5 w-2.5 rounded-full bg-white transition-transform ${plannerEnabled ? "translate-x-3" : "translate-x-0.5"}`} />
-                                    </span>
-                                    任务理解与规划
-                                  </button>
                                   <StepperStatusLegend />
                                 </div>
                               )}
@@ -2892,16 +2739,18 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
                             </div>
                           </div>
                         </SectionCard>
-                        <SectionCard title="同步状态" action={<HeaderBadge tone="success">{data.syncOverview?.statusLabel}</HeaderBadge>}>
-                          <div className="space-y-2.5">
-                            {data.syncOverview?.items.map((item, syncIdx) => (
-                              <div key={`sync-${syncIdx}-${item.slice(0, 40)}`} className="flex items-center gap-3 text-[13px] text-slate-600">
-                                <SmallIcon type="sync" tone="blue" />
-                                {item}
-                              </div>
-                            ))}
-                          </div>
-                        </SectionCard>
+                        {data.syncOverview ? (
+                          <SectionCard title="同步状态" action={<HeaderBadge tone="success">{data.syncOverview.statusLabel}</HeaderBadge>}>
+                            <div className="space-y-2.5">
+                              {data.syncOverview.items.map((item, syncIdx) => (
+                                <div key={`sync-${syncIdx}-${item.slice(0, 40)}`} className="flex items-center gap-3 text-[13px] text-slate-600">
+                                  <SmallIcon type="sync" tone="blue" />
+                                  {item}
+                                </div>
+                              ))}
+                            </div>
+                          </SectionCard>
+                        ) : null}
                         <SectionCard title="活动记录">
                           <div className="space-y-2.5">
                             {data.activities?.map((item) => (

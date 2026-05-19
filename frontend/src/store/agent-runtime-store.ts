@@ -2,41 +2,10 @@ import { create } from "zustand";
 
 import type { AgentChatStreamEvent } from "@/lib/agent/sse-stream";
 import type { AgentPhase } from "@/types/eko-realtime";
-import type { WorkflowStatus } from "@/types/workspace";
 
 export type { AgentPhase };
 
 export type AgentIntent = "CHAT" | "DOC" | "PPT" | "CANVAS" | null;
-
-export type PlanningStepWire = {
-  id: string;
-  title: string;
-  description?: string;
-  type?: string;
-  tool?: string;
-  input?: Record<string, unknown>;
-  expectedOutput?: string;
-  dependsOn?: string[];
-  status: WorkflowStatus;
-};
-
-export type PlanningPlanWire = {
-  goal: string;
-  intent: string;
-  taskComplexity: "simple" | "medium" | "complex" | string;
-  missingInfo: string[];
-  needClarification: boolean;
-  questions: string[];
-  assumptions: string[];
-  clarificationNeeded?: boolean;
-  clarificationQuestion?: string | null;
-  summary: string;
-  steps: PlanningStepWire[];
-  finalOutput?: {
-    format: string;
-    requirements: string[];
-  };
-};
 
 export type RetrievedSourceWire = {
   sourceId: string;
@@ -63,8 +32,6 @@ type SessionAgentSlice = {
   phase: AgentPhase;
   intent: AgentIntent;
   progress: number;
-  planningPlan: PlanningPlanWire | null;
-  planningSteps: PlanningStepWire[];
   retrievedSources: RetrievedSourceWire[];
   contextMessages: ContextMessageWire[];
   docMarkdownStream: string;
@@ -75,14 +42,13 @@ type SessionAgentSlice = {
   lastServerDocumentVersion: number;
   documentConflict: boolean;
   lastError: string | null;
+  useMockFallback: boolean;
 };
 
 const defaultSlice = (): SessionAgentSlice => ({
   phase: "IDLE",
   intent: null,
   progress: 0,
-  planningPlan: null,
-  planningSteps: [],
   retrievedSources: [],
   contextMessages: [],
   docMarkdownStream: "",
@@ -93,6 +59,7 @@ const defaultSlice = (): SessionAgentSlice => ({
   lastServerDocumentVersion: 0,
   documentConflict: false,
   lastError: null,
+  useMockFallback: false,
 });
 
 type AgentRuntimeStore = {
@@ -114,90 +81,6 @@ const pendingDocumentStreams = new Map<
     timer: ReturnType<typeof setTimeout>;
   }
 >();
-
-function coerceWorkflowStatus(s: string | undefined): WorkflowStatus {
-  if (s === "completed" || s === "running" || s === "pending" || s === "warning") return s;
-  return "pending";
-}
-
-function parsePlanningPayload(payload: Record<string, unknown>): PlanningPlanWire | null {
-  const steps = payload.steps;
-  const parsedSteps = Array.isArray(steps)
-    ? steps.map((step, index) => {
-    if (step && typeof step === "object" && "title" in step) {
-      const o = step as {
-        id?: string;
-        step_id?: string;
-        title?: string;
-        name?: string;
-        description?: string;
-        type?: string;
-        tool?: string | null;
-        input?: Record<string, unknown>;
-        inputs?: Record<string, unknown>;
-        expected_output?: string;
-        expectedOutput?: string;
-        depends_on?: string[];
-        dependsOn?: string[];
-        status?: string;
-      };
-      const title = typeof o.title === "string" ? o.title : typeof o.name === "string" ? o.name : `步骤 ${index + 1}`;
-      const id = typeof o.id === "string" ? o.id : typeof o.step_id === "string" ? o.step_id : String(index + 1);
-      return {
-        id,
-        title,
-        description: typeof o.description === "string" ? o.description : undefined,
-        type: typeof o.type === "string" ? o.type : undefined,
-        tool: typeof o.tool === "string" ? o.tool : undefined,
-        input: o.input ?? o.inputs,
-        expectedOutput:
-          typeof o.expected_output === "string"
-            ? o.expected_output
-            : typeof o.expectedOutput === "string"
-              ? o.expectedOutput
-              : undefined,
-        dependsOn: Array.isArray(o.depends_on) ? o.depends_on : Array.isArray(o.dependsOn) ? o.dependsOn : [],
-        status: coerceWorkflowStatus(o.status),
-      };
-    }
-    return {
-      id: String(index + 1),
-      title: String(step),
-      status: "pending" as const,
-    };
-  })
-    : [];
-  const finalOutput = payload.final_output;
-  const hasSummary = typeof payload.goal === "string" || typeof payload.summary === "string";
-  const hasClarification =
-    Array.isArray(payload.missing_info) ||
-    Array.isArray(payload.questions) ||
-    typeof payload.clarification_question === "string";
-  const hasFinalOutput = finalOutput && typeof finalOutput === "object";
-  if (!parsedSteps.length && !hasSummary && !hasClarification && !hasFinalOutput) return null;
-  return {
-    goal: typeof payload.goal === "string" ? payload.goal : "",
-    intent: typeof payload.intent === "string" ? payload.intent : "",
-    taskComplexity: typeof payload.task_complexity === "string" ? payload.task_complexity : "medium",
-    missingInfo: Array.isArray(payload.missing_info) ? payload.missing_info.filter((item): item is string => typeof item === "string") : [],
-    needClarification: Boolean(payload.need_clarification),
-    questions: Array.isArray(payload.questions) ? payload.questions.filter((item): item is string => typeof item === "string") : [],
-    assumptions: Array.isArray(payload.assumptions) ? payload.assumptions.filter((item): item is string => typeof item === "string") : [],
-    clarificationNeeded: Boolean(payload.clarification_needed),
-    clarificationQuestion: typeof payload.clarification_question === "string" ? payload.clarification_question : null,
-    summary: typeof payload.summary === "string" ? payload.summary : "",
-    steps: parsedSteps,
-    finalOutput:
-      finalOutput && typeof finalOutput === "object"
-        ? {
-            format: typeof (finalOutput as { format?: unknown }).format === "string" ? (finalOutput as { format: string }).format : "",
-            requirements: Array.isArray((finalOutput as { requirements?: unknown }).requirements)
-              ? ((finalOutput as { requirements: unknown[] }).requirements.filter((item): item is string => typeof item === "string"))
-              : [],
-          }
-        : undefined,
-  };
-}
 
 function parseRetrievedSources(payload: Record<string, unknown>): RetrievedSourceWire[] {
   const sources = payload.sources;
@@ -235,10 +118,6 @@ function inferAgentEventChannel(event: Pick<AgentChatStreamEvent, "event" | "cha
     case "source.bitable.empty":
     case "source.bitable.failed":
       return "sources";
-    case "plan.created":
-    case "plan.summary":
-    case "plan.step":
-      return "plan";
     case "result.created":
       return "chat";
     case "artifact.archived":
@@ -471,51 +350,9 @@ export const useAgentRuntimeStore = create<AgentRuntimeStore>((set, get) => ({
         return;
       }
 
-      if (eventName === "plan.created" && channel === "plan") {
-        const planPayload = payload.plan && typeof payload.plan === "object" ? (payload.plan as Record<string, unknown>) : payload;
-        const planningPlan = parsePlanningPayload(planPayload);
-        get().patchSession(sid, {
-          phase: "RETRIEVING",
-          planningPlan,
-          planningSteps: planningPlan?.steps ?? [],
-        });
-        return;
-      }
-
-      if (eventName === "plan.step" && channel === "plan") {
-        const stepPayload = payload.step && typeof payload.step === "object" ? (payload.step as Record<string, unknown>) : null;
-        if (stepPayload) {
-          const parsed = parsePlanningPayload({ steps: [stepPayload] });
-          const step = parsed?.steps[0];
-          if (step) {
-            get().patchSession(sid, {
-              phase: "RETRIEVING",
-              planningSteps: [...slice.planningSteps.filter((candidate) => candidate.id !== step.id), step],
-            });
-          }
-        }
-        return;
-      }
-
       if (eventName === "clarification.requested") {
-        const questions = Array.isArray(payload.questions) ? payload.questions.filter((item): item is string => typeof item === "string") : [];
-        const planningPlan = parsePlanningPayload({
-          goal: "确认用户意图",
-          intent: "intent_clarification",
-          missing_info: ["intent"],
-          need_clarification: true,
-          clarification_needed: true,
-          clarification_question: typeof body.message === "string" ? body.message : questions[0] ?? "请确认要执行的动作。",
-          questions,
-          assumptions: [],
-          summary: typeof body.message === "string" ? body.message : questions[0] ?? "请确认要执行的动作。",
-          steps: [],
-          final_output: { format: "clarification", requirements: [] },
-        });
         get().patchSession(sid, {
           phase: "ANALYZING",
-          planningPlan,
-          planningSteps: [],
           isDocStreaming: false,
           lastError: null,
         });
@@ -621,16 +458,8 @@ export const useAgentRuntimeStore = create<AgentRuntimeStore>((set, get) => ({
         break;
       case "CONTEXT_LOADED":
         get().patchSession(sid, {
-          phase: payload.status === "等待选择" ? "ANALYZING" : slice.phase,
+          phase: slice.phase,
           contextMessages: parseContextMessages(payload.context_messages),
-        });
-        break;
-      case "AGENT_PLANNING":
-        const planningPlan = parsePlanningPayload(payload);
-        get().patchSession(sid, {
-          phase: "RETRIEVING",
-          planningPlan,
-          planningSteps: planningPlan?.steps ?? [],
         });
         break;
       case "CANVAS_UPDATE":

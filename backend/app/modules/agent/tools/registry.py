@@ -12,7 +12,7 @@ class ToolSpec:
 
 
 class AgentToolRegistry:
-    """Enterprise tool catalog passed to the planner and runtime."""
+    """Enterprise tool catalog used by the ReAct runtime."""
 
     def __init__(self) -> None:
         self._tools: dict[str, ToolSpec] = {}

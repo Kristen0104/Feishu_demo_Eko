@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.modules.agent.schemas import AgentEventV1, AgentTaskPlan, AgentTraceEvent
+from app.modules.agent.schemas import AgentEventV1, AgentTraceEvent
 
 EVENT_CHANNEL_MAP: dict[str, tuple[str, str]] = {
     "turn.started": ("status", "user"),
@@ -14,9 +14,6 @@ EVENT_CHANNEL_MAP: dict[str, tuple[str, str]] = {
     "source.bitable.completed": ("sources", "detail"),
     "source.bitable.empty": ("sources", "detail"),
     "source.bitable.failed": ("sources", "detail"),
-    "plan.created": ("plan", "detail"),
-    "plan.summary": ("plan", "detail"),
-    "plan.step": ("plan", "detail"),
     "tool.selected": ("log", "debug"),
     "tool.started": ("status", "detail"),
     "tool.completed": ("log", "debug"),
@@ -65,7 +62,6 @@ class AgentEventProtocol:
             "source_bitable_failed": "source.bitable.failed",
             "artifact_archived": "artifact.archived",
             "artifact_archive_failed": "artifact.archive_failed",
-            "plan_created": "plan.created",
             "tool_selected": "tool.selected",
             "tool_started": "tool.started",
             "tool_completed": "tool.completed",
@@ -113,53 +109,12 @@ class AgentEventProtocol:
         ).model_dump()
 
     @staticmethod
-    def plan(plan: AgentTaskPlan, message: str | None = None) -> dict[str, Any]:
-        return AgentEventProtocol._event(
-            event="plan.created",
-            status="completed",
-            message=message or "",
-            payload={"plan": plan.model_dump()},
-        ).model_dump()
-
-    @staticmethod
-    def plan_progress(plan: AgentTaskPlan) -> list[dict[str, Any]]:
-        events: list[dict[str, Any]] = []
-        if plan.summary:
-            events.append(
-                AgentEventProtocol._event(
-                    event="plan.summary",
-                    status="completed",
-                    message=plan.summary,
-                    payload={"summary": plan.summary},
-                ).model_dump()
-            )
-        for index, step in enumerate(plan.steps, start=1):
-            events.append(
-                AgentEventProtocol._event(
-                    event="plan.step",
-                    status="completed",
-                    message=f"{index}. {step.title}",
-                    payload={"index": index, "step": step.model_dump()},
-                ).model_dump()
-            )
-        return events
-
-    @staticmethod
     def tool_started(intent: str, tool: str, message: str) -> dict[str, Any]:
         return AgentEventProtocol._event(
             event="tool.started",
             status="running",
             message=message,
             payload={"intent": intent, "tool": tool},
-        ).model_dump()
-
-    @staticmethod
-    def clarification(intent: str, plan: AgentTaskPlan, message: str) -> dict[str, Any]:
-        return AgentEventProtocol._event(
-            event="clarification.requested",
-            status="blocked",
-            message=message,
-            payload={"intent": intent, "plan": plan.model_dump(), "questions": plan.questions},
         ).model_dump()
 
     @staticmethod

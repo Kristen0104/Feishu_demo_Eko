@@ -1,43 +1,39 @@
 from __future__ import annotations
 
-import importlib
 from typing import Any
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import patch
 
-from app.modules.agent.schemas import AgentChatRequest, AgentIntent, AgentPlanFinalOutput, AgentTaskPlan
-from app.modules.agent.service import AgentService
+from app.modules.agent.schemas import AgentChatRequest
 from app.modules.feishu.events import FeishuEventProcessor
 from app.modules.sync.manager import SyncConnectionManager
-from app.modules.sync.schemas import SyncContextSelectionRequest
 from app.modules.sync.service import SyncService
 
-sync_router = importlib.import_module("app.modules.sync.router")
-
-
-class _RouterStub:
-    async def classify_chat_intent(self, _instruction: str) -> AgentIntent:
-        return AgentIntent.BOARD
-
-
-class _PlanningAgentStub:
+class _AgentServiceStub:
     def __init__(self) -> None:
-        self._router = _RouterStub()
         self.chat_requests: list[AgentChatRequest] = []
-
-    async def _create_plan_with_timeout(self, request: AgentChatRequest, intent: AgentIntent) -> AgentTaskPlan:
-        return AgentTaskPlan(
-            goal=request.message,
-            intent=f"{intent.value}_generation",
-            summary="需要用户选择上下文",
-            visible_summary="需要用户选择上下文",
-            requires_context_selection=True,
-            tool_candidates=["board"],
-            final_output=AgentPlanFinalOutput(format="board", requirements=[]),
-        )
 
     async def chat(self, request: AgentChatRequest) -> None:
         self.chat_requests.append(request)
+
+    async def chat_stream_events(self, request: AgentChatRequest):
+        self.chat_requests.append(request)
+        yield {
+            "event": "result.created",
+            "status": "completed",
+            "channel": "artifact",
+            "visibility": "user",
+            "message": "飞书画板任务已完成。",
+            "payload": {
+                "response": {
+                    "session_id": request.session_id,
+                    "intent": "board",
+                    "status": "completed",
+                    "message": "飞书画板任务已完成。",
+                    "artifact": {"kind": "board", "sharing_url": "https://example.feishu.cn/docx/doc_board"},
+                }
+            },
+        }
 
 
 class _FeishuServiceStub:
@@ -146,10 +142,10 @@ class _ProcessorForFullFlow(FeishuEventProcessor):
         self,
         *,
         feishu_service: _FeishuServiceStub,
-        planning_agent: _PlanningAgentStub,
+        agent_service: _AgentServiceStub,
         sync_service: SyncService,
     ) -> None:
-        super().__init__(feishu_service=feishu_service, agent_service=planning_agent, sync_service=sync_service)
+        super().__init__(feishu_service=feishu_service, agent_service=agent_service, sync_service=sync_service)
         self.scheduled_bootstraps: list[dict[str, Any]] = []
         self.scheduled_agent_requests: list[AgentChatRequest] = []
 
@@ -189,13 +185,13 @@ def _mentioned_group_payload(text: str) -> dict[str, object]:
 
 
 class FeishuMentionContextSelectionFullFlowTest(IsolatedAsyncioTestCase):
-    async def test_mentioned_board_request_waits_for_context_selection_then_generates_artifact(self) -> None:
+    async def test_mentioned_board_request_bootstraps_context_then_runs_new_agent_route(self) -> None:
         sync_service = SyncService(SyncConnectionManager())
         feishu_service = _FeishuServiceStub()
-        planning_agent = _PlanningAgentStub()
+        agent_service = _AgentServiceStub()
         processor = _ProcessorForFullFlow(
             feishu_service=feishu_service,
-            planning_agent=planning_agent,
+            agent_service=agent_service,
             sync_service=sync_service,
         )
 
@@ -207,73 +203,34 @@ class FeishuMentionContextSelectionFullFlowTest(IsolatedAsyncioTestCase):
         self.assertEqual(len(feishu_service.sent_messages), 1)
         self.assertEqual(feishu_service.sent_messages[0][0], "oc_full")
         self.assertIn(f"http://127.0.0.1:3002/sessions/{session_id}", feishu_service.sent_messages[0][1])
-        self.assertEqual(processor.scheduled_agent_requests, [])
         self.assertEqual(len(processor.scheduled_bootstraps), 1)
 
-        waiting_session = await sync_service.get_session(session_id)
-        self.assertIsNotNone(waiting_session)
-        assert waiting_session is not None
-        self.assertEqual(waiting_session.status, "等待选择")
-        self.assertEqual(waiting_session.intent, "board")
-        self.assertEqual(waiting_session.context_messages, [])
+        opened_session = await sync_service.get_session(session_id)
+        self.assertIsNotNone(opened_session)
+        assert opened_session is not None
+        self.assertEqual(opened_session.status, "进行中")
+        self.assertIsNone(opened_session.intent)
 
         await processor._bootstrap_new_session(**processor.scheduled_bootstraps[0])
 
         loaded_session = await sync_service.get_session(session_id)
         self.assertIsNotNone(loaded_session)
         assert loaded_session is not None
-        self.assertEqual(loaded_session.status, "等待选择")
+        self.assertEqual(loaded_session.status, "进行中")
         self.assertEqual(loaded_session.context_size, 3)
         self.assertEqual([message.content for message in loaded_session.context_messages], [
             "销售 A：华东 120 万",
             "销售 B：华南 80 万",
             "销售 C：华北 60 万",
         ])
-        self.assertEqual(processor.scheduled_agent_requests, [])
-
-        canvas_service = _CanvasServiceStub()
-        generation_agent = AgentService(
-            llm_client=object(),  # type: ignore[arg-type]
-            feishu_service=feishu_service,  # type: ignore[arg-type]
-            document_service=_DocumentServiceStub(),  # type: ignore[arg-type]
-            canvas_service=canvas_service,  # type: ignore[arg-type]
-            aippt_service=_AIPPTServiceStub(),  # type: ignore[arg-type]
-            sync_service=sync_service,
-        )
-        generation_agent._schedule_ppt_job = lambda _request, _job_id: None  # type: ignore[method-assign]
-
-        with (
-            patch("app.core.llm_client.get_llm_client", return_value=object()),
-            patch("app.modules.feishu.dependencies.get_feishu_service", return_value=feishu_service),
-            patch("app.modules.document.dependencies.get_document_service", return_value=_DocumentServiceStub()),
-            patch("app.modules.aippt.dependencies.get_aippt_service", return_value=_AIPPTServiceStub()),
-            patch("app.modules.canvas.dependencies.get_canvas_service", return_value=canvas_service),
-            patch("app.modules.agent.service.AgentService", return_value=generation_agent),
-            patch("app.modules.agent.schemas.AgentChatRequest") as chat_request_cls,
-        ):
-            def _request_with_planning_disabled(**kwargs: Any) -> AgentChatRequest:
-                return AgentChatRequest(**kwargs, planning_enabled=False)
-
-            chat_request_cls.side_effect = _request_with_planning_disabled
-            response = await sync_router.select_context_and_run(
-                session_id,
-                SyncContextSelectionRequest(start_index=1, end_index=2),
-                sync_service,
-            )
-
-        payload = response["data"]
-        self.assertEqual(payload["intent"], "board")
-        self.assertEqual(payload["status"], "completed")
-        self.assertEqual(payload["artifact"]["kind"], "board")
-        self.assertEqual(payload["artifact"]["sharing_url"], "https://example.feishu.cn/docx/doc_board")
-        self.assertEqual(len(canvas_service.requests), 1)
-        self.assertIn("销售 B：华南 80 万", canvas_service.requests[0].message)
-        self.assertIn("销售 C：华北 60 万", canvas_service.requests[0].message)
-        self.assertNotIn("销售 A：华东 120 万", canvas_service.requests[0].message)
-
-        completed_session = await sync_service.get_session(session_id)
-        self.assertIsNotNone(completed_session)
-        assert completed_session is not None
-        self.assertEqual(completed_session.status, "completed")
-        self.assertEqual(completed_session.intent, "board")
-        self.assertEqual(completed_session.artifact["kind"], "board")
+        self.assertEqual([message.content for message in loaded_session.selected_context_messages], [
+            "销售 A：华东 120 万",
+            "销售 B：华南 80 万",
+            "销售 C：华北 60 万",
+        ])
+        self.assertEqual(agent_service.chat_requests, [])
+        self.assertEqual(len(processor.scheduled_agent_requests), 1)
+        request = processor.scheduled_agent_requests[0]
+        self.assertEqual(request.session_id, session_id)
+        self.assertEqual(request.message, "根据聊天记录生成销售饼图画板")
+        self.assertIsNone(request.context)

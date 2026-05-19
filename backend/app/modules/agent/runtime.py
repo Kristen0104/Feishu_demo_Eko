@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 import logging
-import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Any
 
 from langchain_core.tools import StructuredTool
 from langgraph.graph import END, StateGraph
 
-from app.modules.agent.planner import PlannerAgent
 from app.modules.agent.rag import AgentRAGRetriever
 from app.modules.agent.schemas import AgentChatArtifact, AgentChatRequest, AgentIntent, IntentRouteResult
 from app.modules.agent.state import AgentGraphState, AgentTurnState
@@ -23,17 +21,13 @@ class AgentRuntime:
     def __init__(
         self,
         *,
-        planner: PlannerAgent,
         retriever: AgentRAGRetriever | None = None,
         tool_registry: AgentToolRegistry | None = None,
         tool_handlers: dict[str, Callable[..., Awaitable[Any]]] | None = None,
-        planner_timeout_seconds: float = 6.0,
     ) -> None:
-        self._planner = planner
         self._retriever = retriever or AgentRAGRetriever()
         self._tool_registry = tool_registry or AgentToolRegistry()
         self._tools = self._build_langchain_tools(tool_handlers or {})
-        self._planner_timeout_seconds = planner_timeout_seconds
         self._graph = self._build_graph()
 
     async def prepare_turn(
@@ -67,14 +61,12 @@ class AgentRuntime:
         graph.add_node("intent_route", self._intent_route_node)
         graph.add_node("clarification_gate", self._clarification_gate_node)
         graph.add_node("retrieval", self._retrieval_node)
-        graph.add_node("planner", self._planner_node)
         graph.add_node("tool_execute", self._tool_execute_node)
         graph.set_entry_point("context")
         graph.add_edge("context", "intent_route")
         graph.add_edge("intent_route", "clarification_gate")
         graph.add_conditional_edges("clarification_gate", self._route_after_clarification, {"retrieval": "retrieval", "end": END})
-        graph.add_edge("retrieval", "planner")
-        graph.add_conditional_edges("planner", self._route_after_planner, {"tool_execute": "tool_execute", "end": END})
+        graph.add_conditional_edges("retrieval", self._route_after_retrieval, {"tool_execute": "tool_execute", "end": END})
         graph.add_edge("tool_execute", END)
         return graph.compile()
 
@@ -135,56 +127,49 @@ class AgentRuntime:
 
     async def _tool_execute_node(self, state: AgentGraphState) -> AgentGraphState:
         turn = state["turn"]
-        if turn.plan is None:
+        tool_name = self._tool_for_turn(turn)
+        if tool_name is None:
             return {"turn": turn}
 
-        step = next((candidate for candidate in turn.plan.steps if candidate.tool in self._tools), None)
-        if step is None or step.tool is None:
-            return {"turn": turn}
-
-        turn.selected_tool = step.tool
+        turn.selected_tool = tool_name
         turn.add_event(
             "tool_selected",
-            f"已根据计划选择工具：{step.tool}。",
-            data={"tool": step.tool, "step": step.model_dump()},
+            "",
+            data={"tool": tool_name},
         )
-        tool = self._tools[step.tool]
-        payload = dict(step.input)
+        tool = self._tools[tool_name]
+        payload: dict[str, Any] = {}
         if "instruction" not in payload:
             payload["instruction"] = turn.user_message
         payload.setdefault("session_id", turn.session_id)
-        if step.tool in {"docx", "board"} and turn.request.context and turn.request.context.chat_history:
+        if tool_name in {"docx", "board"} and turn.request.context and turn.request.context.chat_history:
             payload.setdefault(
                 "chat_history",
                 [message.model_dump() for message in turn.request.context.chat_history],
             )
         if turn.retrieved_context:
             payload.setdefault("retrieved_context", [chunk.model_dump() for chunk in turn.retrieved_context])
-        if step.tool == "bitable_search":
+        if tool_name == "bitable_search":
             payload.setdefault("query", turn.user_message)
-        if step.tool == "bitable_schema":
+        if tool_name == "bitable_schema":
             payload.setdefault("workspace_id", "Feishu_demo_Eko")
-        if step.tool in {"bitable_schema", "bitable_search", "bitable_archive"}:
+        if tool_name in {"bitable_schema", "bitable_search", "bitable_archive"}:
             payload.setdefault("created_by", turn.user_id)
         if turn.request.sharing_url:
             payload.setdefault("sharing_url", turn.request.sharing_url)
         if turn.current_artifact is not None and turn.current_artifact.sharing_url:
             payload.setdefault("sharing_url", turn.current_artifact.sharing_url)
-        turn.add_event("tool_started", f"开始调用工具：{step.tool}。", status="in_progress", data={"tool": step.tool, "input": payload})
+        turn.add_event("tool_started", "", status="in_progress", data={"tool": tool_name, "input": payload})
         result = await tool.ainvoke(payload)
-        turn.tool_results.append({"tool": step.tool, "result": result})
-        step.status = "completed"
-        turn.add_event("tool_completed", f"工具 {step.tool} 调用完成。", data={"tool": step.tool, "result": result})
+        turn.tool_results.append({"tool": tool_name, "result": result})
+        turn.add_event("tool_completed", "", data={"tool": tool_name, "result": result})
         return {"turn": turn}
 
-    def _route_after_planner(self, state: AgentGraphState) -> str:
+    def _route_after_retrieval(self, state: AgentGraphState) -> str:
         turn = state["turn"]
-        if turn.plan is None:
-            return "end"
         if not turn.execute_tools:
             return "end"
-        has_executable_tool = any(step.tool in self._tools for step in turn.plan.steps if step.tool)
-        return "tool_execute" if has_executable_tool else "end"
+        return "tool_execute" if self._tool_for_turn(turn) is not None else "end"
 
     async def _retrieval_node(self, state: AgentGraphState) -> AgentGraphState:
         turn = state["turn"]
@@ -192,42 +177,14 @@ class AgentRuntime:
         turn.retrieved_context = chunks
         return {"turn": turn}
 
-    async def _planner_node(self, state: AgentGraphState) -> AgentGraphState:
-        turn = state["turn"]
-        context = turn.request.context
-        try:
-            if turn.request.planning_enabled:
-                turn.plan = await asyncio.wait_for(
-                    self._planner.create_plan(
-                        turn.user_message,
-                        routed_intent=turn.routed_intent,
-                        context=context,
-                        retrieved_context=turn.retrieved_context,
-                        available_tools=self._tool_registry.list_specs(),
-                    ),
-                    timeout=self._planner_timeout_seconds,
-                )
-                if not turn.plan.tool_candidates:
-                    turn.plan.tool_candidates = self._default_tool_candidates(turn.routed_intent)
-                if not turn.plan.visible_summary:
-                    turn.plan.visible_summary = turn.plan.summary
-                turn.add_event(
-                    "plan_created",
-                    turn.plan.visible_summary or turn.plan.summary,
-                    data={"plan": turn.plan.model_dump()},
-                )
-            else:
-                turn.add_event("plan_skipped", "本次请求关闭了规划，直接进入执行。")
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("AgentRuntime planner failed session=%s: %s", turn.session_id, exc)
-            turn.errors.append(str(exc))
-            turn.plan = self._planner._fallback_plan(turn.user_message, turn.routed_intent)
-            turn.add_event(
-                "plan_created",
-                turn.plan.visible_summary or turn.plan.summary,
-                data={"plan": turn.plan.model_dump(), "fallback": True},
-            )
-        return {"turn": turn}
+    def _tool_for_turn(self, turn: AgentTurnState) -> str | None:
+        route = turn.route_result
+        candidate = route.primary_tool if route is not None else None
+        if candidate in self._tools:
+            return candidate
+        if turn.routed_intent in {AgentIntent.DOCX, AgentIntent.PPT, AgentIntent.BOARD} and turn.routed_intent.value in self._tools:
+            return turn.routed_intent.value
+        return None
 
     def _default_tool_candidates(self, intent: AgentIntent) -> list[str]:
         if intent == AgentIntent.DOCX:

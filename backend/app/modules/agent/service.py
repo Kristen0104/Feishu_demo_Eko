@@ -17,12 +17,9 @@ from app.modules.agent.schemas import (
     AgentChatResponse,
     AgentContext,
     AgentIntent,
-    AgentPlanFinalOutput,
-    AgentPlanStep,
     AgentRequest,
     AgentResponse,
     AgentStatus,
-    AgentTaskPlan,
     AgentTraceEvent,
     BitableRecord,
     ChatMessage,
@@ -35,7 +32,6 @@ from app.modules.agent.schemas import (
     SyncDocumentResponse,
 )
 from app.modules.agent.context import AgentContextAssembler
-from app.modules.agent.planner import PlannerAgent
 from app.modules.agent.events import AgentEventProtocol
 from app.modules.agent.rag import AgentRAGRetriever
 from app.modules.agent.runtime import AgentRuntime
@@ -812,7 +808,6 @@ class AgentService:
         bitable_service: BitableService | None = None,
     ) -> None:
         self._router = RouterAgent(llm_client)
-        self._planner = PlannerAgent(llm_client)
         self._collector = CollectorSubagent(feishu_service._client)
         self._writer = WriterSubagent(llm_client)
         self._sync = SyncSubagent(feishu_service)
@@ -826,7 +821,6 @@ class AgentService:
         self._bitable_service = bitable_service
         self._context_assembler = AgentContextAssembler()
         self._runtime = AgentRuntime(
-            planner=self._planner,
             retriever=AgentRAGRetriever(rag_service=rag_service, bitable_service=bitable_service),
             tool_handlers={
                 "docx": self._runtime_docx_tool,
@@ -1019,7 +1013,7 @@ class AgentService:
 
         selected_intent = self._intent_from_clarification_reply(request.message)
         if selected_intent is None:
-            return request
+            return request.model_copy(update={"forced_intent": "chat", "sender": {**(request.sender or {}), "pending_clarification": True}})
         return request.model_copy(
             update={
                 "message": original,
@@ -1041,6 +1035,34 @@ class AgentService:
             return AgentIntent.BOARD
         return None
 
+    async def _pending_clarification_response(self, request: AgentChatRequest) -> AgentChatResponse | None:
+        if not request.sender or request.sender.get("pending_clarification") is not True:
+            return None
+        if self._sync_service is None or not hasattr(self._sync_service, "get_session"):
+            return None
+        try:
+            session = await self._sync_service.get_session(request.session_id)
+        except Exception:  # noqa: BLE001
+            return None
+        messages = getattr(session, "messages", None)
+        if not isinstance(messages, list):
+            return None
+
+        for message in reversed(messages):
+            payload = message.model_dump() if hasattr(message, "model_dump") else message
+            if not isinstance(payload, dict):
+                continue
+            role = str(payload.get("role") or "").lower()
+            content = str(payload.get("content") or "").strip()
+            if role in {"assistant", "eko", "bot", "system"} and content:
+                return AgentChatResponse(
+                    session_id=request.session_id,
+                    intent=AgentIntent.CHAT.value,
+                    status="completed",
+                    message=content,
+                )
+        return None
+
     async def _echo_feishu_chat_reply_if_needed(
         self,
         request: AgentChatRequest,
@@ -1056,6 +1078,9 @@ class AgentService:
             return
         session = await self._sync_service.get_session(request.session_id)
         if session is None:
+            return
+        if request.sender and request.sender.get("pending_clarification") is True:
+            logger.info("Skip Feishu chat echo because session is waiting for clarification selection session=%s", request.session_id)
             return
         if getattr(session, "source", None) != "feishu":
             return
@@ -1085,30 +1110,9 @@ class AgentService:
 
     def _should_suppress_feishu_chat_echo(self, request: AgentChatRequest, session: Any) -> bool:
         session_intent = str(getattr(session, "intent", "") or "").strip().lower()
-        session_status = str(getattr(session, "status", "") or "").strip()
         if request.forced_intent == "board" or session_intent == AgentIntent.BOARD.value:
             return True
-        if session_status == "等待选择":
-            return True
         return self._router._tool_intent_has_explicit_user_action(request.message, AgentIntent.BOARD)
-
-    async def _create_plan_with_timeout(
-        self,
-        request: AgentChatRequest,
-        intent: AgentIntent,
-    ) -> AgentTaskPlan:
-        try:
-            return await asyncio.wait_for(
-                self._planner.create_plan(
-                    request.message,
-                    routed_intent=intent,
-                    context=request.context,
-                ),
-                timeout=6.0,
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Planner timed out or failed session=%s, fallback plan used: %s", request.session_id, exc)
-            return self._planner._fallback_plan(request.message, intent)
 
     async def _prepare_agent_turn(
         self,
@@ -1126,15 +1130,6 @@ class AgentService:
             route_result=route_result,
             execute_tools=execute_tools,
         )
-
-    def _replace_plan_trace(self, trace_events: list[Any], plan: AgentTaskPlan | None) -> None:
-        if plan is None:
-            return
-        for event in reversed(trace_events):
-            if getattr(event, "type", None) == "plan_created":
-                event.message = plan.visible_summary or plan.summary
-                event.data = {"plan": plan.model_dump()}
-                return
 
     def _runtime_tool_result(self, runtime_turn: Any, tool_name: str) -> dict[str, Any] | None:
         for item in getattr(runtime_turn, "tool_results", []):
@@ -1154,27 +1149,11 @@ class AgentService:
             return None
         route = getattr(runtime_turn, "route_result", None)
         question = getattr(route, "clarification_question", None) or "请确认你希望我执行哪种动作。"
-        plan = AgentTaskPlan(
-            goal="确认用户要执行的动作",
-            intent="intent_clarification",
-            task_complexity="simple",
-            missing_info=["intent"],
-            need_clarification=True,
-            clarification_needed=True,
-            questions=[question],
-            assumptions=[],
-            summary=question,
-            visible_summary=question,
-            tool_candidates=[],
-            steps=[],
-            final_output=AgentPlanFinalOutput(format="clarification", requirements=["等待用户确认意图后继续执行"]),
-        )
         return AgentChatResponse(
             session_id=request.session_id,
             intent=AgentIntent.CHAT.value,
             status="completed",
             message=question,
-            plan=plan,
             events=self._events_from_traces(getattr(runtime_turn, "trace_events", [])),
         )
 
@@ -1470,10 +1449,13 @@ class AgentService:
     async def chat(self, request: AgentChatRequest) -> AgentChatResponse:
         """Handle direct agent chat requests with intent-based routing."""
         intent = AgentIntent.CHAT
-        plan = None
         trace_events = []
         try:
             request = await self._resolve_pending_route_reply(request)
+            pending_clarification_response = await self._pending_clarification_response(request)
+            if pending_clarification_response is not None:
+                await self._publish_chat_result(request, pending_clarification_response)
+                return pending_clarification_response
             request = await self._context_assembler.assemble(request, sync_service=self._sync_service)
             session_artifact = await self._get_session_artifact(request)
             editable_document = await self._get_editable_document(request)
@@ -1502,10 +1484,7 @@ class AgentService:
                 intent = AgentIntent.BOARD
 
             should_execute_runtime_tools = (
-                request.planning_enabled
-                and (
-                    intent == AgentIntent.PPT and not current_ppt_update
-                )
+                intent == AgentIntent.PPT and not current_ppt_update
                 and current_artifact_operation != "docx"
                 and not self._should_edit_current_document(editable_document, request, intent)
             )
@@ -1517,7 +1496,6 @@ class AgentService:
                 execute_tools=should_execute_runtime_tools,
             )
             trace_events = runtime_turn.trace_events
-            plan = runtime_turn.plan
             clarification_response = self._clarification_response_from_turn(request, runtime_turn)
             if clarification_response is not None:
                 await self._publish_chat_result(request, clarification_response)
@@ -1529,41 +1507,17 @@ class AgentService:
             enriched_request = self._request_with_retrieved_context(request, runtime_turn.retrieved_context)
 
             if current_artifact_operation == "docx" and editable_document is not None:
-                plan = self._build_document_edit_plan(request.message) if request.planning_enabled else None
-                self._replace_plan_trace(trace_events, plan)
-                response = await self._edit_current_document(request, editable_document, plan=plan)
+                response = await self._edit_current_document(request, editable_document)
                 response.events = self._events_from_traces(trace_events)
                 await self._publish_chat_result(request, response)
                 return response
-            if current_ppt_update and request.planning_enabled:
-                plan = self._build_current_artifact_edit_plan("ppt", request.message)
-                self._replace_plan_trace(trace_events, plan)
-            if current_artifact_operation == "board" and request.planning_enabled:
-                plan = self._build_current_artifact_edit_plan("board", request.message)
-                self._replace_plan_trace(trace_events, plan)
             if self._should_edit_current_document(editable_document, request, intent):
-                plan = self._build_document_edit_plan(request.message) if request.planning_enabled else None
-                self._replace_plan_trace(trace_events, plan)
-                response = await self._edit_current_document(request, editable_document, plan=plan)
+                response = await self._edit_current_document(request, editable_document)
                 response.events = self._events_from_traces(trace_events)
                 await self._publish_chat_result(request, response)
                 return response
 
             events_v1 = self._events_from_traces(trace_events)
-
-            if self._should_pause_for_clarification(intent, plan):
-                question = plan.clarification_question or (plan.questions[0] if plan.questions else None)
-                if question:
-                    response = AgentChatResponse(
-                        session_id=request.session_id,
-                        intent=intent.value,
-                        status="completed",
-                        message=question,
-                        plan=plan,
-                        events=events_v1,
-                    )
-                    await self._publish_chat_result(request, response)
-                    return response
 
             if intent == AgentIntent.DOCX:
                 content = (
@@ -1580,7 +1534,6 @@ class AgentService:
                         kind="docx",
                         content=content,
                     ),
-                    plan=plan,
                     events=events_v1,
                 )
                 synced_url = await self._sync_document_to_feishu_chat(request, content)
@@ -1642,7 +1595,6 @@ class AgentService:
                         else "AI PPT 任务已创建，正在后台生成。"
                     ),
                     artifact=artifact,
-                    plan=plan,
                     events=events_v1,
                 )
                 await self._publish_ppt_job_started(request, response)
@@ -1701,7 +1653,6 @@ class AgentService:
                         result_summary=result_summary,
                         error_message=completed_task.error_message,
                     ),
-                    plan=plan,
                     events=events_v1,
                     error=completed_task.error_message if is_failed else None,
                 )
@@ -1725,7 +1676,6 @@ class AgentService:
                 intent=AgentIntent.CHAT.value,
                 status="completed",
                 message=reply,
-                plan=plan,
                 events=events_v1,
             )
             await self._publish_chat_result(request, response)
@@ -1744,7 +1694,6 @@ class AgentService:
                 intent=response_intent.value,
                 status="failed",
                 message="处理失败，请稍后重试",
-                plan=plan,
                 events=AgentEventProtocol.from_traces(trace_events),
                 error=str(exc),
             )
@@ -1754,12 +1703,16 @@ class AgentService:
     async def chat_stream_events(self, request: AgentChatRequest) -> AsyncIterator[dict[str, Any]]:
         """Stream visible agent reasoning/planning/tool progress for chat requests."""
         intent = AgentIntent.CHAT
-        plan = None
         trace_events = []
         yield AgentEventProtocol.start(request.planning_enabled)
 
         try:
             request = await self._resolve_pending_route_reply(request)
+            pending_clarification_response = await self._pending_clarification_response(request)
+            if pending_clarification_response is not None:
+                await self._publish_chat_result(request, pending_clarification_response)
+                yield AgentEventProtocol.result(pending_clarification_response, pending_clarification_response.message)
+                return
             request = await self._context_assembler.assemble(request, sync_service=self._sync_service)
             session_artifact = await self._get_session_artifact(request)
             editable_document = await self._get_editable_document(request)
@@ -1790,24 +1743,14 @@ class AgentService:
                 intent = AgentIntent.BOARD
             if self._should_edit_current_document(editable_document, request, intent):
                 intent = AgentIntent.DOCX
-                if request.planning_enabled:
-                    plan = self._build_document_edit_plan(request.message)
-                    yield AgentEventProtocol.plan(plan, "")
-                    async for event in self._stream_plan_progress(plan):
-                        yield event
                 yield AgentEventProtocol.tool_started(intent.value, "docx_edit", "正在处理。")
-                response = await self._edit_current_document(request, editable_document, plan=plan)
+                response = await self._edit_current_document(request, editable_document)
                 await self._publish_chat_result(request, response)
                 yield AgentEventProtocol.result(response, response.message)
                 return
 
             if current_ppt_update or current_artifact_operation == "board":
                 artifact_kind = "ppt" if current_ppt_update else "board"
-                if request.planning_enabled:
-                    plan = self._build_current_artifact_edit_plan(artifact_kind, request.message)
-                    yield AgentEventProtocol.plan(plan, "")
-                    async for event in self._stream_plan_progress(plan):
-                        yield event
                 yield AgentEventProtocol.tool_started(
                     intent.value,
                     "ppt_edit" if artifact_kind == "ppt" else "board_edit",
@@ -1815,7 +1758,6 @@ class AgentService:
                 )
                 execution_request = request.model_copy(update={"planning_enabled": False})
                 response = await self.chat(execution_request)
-                response.plan = plan
                 yield AgentEventProtocol.result(response, response.message)
                 return
 
@@ -1824,12 +1766,7 @@ class AgentService:
                 intent,
                 session_artifact,
                 route_result=route_result,
-                execute_tools=(
-                    request.planning_enabled
-                    and (
-                        intent == AgentIntent.PPT and not current_ppt_update
-                    )
-                ),
+                execute_tools=intent == AgentIntent.PPT and not current_ppt_update,
             )
             trace_events = runtime_turn.trace_events
             for trace_event in trace_events:
@@ -1839,29 +1776,9 @@ class AgentService:
             if clarification_response is not None:
                 await self._publish_chat_result(request, clarification_response)
                 return
-            runtime_plan = runtime_turn.plan
             docx_tool_result = self._runtime_tool_result(runtime_turn, "docx")
             ppt_tool_result = self._runtime_tool_result(runtime_turn, "ppt")
             board_tool_result = self._runtime_tool_result(runtime_turn, "board")
-
-            if request.planning_enabled:
-                plan = runtime_plan or await self._create_plan_with_timeout(request, intent)
-                yield AgentEventProtocol.plan(plan, "")
-                async for event in self._stream_plan_progress(plan):
-                    yield event
-                if self._should_pause_for_clarification(intent, plan):
-                    question = plan.clarification_question or (plan.questions[0] if plan.questions else None) or "请补充更多信息。"
-                    yield AgentEventProtocol.clarification(intent.value, plan, question)
-                    response = AgentChatResponse(
-                        session_id=request.session_id,
-                        intent=intent.value,
-                        status="completed",
-                        message=question,
-                        plan=plan,
-                        events=self._events_from_traces(trace_events),
-                    )
-                    await self._publish_chat_result(request, response)
-                    return
 
             yield AgentEventProtocol.tool_started(intent.value, intent.value, "正在处理。")
 
@@ -1873,7 +1790,6 @@ class AgentService:
                     status="completed",
                     message="文档生成完成。",
                     artifact=AgentChatArtifact(kind="docx", content=content),
-                    plan=plan,
                     events=self._events_from_traces(trace_events),
                 )
                 synced_url = await self._sync_document_to_feishu_chat(request, content)
@@ -1893,7 +1809,6 @@ class AgentService:
                     status="completed",
                     message="AI PPT 任务已创建，正在后台生成。",
                     artifact=artifact,
-                    plan=plan,
                     events=self._events_from_traces(trace_events),
                 )
                 await self._publish_ppt_job_started(request, response)
@@ -1928,7 +1843,6 @@ class AgentService:
                         result_summary=result_summary,
                         error_message=completed_task.error_message,
                     ),
-                    plan=plan,
                     events=self._events_from_traces(trace_events),
                     error=completed_task.error_message if is_failed else None,
                 )
@@ -1949,14 +1863,12 @@ class AgentService:
                     intent=AgentIntent.CHAT.value,
                     status="completed",
                     message=reply,
-                    plan=plan,
                     events=self._events_from_traces(trace_events),
                 )
                 await self._publish_chat_result(request, response)
             else:
                 execution_request = request.model_copy(update={"planning_enabled": False})
                 response = await self.chat(execution_request)
-                response.plan = plan
             yield AgentEventProtocol.result(response, response.message)
         except Exception as exc:  # noqa: BLE001
             logger.error("Agent chat stream failed session=%s, error=%s", request.session_id, exc)
@@ -1965,22 +1877,10 @@ class AgentService:
                 intent=intent.value,
                 status="failed",
                 message="处理失败，请稍后重试",
-                plan=plan,
                 events=AgentEventProtocol.from_traces(trace_events),
                 error=str(exc),
             )
             yield AgentEventProtocol.failed(response, response.message, str(exc))
-
-    def _should_pause_for_clarification(self, intent: AgentIntent, plan: AgentTaskPlan | None) -> bool:
-        if plan is None:
-            return False
-        if intent in {AgentIntent.DOCX, AgentIntent.PPT, AgentIntent.BOARD}:
-            return False
-        return bool(plan.clarification_needed or plan.need_clarification)
-
-    async def _stream_plan_progress(self, plan: AgentTaskPlan) -> AsyncIterator[dict[str, Any]]:
-        for event in AgentEventProtocol.plan_progress(plan):
-            yield event
 
     def _wants_new_document(self, message: str) -> bool:
         normalized = message.lower()
@@ -2099,176 +1999,10 @@ class AgentService:
             return None
         return candidate
 
-    def _build_document_edit_plan(self, message: str) -> AgentTaskPlan:
-        return AgentTaskPlan(
-            goal="修改当前会话中的已有文档",
-            intent="document_editing",
-            task_complexity="simple",
-            missing_info=[],
-            need_clarification=False,
-            questions=[],
-            assumptions=["使用当前会话里已经生成的文档作为编辑对象"],
-            summary="定位当前文档内容，按用户要求执行局部编辑，并更新文档预览。",
-            visible_summary="我理解你要修改当前文档。我会先确认编辑对象，再按你的要求局部修改，最后更新当前预览。",
-            tool_candidates=["docx_edit", "sync"],
-            steps=[
-                AgentPlanStep(
-                    id="step_1",
-                    title="确认编辑对象",
-                    description="读取当前会话中已有的 docx 文档内容和链接。",
-                    type="reasoning",
-                    tool=None,
-                    input={"source": "current_document"},
-                    expected_output="待编辑的当前文档",
-                    depends_on=[],
-                ),
-                AgentPlanStep(
-                    id="step_2",
-                    title="执行局部修改",
-                    description=f"根据用户要求修改文档：{message}",
-                    type="tool_call",
-                    tool="docx_edit",
-                    input={"instruction": message},
-                    expected_output="修改后的 Markdown 文档",
-                    depends_on=["step_1"],
-                ),
-                AgentPlanStep(
-                    id="step_3",
-                    title="更新会话产物",
-                    description="将修改后的内容写回当前会话 artifact，刷新前端文档预览。",
-                    type="validation",
-                    tool="sync",
-                    input={},
-                    expected_output="可继续编辑的当前文档",
-                    depends_on=["step_2"],
-                ),
-            ],
-            final_output=AgentPlanFinalOutput(format="updated_markdown_document", requirements=["保留原文档无关内容", "不重新生成文档"]),
-        )
-
-    def _build_current_artifact_edit_plan(self, artifact_kind: str, message: str) -> AgentTaskPlan:
-        if artifact_kind == "ppt":
-            return AgentTaskPlan(
-                goal="修改当前会话中的已有 PPT",
-                intent="ppt_editing",
-                task_complexity="medium",
-                missing_info=[],
-                need_clarification=False,
-                questions=[],
-                assumptions=["使用当前会话里已经生成的 PPT 作为编辑对象"],
-                summary="读取当前 PPT 结构，定位用户要改的页面，只重写指定页面并复用其他页面。",
-                visible_summary="我理解你要修改当前 PPT。我会读取当前 PPT 结构，只处理你点名的页面，其他页面保持不变。",
-                tool_candidates=["artifact_lookup", "ppt_edit", "sync"],
-                steps=[
-                    AgentPlanStep(
-                        id="step_1",
-                        title="确认当前 PPT",
-                        description="读取当前会话的 PPT job、页数、页面标题和每页要点。",
-                        type="reasoning",
-                        tool=None,
-                        input={"source": "current_ppt"},
-                        expected_output="待编辑的当前 PPT",
-                        depends_on=[],
-                    ),
-                    AgentPlanStep(
-                        id="step_2",
-                        title="解析修改意图",
-                        description=f"理解用户要修改的页面、范围和内容：{message}",
-                        type="reasoning",
-                        tool=None,
-                        input={"instruction": message},
-                        expected_output="目标页和修改动作",
-                        depends_on=["step_1"],
-                    ),
-                    AgentPlanStep(
-                        id="step_3",
-                        title="执行 PPT 局部编辑",
-                        description="调用 AI PPT 编辑能力，仅重新生成目标页，未指定页面保持原样。",
-                        type="tool_call",
-                        tool="ppt_edit",
-                        input={"instruction": message},
-                        expected_output="更新后的 PPT job",
-                        depends_on=["step_2"],
-                    ),
-                    AgentPlanStep(
-                        id="step_4",
-                        title="刷新预览",
-                        description="更新会话 artifact，让前端预览和下载链接指向新的 PPT。",
-                        type="validation",
-                        tool="sync",
-                        input={},
-                        expected_output="可继续编辑的当前 PPT",
-                        depends_on=["step_3"],
-                    ),
-                ],
-                final_output=AgentPlanFinalOutput(format="updated_ppt", requirements=["只修改指定页面", "保留未指定页面", "不新建无关 PPT"]),
-            )
-        if artifact_kind == "board":
-            return AgentTaskPlan(
-                goal="修改当前会话中的已有飞书画板",
-                intent="board_editing",
-                task_complexity="medium",
-                missing_info=[],
-                need_clarification=False,
-                questions=[],
-                assumptions=["使用当前会话里已经存在的飞书画板链接作为编辑对象"],
-                summary="读取当前画板链接，理解用户要改的节点或结构，并在原画板上执行修改。",
-                visible_summary="我理解你要修改当前飞书画板。我会复用当前画板链接，定位要修改的节点或结构，再同步结果。",
-                tool_candidates=["artifact_lookup", "board", "sync"],
-                steps=[
-                    AgentPlanStep(
-                        id="step_1",
-                        title="确认当前画板",
-                        description="读取当前会话 artifact 中的飞书画板链接和 whiteboard 信息。",
-                        type="reasoning",
-                        tool=None,
-                        input={"source": "current_board"},
-                        expected_output="待编辑的当前画板",
-                        depends_on=[],
-                    ),
-                    AgentPlanStep(
-                        id="step_2",
-                        title="解析画板修改",
-                        description=f"理解用户要修改的节点、文字或结构：{message}",
-                        type="reasoning",
-                        tool=None,
-                        input={"instruction": message},
-                        expected_output="画板修改动作",
-                        depends_on=["step_1"],
-                    ),
-                    AgentPlanStep(
-                        id="step_3",
-                        title="执行画板编辑",
-                        description="调用飞书画板能力，在当前画板链接上执行修改。",
-                        type="tool_call",
-                        tool="board_edit",
-                        input={"instruction": message},
-                        expected_output="更新后的画板",
-                        depends_on=["step_2"],
-                    ),
-                    AgentPlanStep(
-                        id="step_4",
-                        title="同步结果",
-                        description="更新会话 artifact，让后续自然语言继续基于同一个画板修改。",
-                        type="validation",
-                        tool="sync",
-                        input={},
-                        expected_output="可继续编辑的当前画板",
-                        depends_on=["step_3"],
-                    ),
-                ],
-                final_output=AgentPlanFinalOutput(format="updated_board", requirements=["复用当前画板", "不自动新建画板文档"]),
-        )
-        return self._build_document_edit_plan(message)
-
-
-
     async def _edit_current_document(
         self,
         request: AgentChatRequest,
         artifact: AgentChatArtifact,
-        *,
-        plan: AgentTaskPlan | None = None,
     ) -> AgentChatResponse:
         edited_content = await self._document_service.edit_document(
             DocumentEditRequest(
@@ -2302,7 +2036,6 @@ class AgentService:
             status="completed",
             message=message,
             artifact=updated_artifact,
-            plan=plan,
         )
         archive_results = await self._archive_artifact_to_bitable(request, response)
         if archive_results and response.artifact is not None:

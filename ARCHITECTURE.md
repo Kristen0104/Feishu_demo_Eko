@@ -23,7 +23,6 @@ FastAPI 接入层
         v
 Agent 编排层
    - RouterAgent
-   - PlannerAgent
    - AgentRuntime (LangGraph)
    - Tool Registry
         |
@@ -43,7 +42,7 @@ RAG / Bitable 上下文层         文档 / PPT / 画板执行层
 Agent 的执行链路为：
 
 ```text
-context -> retrieval -> planner -> tool_execute
+context_load -> intent_route -> clarification_gate -> observe/retrieve -> act/tool -> observe_tool -> final
 ```
 
 ---
@@ -77,7 +76,7 @@ context -> retrieval -> planner -> tool_execute
 | 模块 | 作用 |
 |------|------|
 | Auth | 飞书登录、账号绑定、JWT 鉴权 |
-| Agent | 意图路由、规划、执行、流式事件 |
+| Agent | 意图路由、澄清中断、执行、流式事件 |
 | RAG | 文件入库、Embedding、pgvector 检索 |
 | Bitable | 结构化数据发现、查询、归档 |
 | Feishu | 卡片、画板、文档同步、事件回调 |
@@ -91,11 +90,11 @@ context -> retrieval -> planner -> tool_execute
 `AgentRuntime` 负责把一轮任务拆成：
 
 1. 装载上下文
-2. 检索知识和结构化数据
-3. 生成可执行计划
-4. 按计划调用工具
+2. 识别意图并打分
+3. 必要时触发澄清中断
+4. 检索知识和结构化数据
+5. 调用工具适配层
 
-`PlannerAgent` 负责将自然语言任务转成 JSON 计划。  
 `Tool Registry` 则保存可调用工具的规范与输入 schema。
 
 ---
@@ -146,7 +145,6 @@ Redis 负责：
 
 - 会话上下文
 - 画板快照
-- 任务计划
 - 生成日志
 
 ---
@@ -156,15 +154,14 @@ Redis 负责：
 Agent 在单轮任务中会经历这些阶段：
 
 ```text
-IDLE -> ANALYZING -> RETRIEVING -> PLANNING -> EXECUTING -> SYNCING -> COMPLETED
+IDLE -> ANALYZING -> RETRIEVING -> GENERATING -> SYNCING -> COMPLETED
 ```
 
 其中：
 
 - `ANALYZING`：识别意图
 - `RETRIEVING`：检索群聊、知识库、Bitable、当前产物
-- `PLANNING`：生成计划
-- `EXECUTING`：调用具体工具
+- `GENERATING`：调用具体工具
 - `SYNCING`：推送实时状态和结果
 
 ---

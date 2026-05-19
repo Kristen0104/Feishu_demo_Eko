@@ -316,15 +316,21 @@ class SyncService:
         *,
         context_size: int,
         context_messages: list[dict[str, Any]],
+        selected_context_messages: list[dict[str, Any]] | None = None,
         status: str | None = None,
         summary: str | None = None,
     ) -> None:
+        update: dict[str, Any] = {
+            "status": status,
+            "summary": summary,
+            "context_size": context_size,
+            "context_messages": context_messages,
+        }
+        if selected_context_messages is not None:
+            update["selected_context_messages"] = selected_context_messages
         await self._manager.update_session(
             session_id,
-            status=status,
-            summary=summary,
-            context_size=context_size,
-            context_messages=context_messages,
+            **update,
         )
         await self.emit(
             session_id,

@@ -68,39 +68,6 @@ export function DetailConversationMessage({
           {message.mention && <span className={`inline-flex rounded-xl bg-white px-2 py-1 text-[12px] font-semibold ${mentionClass} shadow-[0_3px_8px_rgba(15,23,42,0.05)]`}>{message.mention}</span>}
           {message.body ? <p className="mt-1.5 whitespace-pre-line break-words text-[13px] leading-[23px] text-slate-700">{message.body}</p> : null}
           {message.helperText ? <div className={`mt-2.5 inline-flex max-w-full items-center gap-2 rounded-full bg-white/80 px-3 py-1.5 text-[12px] ${helperClass}`}><span className={`h-3 w-3 shrink-0 rounded-full border-2 ${tone === "canvas" ? "border-violet-500" : tone === "chat" ? "border-emerald-500" : "border-blue-500"} border-t-transparent animate-spin`} />{message.helperText}</div> : null}
-          {message.plannerCard ? (
-            <div className="mt-3 rounded-[16px] border border-blue-100 bg-white/90 p-3 text-left shadow-[0_8px_18px_rgba(37,99,235,0.06)]">
-              <div className="flex min-w-0 items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="text-[12px] font-semibold text-blue-700">任务理解与规划</p>
-                  <p className="mt-1 line-clamp-2 text-[13px] font-semibold text-slate-950">{message.plannerCard.summary || message.plannerCard.goal}</p>
-                </div>
-                <span className="shrink-0 rounded-full bg-blue-50 px-2.5 py-1 text-[11px] font-semibold text-blue-600">{message.plannerCard.intent || "plan"}</span>
-              </div>
-              {message.plannerCard.steps.length ? (
-                <ol className="mt-3 space-y-2">
-                  {message.plannerCard.steps.slice(0, 6).map((step, index) => (
-                    <li key={`${message.id}-plan-${step.id || index}`} className="flex gap-2">
-                      <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-600 text-[10px] font-semibold text-white">{index + 1}</span>
-                      <div className="min-w-0">
-                        <p className="text-[12px] font-semibold text-slate-900">{step.title}</p>
-                        {step.description ? <p className="mt-0.5 line-clamp-2 text-[11px] leading-4 text-slate-500">{step.description}</p> : null}
-                        {step.tool ? <p className="mt-0.5 text-[10px] font-semibold text-blue-500">tool: {step.tool}</p> : null}
-                      </div>
-                    </li>
-                  ))}
-                </ol>
-              ) : null}
-              {message.plannerCard.needClarification &&
-              (message.plannerCard.questions?.length || message.plannerCard.clarificationQuestion || message.plannerCard.missingInfo?.length) ? (
-                <div className="mt-3 rounded-[12px] bg-amber-50 px-3 py-2 text-[12px] leading-5 text-amber-800">
-                  {message.plannerCard.questions?.[0] ||
-                    message.plannerCard.clarificationQuestion ||
-                    (message.plannerCard.missingInfo?.length ? `待补充信息：${message.plannerCard.missingInfo.join("、")}` : "")}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
           {message.fileCard ? <div className="mt-2.5 overflow-hidden rounded-[16px] border border-slate-200 bg-white px-3 py-2.5 shadow-[0_6px_16px_rgba(15,23,42,0.04)]"><div className="flex min-w-0 items-start justify-between gap-2.5"><div className="flex min-w-0 items-start gap-2.5"><div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-[11px] border border-blue-200 bg-blue-50"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M5 3H11.7L15 6.3V17H5V3Z" stroke="#2563EB" strokeWidth="1.6" strokeLinejoin="round" /><path d="M11.5 3V6.5H15" stroke="#2563EB" strokeWidth="1.6" strokeLinejoin="round" /></svg></div><div className="min-w-0"><p className="truncate text-[13px] font-semibold text-slate-900">{message.fileCard.title}</p><p className="mt-1 text-[12px] font-medium text-blue-600">{message.fileCard.typeLabel}</p></div></div><span className="inline-flex shrink-0 whitespace-nowrap rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-600">{message.fileCard.statusLabel}</span></div></div> : null}
           {message.actionCard ? (
             <div className="mt-2.5 rounded-[16px] border border-violet-200 bg-white/85 px-3 py-3 shadow-[0_8px_18px_rgba(139,92,246,0.08)]">

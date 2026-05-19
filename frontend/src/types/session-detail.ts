@@ -26,33 +26,6 @@ export type DetailMessageActionCard = {
   buttons: DetailMessageActionButton[];
 };
 
-export type DetailMessagePlannerCard = {
-  goal: string;
-  intent: string;
-  taskComplexity?: string;
-  missingInfo?: string[];
-  needClarification?: boolean;
-  questions?: string[];
-  assumptions?: string[];
-  clarificationNeeded?: boolean;
-  clarificationQuestion?: string | null;
-  summary: string;
-  steps: Array<{
-    id: string;
-    title: string;
-    description?: string;
-    type?: string;
-    tool?: string;
-    input?: Record<string, unknown>;
-    expectedOutput?: string;
-    dependsOn?: string[];
-  }>;
-  finalOutput?: {
-    format: string;
-    requirements: string[];
-  };
-};
-
 export type DetailMessage = {
   id: string;
   author: string;
@@ -65,7 +38,6 @@ export type DetailMessage = {
   helperText?: string;
   fileCard?: DetailMessageFileCard;
   actionCard?: DetailMessageActionCard;
-  plannerCard?: DetailMessagePlannerCard;
 };
 
 export type DetailSourceItem = {

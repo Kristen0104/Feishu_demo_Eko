@@ -84,7 +84,7 @@ class Settings(BaseSettings):
     FEISHU_APP_SECRET: str = ""
     FEISHU_VERIFICATION_TOKEN: str = ""
     FEISHU_ENCRYPT_KEY: str = ""
-    FEISHU_WS_AUTO_START: bool = True
+    FEISHU_WS_AUTO_START: bool = False
     FEISHU_WS_POLL_CHAT_IDS: str = ""
     FEISHU_WS_POLL_INTERVAL_SECONDS: float = 5.0
     FEISHU_BASE_URL: str = "https://open.feishu.cn"

@@ -11,6 +11,7 @@ from typing import Any
 import lark_oapi as lark
 
 from app.config import settings
+from app.core import redis_client as redis_module
 from app.core.llm_client import get_llm_client
 from app.core.redis_client import close_redis, init_redis
 from app.modules.aippt.dependencies import get_aippt_service
@@ -22,6 +23,7 @@ from app.modules.sync.dependencies import get_sync_service
 
 logger = logging.getLogger(__name__)
 _MAX_TRACKED_MESSAGE_IDS = 1000
+_PROCESSED_MESSAGE_TTL_SECONDS = 24 * 60 * 60
 _processed_message_ids: set[str] = set()
 _processed_message_order: deque[str] = deque()
 
@@ -97,7 +99,7 @@ async def handle_ws_payload(payload: dict[str, Any]) -> None:
 
 async def handle_feishu_payload(payload: dict[str, Any], *, source: str) -> None:
     message_id = _payload_message_id(payload)
-    if message_id and not _claim_message_id(message_id):
+    if message_id and not await _claim_message_id(message_id):
         logger.info("Skip duplicate Feishu event source=%s message_id=%s", source, message_id)
         return
     processor = FeishuEventProcessor(
@@ -109,7 +111,7 @@ async def handle_feishu_payload(payload: dict[str, Any], *, source: str) -> None
         await processor.handle(payload)
     except Exception:
         if message_id:
-            _release_message_id(message_id)
+            await _release_message_id(message_id)
         raise
 
 
@@ -123,7 +125,20 @@ def _payload_message_id(payload: dict[str, Any]) -> str | None:
     return _coerce_str(message.get("message_id"))
 
 
-def _claim_message_id(message_id: str) -> bool:
+async def _claim_message_id(message_id: str) -> bool:
+    redis_client = redis_module.redis_client
+    if redis_client is not None:
+        try:
+            claimed = await redis_client.set(
+                f"eko:feishu:event:dedupe:{message_id}",
+                "1",
+                ex=_PROCESSED_MESSAGE_TTL_SECONDS,
+                nx=True,
+            )
+            return bool(claimed)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Feishu Redis event dedupe skipped source=ws message_id=%s: %s", message_id, exc)
+
     if message_id in _processed_message_ids:
         return False
     _processed_message_ids.add(message_id)
@@ -134,7 +149,13 @@ def _claim_message_id(message_id: str) -> bool:
     return True
 
 
-def _release_message_id(message_id: str) -> None:
+async def _release_message_id(message_id: str) -> None:
+    redis_client = redis_module.redis_client
+    if redis_client is not None:
+        try:
+            await redis_client.delete(f"eko:feishu:event:dedupe:{message_id}")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Feishu Redis event dedupe release skipped source=ws message_id=%s: %s", message_id, exc)
     _processed_message_ids.discard(message_id)
 
 

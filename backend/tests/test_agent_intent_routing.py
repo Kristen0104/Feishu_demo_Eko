@@ -120,3 +120,37 @@ class AgentPendingRouteReplyTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(request.message, "NovaMind 模型分级策略")
         self.assertEqual(request.forced_intent, "docx")
+
+    async def test_non_selection_reply_stays_blocked_on_clarification(self) -> None:
+        from app.modules.agent.schemas import AgentChatRequest
+
+        service = AgentService.__new__(AgentService)
+        service._sync_service = _SyncService()
+
+        request = await service._resolve_pending_route_reply(
+            AgentChatRequest(session_id="s1", message="整理一下")
+        )
+
+        self.assertEqual(request.message, "整理一下")
+        self.assertEqual(request.forced_intent, "chat")
+        self.assertEqual(request.sender, {"pending_clarification": True})
+
+    async def test_pending_clarification_reuses_last_question(self) -> None:
+        from app.modules.agent.schemas import AgentChatRequest
+
+        service = AgentService.__new__(AgentService)
+        service._sync_service = _SyncService()
+
+        response = await service._pending_clarification_response(
+            AgentChatRequest(
+                session_id="s1",
+                message="整理一下",
+                sender={"pending_clarification": True},
+                forced_intent="chat",
+            )
+        )
+
+        self.assertIsNotNone(response)
+        assert response is not None
+        self.assertEqual(response.intent, "chat")
+        self.assertIn("直接讨论", response.message)

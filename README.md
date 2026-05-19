@@ -2,13 +2,13 @@
 
 Eko 是一个面向飞书生态的 AI 原生办公工作台演示项目。项目由 Next.js 前端工作台、FastAPI 后端、飞书集成、Agent 编排、RAG 检索、Bitable 结构化数据、Redis 实时事件总线，以及 AI PPT / 文档 / 画板生成能力组成。
 
-这个仓库用于演示一条完整的办公流：用户可以在飞书群里 @Eko，也可以进入网页工作台发起任务；系统会识别意图、检索上下文、规划执行步骤、调用合适工具、实时展示进度，并将结果回流到飞书生态。
+这个仓库用于演示一条完整的办公流：用户可以在飞书群里 @Eko，也可以进入网页工作台发起任务；系统会识别意图、检索上下文、调用合适工具、实时展示进度，并将结果回流到飞书生态。
 
 ## 核心能力
 
 - 飞书 OAuth 登录、事件回调处理和长连接监听。
 - Agent 对话，支持 chat、文档、PPT、画板等工具级意图路由。
-- 基于 LangGraph 的运行时，负责上下文装载、检索、规划和工具执行。
+- 基于 LangGraph 的 ReAct 运行时，负责上下文装载、意图路由、澄清中断、检索和工具执行。
 - RAG 知识库，支持文件入库、Embedding 向量化和 pgvector 相似度检索。
 - Bitable OpenAPI 集成，支持结构化数据检索和产物归档。
 - AI PPT 生成与编辑，使用内置 `vendor/ppt-master` 运行时。
@@ -25,10 +25,10 @@ Eko 是一个面向飞书生态的 AI 原生办公工作台演示项目。项目
 Next.js 前端  <---- 实时 Session 事件 ---->  FastAPI 后端
                                              |
                                              v
-                         RouterAgent -> AgentRuntime -> PlannerAgent
+                         RouterAgent -> AgentRuntime -> Tool Registry
                               |           |              |
                               |           v              v
-                              |       RAG / Bitable   Tool Registry
+                              |       RAG / Bitable   Tool Adapters
                               |                          |
                               v                          v
                     Document / AIPPT / Canvas / Sync / Archive
@@ -40,7 +40,7 @@ Next.js 前端  <---- 实时 Session 事件 ---->  FastAPI 后端
 Agent 单轮任务的运行链路是：
 
 ```text
-context -> retrieval -> planner -> tool_execute
+context_load -> intent_route -> clarification_gate -> observe/retrieve -> act/tool -> observe_tool -> final
 ```
 
 RAG 检索当前使用 Embedding + pgvector cosine distance 排序。Agent 链路中默认取 RAG Top-4 和 Bitable Top-4，合并后最多保留 8 条上下文进入 Planner 和工具调用。当前没有引入独立 reranker 模型。

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 import json
 import logging
 import re
@@ -12,8 +13,9 @@ except ImportError:  # pragma: no cover - optional dependency for encrypted even
     AESCipher = None
 
 from app.config import settings
+from app.core import redis_client as redis_module
 from app.core.database import AsyncSessionLocal
-from app.modules.agent.schemas import AgentChatArtifact, AgentChatRequest, AgentContext, AgentIntent, ChatMessage, IntentRouteResult
+from app.modules.agent.schemas import AgentChatArtifact, AgentChatRequest, AgentIntent
 from app.modules.auth.repository import AuthRepository
 from app.modules.feishu.service import FeishuService
 from app.modules.sync.service import SyncService
@@ -23,6 +25,35 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 _MENTION_TAG_RE = re.compile(r"<at[^>]*>.*?</at>", re.IGNORECASE | re.DOTALL)
+_MAX_DEDUPED_MESSAGE_IDS = 1000
+_DEDUPED_MESSAGE_TTL_SECONDS = 24 * 60 * 60
+VAGUE_CLARIFICATION_QUESTION = "请问你想整理什么内容？是整理刚才的对话记录，还是其他信息？另外，你希望整理成什么形式？比如摘要、要点列表，或者生成一个文档？"
+_deduped_message_ids: set[str] = set()
+_deduped_message_order: deque[str] = deque()
+
+
+async def _claim_deduped_message_id(message_id: str) -> bool:
+    redis_client = redis_module.redis_client
+    if redis_client is not None:
+        try:
+            claimed = await redis_client.set(
+                f"eko:feishu:event:dedupe:{message_id}",
+                "1",
+                ex=_DEDUPED_MESSAGE_TTL_SECONDS,
+                nx=True,
+            )
+            return bool(claimed)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Feishu Redis event dedupe skipped message_id=%s: %s", message_id, exc)
+
+    if message_id in _deduped_message_ids:
+        return False
+    _deduped_message_ids.add(message_id)
+    _deduped_message_order.append(message_id)
+    while len(_deduped_message_order) > _MAX_DEDUPED_MESSAGE_IDS:
+        expired = _deduped_message_order.popleft()
+        _deduped_message_ids.discard(expired)
+    return True
 
 
 class FeishuEventProcessor:
@@ -31,11 +62,13 @@ class FeishuEventProcessor:
         feishu_service: FeishuService,
         agent_service: AgentService,
         sync_service: SyncService | None = None,
+        dedupe_events: bool = False,
     ) -> None:
         self._feishu_service = feishu_service
         self._agent_service = agent_service
         self._sync_service = sync_service
         self._bot_open_id: str | None = None
+        self._dedupe_events = dedupe_events
 
     async def handle(self, payload: dict[str, Any]) -> dict[str, str]:
         envelope = self._unwrap_payload(payload)
@@ -85,6 +118,9 @@ class FeishuEventProcessor:
         if not chat_id or not message_id:
             logger.info("Feishu event ignored because chat_id/message_id is missing")
             return {"msg": "success"}
+        if self._dedupe_events and not await _claim_deduped_message_id(message_id):
+            logger.info("Feishu event ignored because message_id was already processed: %s", message_id)
+            return {"msg": "success"}
 
         if command_name == "chat":
             return await self._handle_chat_command(command_target, command_prompt)
@@ -92,8 +128,6 @@ class FeishuEventProcessor:
         session_id = f"feishu:{chat_id}:{message_id}"
         if command_name == "new":
             instruction = self._normalize_instruction(command_prompt)
-            route = await self._route_new_session_intent(instruction)
-            intent = AgentIntent(route.intent)
             sender_profile = self._build_fast_sender_profile(event.get("sender"))
             resolved_profile = await self._resolve_sender_profile(event.get("sender"))
             trigger_message = self._build_user_message(
@@ -101,9 +135,12 @@ class FeishuEventProcessor:
                 timestamp=create_time,
                 sender_profile=sender_profile,
             )
-            if route.needs_clarification:
+            if self._needs_new_session_clarification(instruction):
+                assistant_message = {
+                    "role": "assistant",
+                    "content": VAGUE_CLARIFICATION_QUESTION,
+                }
                 if self._sync_service is not None:
-                    question = route.clarification_question or "请确认你希望我执行哪种动作。"
                     await self._sync_service.publish_session_opened(
                         session_id,
                         source="feishu",
@@ -112,97 +149,14 @@ class FeishuEventProcessor:
                         message_id=message_id,
                         context_size=0,
                         instruction=instruction,
-                        intent=intent.value,
                         context_messages=[],
-                        selected_context_messages=[],
                         status="等待确认意图",
-                        summary=question,
-                        messages=[trigger_message],
+                        summary=VAGUE_CLARIFICATION_QUESTION,
+                        messages=[trigger_message, assistant_message],
                     )
+                    logger.info("Feishu vague direct mention opened clarification session=%s", session_id)
                 await self._send_workspace_link_to_chat(chat_id, session_id)
-                self._schedule_agent_chat(
-                    AgentChatRequest(
-                        session_id=session_id,
-                        message=instruction,
-                        sender=resolved_profile,
-                    )
-                )
-                logger.info("Feishu direct mention waiting for intent clarification session=%s", session_id)
-                return {"msg": "success"}
-
-            if intent == AgentIntent.CHAT:
-                context_messages = await self._load_context_candidates(
-                    session_id=session_id,
-                    chat_id=chat_id,
-                    before_time_ms=create_time,
-                    limit=15,
-                )
-                if self._sync_service is not None:
-                    await self._sync_service.publish_session_opened(
-                        session_id,
-                        source="feishu",
-                        user_id=resolved_profile.get("platform_user_id"),
-                        chat_id=chat_id,
-                        message_id=message_id,
-                        context_size=len(context_messages),
-                        instruction=instruction,
-                        intent=intent.value,
-                        context_messages=[],
-                        selected_context_messages=context_messages,
-                        status="进行中",
-                        summary=f"已自动读取最近 {len(context_messages)} 条群聊上下文，正在回复。",
-                        messages=[trigger_message],
-                    )
-                await self._send_workspace_link_to_chat(chat_id, session_id)
-                request = AgentChatRequest(
-                    session_id=session_id,
-                    message=instruction,
-                    context=AgentContext(
-                        chat_history=[
-                            ChatMessage(role=str(message.get("role") or "user"), content=str(message.get("content") or ""))
-                            for message in context_messages
-                            if str(message.get("content") or "").strip()
-                        ]
-                    ),
-                )
-                self._schedule_agent_chat(request)
-                logger.info("Feishu direct mention opened chat session=%s with %s default context messages", session_id, len(context_messages))
-                return {"msg": "success"}
-
-            plan = await self._agent_service._create_plan_with_timeout(
-                AgentChatRequest(session_id=session_id, message=instruction),
-                intent,
-            )
-            if getattr(plan, "requires_context_selection", False):
-                if self._sync_service is not None:
-                    await self._sync_service.publish_session_opened(
-                        session_id,
-                        source="feishu",
-                        user_id=resolved_profile.get("platform_user_id"),
-                        chat_id=chat_id,
-                        message_id=message_id,
-                        context_size=0,
-                        instruction=instruction,
-                        intent=intent.value,
-                        context_messages=[],
-                        status="等待选择",
-                        summary="收到需求。你这次明确要求基于聊天记录/上下文生成，请先选择消息记录。",
-                        messages=[trigger_message],
-                    )
-                    await self._send_workspace_link_to_chat(chat_id, session_id)
-                    await self._sync_service.publish_agent_message(
-                        session_id,
-                        role="assistant",
-                        content="收到。你这次明确要求基于聊天记录/上下文生成，我先读取候选消息，你选好后我再继续。",
-                    )
-                self._schedule_new_session_bootstrap(
-                    session_id=session_id,
-                    chat_id=chat_id,
-                    before_time_ms=create_time,
-                    instruction=instruction,
-                    sender_profile=resolved_profile,
-                )
-                logger.info("Feishu direct mention waiting for context selection session=%s", session_id)
+                await self._feishu_service.send_text_message_to_chat(chat_id, VAGUE_CLARIFICATION_QUESTION)
                 return {"msg": "success"}
 
             if self._sync_service is not None:
@@ -214,10 +168,9 @@ class FeishuEventProcessor:
                     message_id=message_id,
                     context_size=0,
                     instruction=instruction,
-                    intent=intent.value,
                     context_messages=[],
                     status="进行中",
-                    summary="收到 @机器人 消息，正在读取候选消息并继续生成。",
+                    summary="收到 @机器人 消息，正在读取群聊上下文并继续处理。",
                     messages=[trigger_message],
                 )
                 logger.info(
@@ -227,7 +180,7 @@ class FeishuEventProcessor:
                 await self._sync_service.publish_agent_message(
                     session_id,
                     role="assistant",
-                    content="收到。我先读取候选消息，并继续为你生成结果。",
+                    content="收到。我先读取群聊上下文，并继续处理。",
                 )
             await self._send_workspace_link_to_chat(chat_id, session_id)
             self._schedule_new_session_bootstrap(
@@ -270,7 +223,7 @@ class FeishuEventProcessor:
             if isinstance(header, dict):
                 token = header.get("token") if isinstance(header.get("token"), str) else None
 
-        if token is not None and token != expected:
+        if token != expected:
             raise ValueError("Invalid Feishu verification token")
 
     def _event_type(self, payload: dict[str, Any]) -> str:
@@ -442,6 +395,58 @@ class FeishuEventProcessor:
                 break
         return instruction or "请基于最近群聊上下文继续回复。"
 
+    def _needs_new_session_clarification(self, instruction: str) -> bool:
+        compact = re.sub(r"[\s，。！？!?、,.；;：:（）()【】\[\]「」『』\"'“”‘’]+", "", instruction).lower()
+        if not compact:
+            return True
+
+        explicit_keywords = (
+            "ppt",
+            "powerpoint",
+            "docx",
+            "word",
+            "文档",
+            "飞书文档",
+            "画板",
+            "白板",
+            "图表",
+            "饼图",
+            "摘要",
+            "要点",
+            "列表",
+            "会议纪要",
+            "周报",
+            "报告",
+            "聊天记录",
+            "对话记录",
+            "刚才",
+            "上下文",
+            "群聊",
+            "生成",
+            "写",
+            "做",
+            "创建",
+            "输出",
+        )
+        if any(keyword in compact for keyword in explicit_keywords):
+            return False
+
+        vague_requests = {
+            "整理",
+            "整理下",
+            "整理一下",
+            "帮我整理",
+            "帮我整理下",
+            "帮我整理一下",
+            "麻烦整理",
+            "麻烦整理下",
+            "麻烦整理一下",
+            "请整理",
+            "请整理下",
+            "请整理一下",
+        }
+        return compact in vague_requests
+
     def _parse_trigger_command(self, text: str) -> tuple[str, str | None, str]:
         stripped = " ".join(text.split()).strip()
         if not stripped:
@@ -514,34 +519,6 @@ class FeishuEventProcessor:
         )
         task.add_done_callback(lambda finished: self._log_agent_task_result(session_id, finished))
 
-    async def _classify_new_session_intent(self, instruction: str) -> AgentIntent:
-        route = await self._route_new_session_intent(instruction)
-        return AgentIntent(route.intent)
-
-    async def _route_new_session_intent(self, instruction: str) -> IntentRouteResult:
-        router = getattr(self._agent_service, "_router", None)
-        if router is None:
-            return IntentRouteResult(intent=AgentIntent.CHAT.value, primary_tool="chat", confidence=0.8, reason="no router")
-        try:
-            if hasattr(router, "route_chat_intent"):
-                route = await router.route_chat_intent(instruction)
-            elif hasattr(router, "classify_chat_intent"):
-                intent = await router.classify_chat_intent(instruction)
-                route = IntentRouteResult(
-                    intent=intent.value if intent in {AgentIntent.CHAT, AgentIntent.DOCX, AgentIntent.PPT, AgentIntent.BOARD} else AgentIntent.CHAT.value,
-                    primary_tool=(intent.value if intent in {AgentIntent.DOCX, AgentIntent.PPT, AgentIntent.BOARD} else "chat"),
-                    confidence=0.8,
-                    reason="legacy classifier",
-                )
-            else:
-                route = IntentRouteResult(intent=AgentIntent.CHAT.value, primary_tool="chat", confidence=0.8, reason="no classifier")
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Feishu intent pre-routing failed; defaulting to chat: %s", exc)
-            return IntentRouteResult(intent=AgentIntent.CHAT.value, primary_tool="chat", confidence=0.5, reason="route failed")
-        if route.intent not in {AgentIntent.CHAT.value, AgentIntent.DOCX.value, AgentIntent.PPT.value, AgentIntent.BOARD.value}:
-            return IntentRouteResult(intent=AgentIntent.CHAT.value, primary_tool="chat", confidence=0.5, reason="unsupported intent")
-        return route
-
     async def _load_context_candidates(
         self,
         *,
@@ -582,37 +559,22 @@ class FeishuEventProcessor:
             limit=15,
         )
         if self._sync_service is not None:
-            session = await self._sync_service.get_session(session_id) if hasattr(self._sync_service, "get_session") else None
-            waiting_for_selection = bool(session is not None and getattr(session, "status", "") == "等待选择")
             await self._sync_service.update_session_context(
                 session_id,
                 context_size=len(context_candidates),
                 context_messages=context_candidates,
-                status="等待选择" if waiting_for_selection else "进行中",
-                summary=(
-                    f"已读取 {len(context_candidates)} 条候选消息，请先选择消息记录再生成。"
-                    if waiting_for_selection
-                    else f"已读取 {len(context_candidates)} 条候选消息，继续生成中。"
-                ),
+                selected_context_messages=context_candidates,
+                status="进行中",
+                summary=f"已读取 {len(context_candidates)} 条候选消息，继续生成中。",
             )
             logger.info(
-                "Feishu direct mention loaded session=%s with %s context candidates; waiting_for_selection=%s",
+                "Feishu direct mention loaded session=%s with %s context candidates",
                 session_id,
                 len(context_candidates),
-                waiting_for_selection,
             )
-            if waiting_for_selection:
-                return
             request = AgentChatRequest(
                 session_id=session_id,
                 message=instruction,
-                context=AgentContext(
-                    chat_history=[
-                        ChatMessage(role=str(message.get("role") or "user"), content=str(message.get("content") or ""))
-                        for message in context_candidates
-                        if str(message.get("content") or "").strip()
-                    ]
-                ),
                 sender=sender_profile,
             )
             self._schedule_agent_chat(request)

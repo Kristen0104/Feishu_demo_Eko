@@ -14,7 +14,6 @@ export type RealtimeEnvelope =
         | "SESSION_CONNECTED"
         | "SESSION_OPENED"
         | "INTENT_RECOGNIZED"
-        | "AGENT_PLANNING"
         | "CANVAS_UPDATE"
         | "TASK_COMPLETED"
         | "CURSOR_SYNC"

@@ -10,7 +10,6 @@ from app.modules.agent.schemas import (
     AgentIntent,
     IntentRouteResult,
     AgentRetrievedContext,
-    AgentTaskPlan,
     AgentTraceEvent,
 )
 
@@ -26,7 +25,6 @@ class AgentTurnState(BaseModel):
     current_artifact: AgentChatArtifact | None = None
     execute_tools: bool = False
     retrieved_context: list[AgentRetrievedContext] = Field(default_factory=list)
-    plan: AgentTaskPlan | None = None
     selected_tool: str | None = None
     tool_results: list[dict[str, Any]] = Field(default_factory=list)
     trace_events: list[AgentTraceEvent] = Field(default_factory=list)

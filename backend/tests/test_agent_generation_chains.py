@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from unittest import IsolatedAsyncioTestCase
 
-from app.modules.agent.schemas import AgentChatRequest, AgentPlanFinalOutput, AgentTaskPlan
+from app.modules.agent.schemas import AgentChatRequest
 from app.modules.agent.service import AgentService
 
 
@@ -152,6 +152,22 @@ class AgentGenerationChainsTest(IsolatedAsyncioTestCase):
         self.assertEqual(response.artifact.kind, "docx")
         self.assertIn("内容生成成功", response.artifact.content or "")
 
+    async def test_chat_intent_greeting_uses_direct_chat(self) -> None:
+        service, _, _ = self._service()
+
+        response = await service.chat(
+            AgentChatRequest(
+                session_id="local-chat-hello",
+                message="你好",
+                forced_intent="chat",
+                planning_enabled=True,
+            )
+        )
+
+        self.assertEqual(response.status, "completed")
+        self.assertEqual(response.intent, "chat")
+        self.assertNotIn("具体想让我处理什么", response.message)
+
     async def test_docx_chain_generates_document_once_when_planning_enabled(self) -> None:
         service, _, _ = self._service()
 
@@ -168,23 +184,8 @@ class AgentGenerationChainsTest(IsolatedAsyncioTestCase):
         self.assertEqual(response.artifact.kind if response.artifact else None, "docx")
         self.assertEqual(service._document_service.requests.__len__(), 1)
 
-    async def test_docx_chain_does_not_pause_for_planner_clarification(self) -> None:
+    async def test_docx_chain_ignores_planning_flag(self) -> None:
         service, _, _ = self._service()
-
-        async def _clarifying_plan(_request: object, _intent: object) -> AgentTaskPlan:
-            return AgentTaskPlan(
-                goal="生成奶龙文档",
-                intent="doc_generation",
-                summary="需要更多信息",
-                visible_summary="需要更多信息",
-                need_clarification=True,
-                clarification_needed=True,
-                clarification_question="请问您希望生成的奶龙文档具体是什么内容？",
-                questions=["请问您希望生成的奶龙文档具体是什么内容？"],
-                final_output=AgentPlanFinalOutput(format="markdown_document", requirements=[]),
-            )
-
-        service._create_plan_with_timeout = _clarifying_plan  # type: ignore[method-assign]
 
         response = await service.chat(
             AgentChatRequest(
@@ -199,7 +200,7 @@ class AgentGenerationChainsTest(IsolatedAsyncioTestCase):
         self.assertEqual(response.artifact.kind, "docx")
         self.assertEqual(response.message, "文档生成完成。")
 
-    async def test_ppt_chain_creates_job_without_planner_tool_result(self) -> None:
+    async def test_ppt_chain_creates_job_without_plan_tool_result(self) -> None:
         service, ppt, _ = self._service()
 
         response = await service.chat(
@@ -232,10 +233,8 @@ class AgentGenerationChainsTest(IsolatedAsyncioTestCase):
             )
         ]
 
-        rendered = "\n".join(str(event.get("message") or "") for event in events)
-        self.assertNotIn("chat 能力", rendered)
-        self.assertNotIn("我先理解你的任务", rendered)
-        self.assertNotIn("开始检索相关知识", rendered)
+        visible_messages = [str(event.get("message") or "") for event in events if event.get("channel") in {"chat", "artifact"}]
+        self.assertTrue(all(message in {"正在处理。", "AI PPT 任务已创建，正在后台生成。"} for message in visible_messages))
         result = events[-1]
         self.assertEqual(result["event"], "result.created")
         self.assertEqual(result["channel"], "artifact")
@@ -277,10 +276,8 @@ class AgentGenerationChainsTest(IsolatedAsyncioTestCase):
             )
         ]
 
-        rendered = "\n".join(str(event.get("message") or "") for event in events)
-        self.assertNotIn("chat 能力", rendered)
-        self.assertNotIn("我先理解你的任务", rendered)
-        self.assertNotIn("开始检索相关知识", rendered)
+        visible_messages = [str(event.get("message") or "") for event in events if event.get("channel") in {"chat", "artifact"}]
+        self.assertTrue(all(message in {"正在处理。", "飞书画板任务已完成。"} for message in visible_messages))
         result = events[-1]
         self.assertEqual(result["event"], "result.created")
         self.assertEqual(result["channel"], "artifact")

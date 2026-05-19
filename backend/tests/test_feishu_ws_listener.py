@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from app.modules.feishu.ws_listener import _claim_message_id, _message_item_to_payload, _release_message_id
 
 
@@ -21,13 +23,15 @@ def test_poll_message_item_payload_uses_configured_chat_id_when_openapi_item_omi
     assert message["message_id"] == "om_test"
     assert payload["event"]["sender"]["sender_id"]["open_id"] == "ou_user"
 
-
 def test_claim_message_id_dedupes_until_released() -> None:
-    _release_message_id("om_duplicate")
+    async def run() -> None:
+        await _release_message_id("om_duplicate")
 
-    assert _claim_message_id("om_duplicate") is True
-    assert _claim_message_id("om_duplicate") is False
+        assert await _claim_message_id("om_duplicate") is True
+        assert await _claim_message_id("om_duplicate") is False
 
-    _release_message_id("om_duplicate")
-    assert _claim_message_id("om_duplicate") is True
-    _release_message_id("om_duplicate")
+        await _release_message_id("om_duplicate")
+        assert await _claim_message_id("om_duplicate") is True
+        await _release_message_id("om_duplicate")
+
+    asyncio.run(run())

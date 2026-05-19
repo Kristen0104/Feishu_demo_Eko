@@ -133,5 +133,5 @@ async def feishu_events(
     agent_service: Annotated[AgentService, Depends(get_agent_service)],
     sync_service: Annotated[SyncService, Depends(get_sync_service)],
 ) -> dict[str, str]:
-    processor = FeishuEventProcessor(feishu_service, agent_service, sync_service)
+    processor = FeishuEventProcessor(feishu_service, agent_service, sync_service, dedupe_events=True)
     return await processor.handle(payload)

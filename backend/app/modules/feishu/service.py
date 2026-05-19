@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import re
+import traceback
 from typing import Any
 
 from app.config import settings
@@ -26,6 +28,7 @@ from app.modules.feishu.schemas import (
 
 logger = logging.getLogger(__name__)
 _MENTION_TAG_RE = re.compile(r"<at[^>]*>.*?</at>", re.IGNORECASE | re.DOTALL)
+_SEND_DEDUPE_TTL_SECONDS = 60
 
 
 class FeishuService:
@@ -89,12 +92,40 @@ class FeishuService:
             return {"message_id": "suppressed-auto-sync-message"}
         if self._client is None:
             return {"message_id": "stub-message"}
+        if await self._claim_outbound_text(chat_id, text) is False:
+            logger.info(
+                "Suppress duplicate Feishu outbound text chat_id=%s text=%s",
+                chat_id,
+                text[:120],
+            )
+            return {"message_id": "suppressed-duplicate-message"}
+        logger.info(
+            "Send Feishu chat text chat_id=%s text=%s caller=%s",
+            chat_id,
+            text[:160],
+            self._caller_summary(),
+        )
         return await asyncio.to_thread(self._client.send_text_message_to_chat, chat_id, text)
 
     async def reply_text_message(self, message_id: str, text: str) -> dict[str, Any]:
         if self._client is None:
             return {"message_id": "stub-reply"}
         return await asyncio.to_thread(self._client.reply_text_message, message_id, text)
+
+    async def _claim_outbound_text(self, chat_id: str, text: str) -> bool:
+        redis_client = self._redis or redis_module.redis_client
+        if redis_client is None:
+            return True
+        digest = hashlib.sha256(f"{chat_id}\0{text.strip()}".encode("utf-8")).hexdigest()
+        try:
+            return bool(await redis_client.set(f"eko:feishu:outbound:{digest}", "1", ex=_SEND_DEDUPE_TTL_SECONDS, nx=True))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Feishu outbound dedupe skipped chat_id=%s: %s", chat_id, exc)
+            return True
+
+    def _caller_summary(self) -> str:
+        frames = traceback.extract_stack(limit=8)[:-2]
+        return " <- ".join(f"{frame.name}@{frame.filename.rsplit('/', 1)[-1]}:{frame.lineno}" for frame in frames[-4:])
 
     def get_recent_chat_messages(
         self,

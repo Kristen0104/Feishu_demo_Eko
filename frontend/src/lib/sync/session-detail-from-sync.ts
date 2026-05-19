@@ -179,6 +179,30 @@ function isBoardSession(session: SyncSession): boolean {
   return artifactKind === "board" || intent === "board";
 }
 
+function syncStatusLabel(status?: string | null): string {
+  if (isFailedStatus(status)) return "失败";
+  if (isCompletedStatus(status)) return "已完成";
+  const normalized = normalizeSignal(status);
+  if (normalized === "running" || normalized === "processing" || normalized === "queued" || status === "进行中") return "进行中";
+  return status?.trim() || "进行中";
+}
+
+function buildSyncOverview(session: SyncSession, artifact: ReturnType<typeof buildArtifact>): SessionDetailData["syncOverview"] {
+  if (!artifact || (artifact.kind !== "docx" && artifact.kind !== "ppt" && artifact.kind !== "board")) return undefined;
+
+  const items = [
+    artifact.result_summary,
+    artifact.sharing_url ? "飞书链接已生成。" : null,
+    artifact.download_url ? "下载文件已生成。" : null,
+    artifact.whiteboard_id ? "画板内容已写入飞书。" : null,
+  ].filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+
+  return {
+    statusLabel: syncStatusLabel(artifact.status ?? session.status),
+    items: items.length > 0 ? items : ["产物状态已同步到工作台。"],
+  };
+}
+
 function compactMessageEntries(session: SyncSession, messages: DetailMessage[]): DetailMessage[] {
   const compacted = messages.map((message) =>
     message.role === "eko" ? { ...message, body: compactInternalTraceMessage(message.body) } : message,
@@ -357,10 +381,7 @@ function buildMessages(session: SyncSession): DetailMessage[] {
     return reconcileCompletedArtifactMessages(session, buildMessageEntries(session.messages));
   }
 
-  const body =
-    session.status === "等待选择" && isBoardSession(session)
-      ? "已读取候选聊天记录，请先选择上下文，再继续生成画板。"
-      : session.summary || "收到飞书群聊消息，正在拉取上下文并建立会话。";
+  const body = session.summary || "收到飞书群聊消息，正在拉取上下文并建立会话。";
   const messages: DetailMessage[] = [];
   if (session.instruction?.trim()) {
     const triggerMessage = session.messages?.find((message) => normalizeSignal(message.role) === "user");
@@ -653,10 +674,7 @@ export function buildSessionDetailData(session: SyncSession): SessionDetailData 
       body: "会话信息来自后端实时登记。",
       action: "查看详情",
     },
-    syncOverview: {
-      statusLabel: session.status,
-      items: [session.summary],
-    },
+    syncOverview: buildSyncOverview(session, artifact),
     activities: buildActivities(session),
   };
 }

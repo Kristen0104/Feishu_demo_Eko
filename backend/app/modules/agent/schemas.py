@@ -100,11 +100,6 @@ class AgentTaskSchema(BaseModel):
     status: Literal["accepted"] = "accepted"
 
 
-class AgentPlanFinalOutput(BaseModel):
-    format: str
-    requirements: list[str] = Field(default_factory=list)
-
-
 class IntentCandidate(BaseModel):
     intent: Literal["chat", "docx", "ppt", "board"]
     tool: str | None = None
@@ -129,36 +124,6 @@ class IntentRouteResult(BaseModel):
     clarification_question: str | None = None
     clarification_options: list[IntentClarificationOption] = Field(default_factory=list)
     pending_route: dict[str, Any] = Field(default_factory=dict)
-
-
-class AgentPlanStep(BaseModel):
-    id: str
-    title: str
-    description: str
-    type: Literal["reasoning", "tool_call", "generation", "validation", "clarification"]
-    status: Literal["pending", "in_progress", "completed", "blocked", "failed"] = "pending"
-    tool: str | None = None
-    input: dict[str, Any] = Field(default_factory=dict)
-    expected_output: str
-    depends_on: list[str] = Field(default_factory=list)
-
-
-class AgentTaskPlan(BaseModel):
-    goal: str
-    intent: str
-    task_complexity: Literal["simple", "medium", "complex"] = "medium"
-    missing_info: list[str] = Field(default_factory=list)
-    requires_context_selection: bool = False
-    need_clarification: bool = False
-    questions: list[str] = Field(default_factory=list)
-    assumptions: list[str] = Field(default_factory=list)
-    summary: str
-    visible_summary: str | None = None
-    tool_candidates: list[str] = Field(default_factory=list)
-    steps: list[AgentPlanStep] = Field(default_factory=list)
-    final_output: AgentPlanFinalOutput
-    clarification_needed: bool = False
-    clarification_question: str | None = None
 
 
 class AgentRetrievedContext(BaseModel):
@@ -188,9 +153,6 @@ class AgentEventV1(BaseModel):
         "source.bitable.completed",
         "source.bitable.empty",
         "source.bitable.failed",
-        "plan.created",
-        "plan.summary",
-        "plan.step",
         "tool.selected",
         "tool.started",
         "tool.completed",
@@ -242,6 +204,5 @@ class AgentChatResponse(BaseModel):
     status: Literal["completed", "failed"]
     message: str
     artifact: AgentChatArtifact | None = None
-    plan: AgentTaskPlan | None = None
     events: list[AgentEventV1] = Field(default_factory=list)
     error: str | None = None
