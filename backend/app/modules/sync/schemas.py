@@ -48,6 +48,7 @@ class SyncSessionSchema(BaseModel):
     context_size: int = 0
     instruction: str | None = None
     intent: str | None = None
+    route_state: dict[str, Any] | None = None
     artifact: dict[str, Any] | None = None
     context_messages: list[SyncContextMessageSchema] = Field(default_factory=list)
     selected_context_messages: list[SyncContextMessageSchema] = Field(default_factory=list)

@@ -33,6 +33,7 @@ class SessionRecord:
     context_size: int = 0
     instruction: str | None = None
     intent: str | None = None
+    route_state: dict[str, Any] | None = None
     artifact: dict[str, Any] | None = None
     context_messages: list[dict[str, Any]] | None = None
     selected_context_messages: list[dict[str, Any]] | None = None
@@ -106,6 +107,7 @@ class SyncConnectionManager:
             context_size=int(data.get("context_size") or 0),
             instruction=data.get("instruction") if isinstance(data.get("instruction"), str) else None,
             intent=data.get("intent") if isinstance(data.get("intent"), str) else None,
+            route_state=data.get("route_state") if isinstance(data.get("route_state"), dict) else None,
             artifact=data.get("artifact") if isinstance(data.get("artifact"), dict) else None,
             context_messages=data.get("context_messages") if isinstance(data.get("context_messages"), list) else [],
             selected_context_messages=data.get("selected_context_messages") if isinstance(data.get("selected_context_messages"), list) else [],
@@ -304,6 +306,7 @@ class SyncConnectionManager:
         context_messages: list[dict[str, Any]] | None = None,
         selected_context_messages: list[dict[str, Any]] | None = None,
         intent: str | None = None,
+        route_state: dict[str, Any] | None = None,
         artifact: dict[str, Any] | None = None,
         messages: list[dict[str, Any]] | None = None,
         collaborator_user_ids: list[str] | None = None,
@@ -322,6 +325,7 @@ class SyncConnectionManager:
             context_size=context_size,
             instruction=instruction,
             intent=intent,
+            route_state=route_state,
             artifact=artifact,
             context_messages=context_messages or [],
             selected_context_messages=selected_context_messages or [],
@@ -344,6 +348,7 @@ class SyncConnectionManager:
         summary: str | None = None,
         context_size: int | None = None,
         intent: str | None | object = _UNSET,
+        route_state: dict[str, Any] | None | object = _UNSET,
         artifact: dict[str, Any] | None | object = _UNSET,
         context_messages: list[dict[str, Any]] | None | object = _UNSET,
         selected_context_messages: list[dict[str, Any]] | None | object = _UNSET,
@@ -365,6 +370,8 @@ class SyncConnectionManager:
             record.context_size = context_size
         if intent is not _UNSET:
             record.intent = intent
+        if route_state is not _UNSET:
+            record.route_state = route_state
         if artifact is not _UNSET:
             record.artifact = artifact
         if context_messages is not _UNSET:

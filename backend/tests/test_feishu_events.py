@@ -237,6 +237,20 @@ class FeishuEventProcessorMentionGateTest(IsolatedAsyncioTestCase):
         self.assertEqual(opened["status"], "等待确认意图")
         self.assertEqual(opened["summary"], VAGUE_CLARIFICATION_QUESTION)
         self.assertEqual(opened["context_size"], 0)
+        self.assertEqual(
+            opened["route_state"],
+            {
+                "state": "awaiting_clarification",
+                "clarification_type": "organize_request",
+                "original_message": "整理一下",
+                "slots": {},
+                "required_slots": ["content_scope", "output_format"],
+                "options": {
+                    "content_scope": ["recent_chat", "other_information"],
+                    "output_format": ["summary", "bullet_list", "minutes", "document"],
+                },
+            },
+        )
 
     async def test_direct_message_uses_same_bootstrap_without_feishu_prerouting(self) -> None:
         processor = _ProcessorForTest(intent=AgentIntent.CHAT)

@@ -1657,6 +1657,7 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
         .filter((message) => message.content.trim().length > 0);
 
       const streamMessageId = `eko-stream-${requestId}`;
+      let streamMessageSettled = false;
       const store = useAgentRuntimeStore.getState();
       const isExistingDocumentEdit = resourceKind === "docx" && Boolean(currentDocumentMarkdown.trim()) && !wantsNewDocument(text);
       store.patchSession(data.id, { phase: "ANALYZING", lastError: null, useMockFallback: false });
@@ -1716,6 +1717,7 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
         };
 
         const applyResponse = (response: AgentChatResponseWire) => {
+          streamMessageSettled = true;
           if (isClarificationResponse(response)) {
             store.patchSession(data.id, {
               phase: "ANALYZING",
@@ -1788,6 +1790,7 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
             if (event.event === "clarification.requested") {
               blockedByClarificationRef.current = true;
               activeSseReplyRef.current = false;
+              streamMessageSettled = true;
               store.patchSession(data.id, { phase: "ANALYZING" });
               const questions = Array.isArray(payload.questions) ? payload.questions.filter((item): item is string => typeof item === "string") : [];
               const options = Array.isArray(payload.clarification_options)
@@ -1825,6 +1828,13 @@ export function DocSessionWorkspace({ data }: { data: SessionDetailData }) {
         }
         if (streamError) {
           throw new Error(streamError);
+        }
+        if (!streamMessageSettled) {
+          updateStreamMessage("这次没有收到有效结果，请稍后重试。", {
+            sent: true,
+            replace: true,
+          });
+          store.patchSession(data.id, { phase: "ERROR", lastError: "未收到有效结果" });
         }
       } catch (error) {
         activeSseReplyRef.current = false;

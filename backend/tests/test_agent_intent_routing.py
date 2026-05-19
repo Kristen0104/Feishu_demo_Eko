@@ -96,6 +96,7 @@ class AgentIntentRoutingTest(IsolatedAsyncioTestCase):
 
 
 class _SyncSession:
+    route_state = None
     messages = [
         {"role": "user", "content": "NovaMind 模型分级策略"},
         {"role": "assistant", "content": "你是想直接讨论这个主题，还是生成一份文档、PPT 或画板？"},
@@ -103,8 +104,15 @@ class _SyncSession:
 
 
 class _SyncService:
+    def __init__(self, session: object | None = None) -> None:
+        self.session = session or _SyncSession()
+        self.route_state_updates: list[dict[str, object] | None] = []
+
     async def get_session(self, _session_id: str) -> _SyncSession:
-        return _SyncSession()
+        return self.session
+
+    async def update_session_route_state(self, _session_id: str, route_state: dict[str, object] | None) -> None:
+        self.route_state_updates.append(route_state)
 
 
 class AgentPendingRouteReplyTest(IsolatedAsyncioTestCase):
@@ -154,3 +162,37 @@ class AgentPendingRouteReplyTest(IsolatedAsyncioTestCase):
         assert response is not None
         self.assertEqual(response.intent, "chat")
         self.assertIn("直接讨论", response.message)
+
+    async def test_structured_clarification_reply_collects_slots_without_message_matching(self) -> None:
+        from app.modules.agent.schemas import AgentChatRequest
+
+        class _StructuredSession:
+            route_state = {
+                "state": "awaiting_clarification",
+                "clarification_type": "organize_request",
+                "original_message": "整理一下",
+                "slots": {},
+                "required_slots": ["content_scope", "output_format"],
+                "options": {
+                    "content_scope": ["recent_chat", "other_information"],
+                    "output_format": ["summary", "bullet_list", "minutes", "document"],
+                },
+            }
+            messages = []
+
+        sync = _SyncService(_StructuredSession())
+        service = AgentService.__new__(AgentService)
+        service._sync_service = sync
+
+        request = await service._resolve_pending_route_reply(
+            AgentChatRequest(session_id="s1", message="对话记录")
+        )
+        response = await service._pending_clarification_response(
+            request.model_copy(update={"sender": {"pending_clarification": True}})
+        )
+
+        self.assertEqual(request.forced_intent, "chat")
+        self.assertIsNotNone(response)
+        assert response is not None
+        self.assertIn("整理成什么形式", response.message)
+        self.assertEqual(sync.route_state_updates[-1]["slots"], {"content_scope": "recent_chat"})

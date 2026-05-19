@@ -153,6 +153,17 @@ class FeishuEventProcessor:
                         status="等待确认意图",
                         summary=VAGUE_CLARIFICATION_QUESTION,
                         messages=[trigger_message, assistant_message],
+                        route_state={
+                            "state": "awaiting_clarification",
+                            "clarification_type": "organize_request",
+                            "original_message": instruction,
+                            "slots": {},
+                            "required_slots": ["content_scope", "output_format"],
+                            "options": {
+                                "content_scope": ["recent_chat", "other_information"],
+                                "output_format": ["summary", "bullet_list", "minutes", "document"],
+                            },
+                        },
                     )
                     logger.info("Feishu vague direct mention opened clarification session=%s", session_id)
                 await self._send_workspace_link_to_chat(chat_id, session_id)

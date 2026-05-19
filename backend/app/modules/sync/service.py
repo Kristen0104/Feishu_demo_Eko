@@ -32,6 +32,7 @@ class SyncService:
         instruction: str | None = None,
         context_messages: list[dict[str, Any]] | None = None,
         intent: str | None = None,
+        route_state: dict[str, Any] | None = None,
         artifact: dict[str, Any] | None = None,
         selected_context_messages: list[dict[str, Any]] | None = None,
         messages: list[dict[str, Any]] | None = None,
@@ -51,6 +52,7 @@ class SyncService:
             instruction=instruction,
             context_messages=context_messages,
             intent=intent,
+            route_state=route_state,
             artifact=artifact,
             selected_context_messages=selected_context_messages,
             messages=messages,
@@ -116,6 +118,7 @@ class SyncService:
         status: str = "进行中",
         summary: str | None = None,
         messages: list[dict[str, Any]] | None = None,
+        route_state: dict[str, Any] | None = None,
     ) -> None:
         payload: dict[str, Any] = {"source": source}
         if user_id:
@@ -144,6 +147,7 @@ class SyncService:
             context_size=context_size or 0,
             instruction=instruction,
             intent=intent,
+            route_state=route_state,
             context_messages=context_messages,
             selected_context_messages=selected_context_messages,
             messages=messages,
@@ -381,6 +385,9 @@ class SyncService:
             return
         await self._manager.update_session(session_id, artifact=artifact)
 
+    async def update_session_route_state(self, session_id: str, route_state: dict[str, Any] | None) -> None:
+        await self._manager.update_session(session_id, route_state=route_state)
+
     def _to_schema(self, record: SessionRecord | None, *, compact_artifact: bool = False) -> SyncSessionSchema:
         if record is None:  # pragma: no cover - defensive guard
             raise ValueError("session record is missing")
@@ -399,6 +406,7 @@ class SyncService:
             context_size=record.context_size,
             instruction=record.instruction,
             intent=record.intent,
+            route_state=record.route_state,
             artifact=artifact,
             context_messages=record.context_messages or [],
             selected_context_messages=getattr(record, "selected_context_messages", None) or [],

@@ -976,6 +976,19 @@ class AgentService:
             session = await self._sync_service.get_session(request.session_id)
         except Exception:  # noqa: BLE001
             return request
+        route_state = getattr(session, "route_state", None)
+        if self._is_waiting_clarification_route(route_state):
+            selected_intent = self._intent_from_clarification_reply(request.message)
+            if selected_intent is None:
+                return request.model_copy(update={"forced_intent": "chat", "sender": {**(request.sender or {}), "pending_clarification": True}})
+            original = str(route_state.get("original_message") or "").strip()
+            return request.model_copy(
+                update={
+                    "message": original or request.message,
+                    "forced_intent": selected_intent.value,
+                }
+            )
+
         messages = getattr(session, "messages", None)
         if not isinstance(messages, list) or len(messages) < 2:
             return request
@@ -1021,6 +1034,9 @@ class AgentService:
             }
         )
 
+    def _is_waiting_clarification_route(self, route_state: Any) -> bool:
+        return isinstance(route_state, dict) and route_state.get("state") == "awaiting_clarification"
+
     def _intent_from_clarification_reply(self, message: str) -> AgentIntent | None:
         normalized = message.strip().lower()
         if not normalized:
@@ -1044,6 +1060,17 @@ class AgentService:
             session = await self._sync_service.get_session(request.session_id)
         except Exception:  # noqa: BLE001
             return None
+        route_state = getattr(session, "route_state", None)
+        if self._is_waiting_clarification_route(route_state):
+            response = await self._response_for_structured_clarification_reply(request.session_id, request.message, route_state)
+            if response is not None:
+                return AgentChatResponse(
+                    session_id=request.session_id,
+                    intent=AgentIntent.CHAT.value,
+                    status="completed",
+                    message=response,
+                )
+
         messages = getattr(session, "messages", None)
         if not isinstance(messages, list):
             return None
@@ -1062,6 +1089,54 @@ class AgentService:
                     message=content,
                 )
         return None
+
+    async def _response_for_structured_clarification_reply(self, session_id: str, message: str, route_state: dict[str, Any]) -> str | None:
+        if route_state.get("clarification_type") != "organize_request":
+            return None
+        slots = route_state.get("slots")
+        current_slots = slots if isinstance(slots, dict) else {}
+        parsed_slots = self._parse_organize_clarification_slots(message)
+        merged_slots = {**current_slots, **parsed_slots}
+        next_state = dict(route_state)
+        next_state["slots"] = merged_slots
+        if hasattr(self._sync_service, "update_session_route_state"):
+            await self._sync_service.update_session_route_state(session_id, next_state)
+        required_slots = route_state.get("required_slots")
+        required = required_slots if isinstance(required_slots, list) else []
+        missing_slots = [slot for slot in required if slot not in merged_slots]
+        if missing_slots == ["output_format"]:
+            return self._organize_format_followup_message(route_state)
+        if missing_slots:
+            return None
+        return None
+
+    def _organize_format_followup_message(self, route_state: dict[str, Any]) -> str:
+        options = route_state.get("options") if isinstance(route_state.get("options"), dict) else {}
+        raw_formats = options.get("output_format") if isinstance(options, dict) else None
+        formats = raw_formats if isinstance(raw_formats, list) else ["summary", "bullet_list", "minutes", "document"]
+        labels = {
+            "summary": "摘要",
+            "bullet_list": "要点列表",
+            "minutes": "会议纪要",
+            "document": "文档",
+        }
+        readable_formats = [labels.get(str(item), str(item)) for item in formats]
+        return f"好的，我会整理你指定的内容。你希望整理成什么形式？比如{'、'.join(readable_formats)}？"
+
+    def _parse_organize_clarification_slots(self, message: str) -> dict[str, str]:
+        compact = re.sub(r"\s+", "", message)
+        slots: dict[str, str] = {}
+        if any(keyword in compact for keyword in ("对话记录", "聊天记录", "刚才的对话", "刚才聊天", "群聊上下文", "上下文")):
+            slots["content_scope"] = "recent_chat"
+        if any(keyword in compact for keyword in ("摘要", "总结")):
+            slots["output_format"] = "summary"
+        elif any(keyword in compact for keyword in ("要点", "列表")):
+            slots["output_format"] = "bullet_list"
+        elif "会议纪要" in compact:
+            slots["output_format"] = "minutes"
+        elif any(keyword in compact for keyword in ("文档", "报告", "markdown")):
+            slots["output_format"] = "document"
+        return slots
 
     async def _echo_feishu_chat_reply_if_needed(
         self,
@@ -1775,6 +1850,7 @@ class AgentService:
             clarification_response = self._clarification_response_from_turn(request, runtime_turn)
             if clarification_response is not None:
                 await self._publish_chat_result(request, clarification_response)
+                yield AgentEventProtocol.result(clarification_response, clarification_response.message)
                 return
             docx_tool_result = self._runtime_tool_result(runtime_turn, "docx")
             ppt_tool_result = self._runtime_tool_result(runtime_turn, "ppt")
