@@ -1,3 +1,4 @@
+<img width="2970" height="4218" alt="最佳创新应用奖 高天磊  张靖怡  张欣怡" src="https://github.com/user-attachments/assets/0c956301-cdd2-4053-bd9d-4457e9189cec" />
 # 飞书 Demo Eko
 
 Eko 是一个面向飞书生态的 AI 原生办公工作台演示项目。项目由 Next.js 前端工作台、FastAPI 后端、飞书集成、Agent 编排、RAG 检索、Bitable 结构化数据、Redis 实时事件总线，以及 AI PPT / 文档 / 画板生成能力组成。
